@@ -4,6 +4,7 @@ import { roleRouter } from "./routes/roles";
 import { assignmentRouter } from "./routes/assignments";
 import { taskRouter } from "./routes/tasks";
 import { projectRouter } from "./routes/projects";
+import { agentRouter } from "./routes/agent";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,6 +22,7 @@ app.use("/api/roles", roleRouter);
 app.use("/api/projects", projectRouter);
 app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", taskRouter);
+app.use("/api/agent", agentRouter);
 
 // Error handler
 app.use(
@@ -35,8 +37,11 @@ app.use(
   }
 );
 
-app.listen(PORT, () => {
-  console.log(`AI Role Assignment API running on port ${PORT}`);
-});
+// Only start server when running locally (not on Vercel)
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`AI Role Assignment API running on port ${PORT}`);
+  });
+}
 
 export default app;

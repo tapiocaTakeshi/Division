@@ -109,7 +109,17 @@ async function main() {
     },
   });
 
-  console.log("Roles seeded:", [coding, search, planning, writing, review].map((r) => r.slug));
+  const leader = await prisma.role.upsert({
+    where: { slug: "leader" },
+    update: {},
+    create: {
+      slug: "leader",
+      name: "Leader",
+      description: "Task decomposition, delegation, and orchestration",
+    },
+  });
+
+  console.log("Roles seeded:", [coding, search, planning, writing, review, leader].map((r) => r.slug));
 
   // --- Demo Project ---
   const project = await prisma.project.upsert({
@@ -215,12 +225,31 @@ async function main() {
     },
   });
 
+  // Leader -> Gemini
+  await prisma.roleAssignment.upsert({
+    where: {
+      projectId_roleId_providerId: {
+        projectId: project.id,
+        roleId: leader.id,
+        providerId: gemini.id,
+      },
+    },
+    update: {},
+    create: {
+      projectId: project.id,
+      roleId: leader.id,
+      providerId: gemini.id,
+      priority: 10,
+    },
+  });
+
   console.log("Assignments seeded for demo project");
   console.log("  Coding    -> Claude");
   console.log("  Search    -> Perplexity");
   console.log("  Planning  -> Gemini");
   console.log("  Writing   -> Claude");
   console.log("  Review    -> GPT");
+  console.log("  Leader    -> Gemini");
 }
 
 main()

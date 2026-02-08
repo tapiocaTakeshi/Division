@@ -5,7 +5,7 @@ import { z } from "zod";
 export const assignmentRouter = Router();
 
 const createAssignmentSchema = z.object({
-  projectId: z.string().uuid(),
+  projectId: z.string().min(1),
   roleId: z.string().uuid(),
   providerId: z.string().uuid(),
   priority: z.number().int().min(0).optional(),
@@ -109,7 +109,7 @@ assignmentRouter.delete("/:id", async (req: Request, res: Response) => {
 // Bulk assign: set all role assignments for a project at once
 assignmentRouter.post("/bulk", async (req: Request, res: Response) => {
   const bulkSchema = z.object({
-    projectId: z.string().uuid(),
+    projectId: z.string().min(1),
     assignments: z.array(
       z.object({
         roleId: z.string().uuid(),

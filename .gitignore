@@ -2,5 +2,5 @@ node_modules/
 dist/
 prisma/dev.db
 prisma/dev.db-journal
-.env
 *.log
+.vercel

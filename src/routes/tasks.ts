@@ -6,7 +6,7 @@ import { executeTask } from "../services/ai-executor";
 export const taskRouter = Router();
 
 const executeTaskSchema = z.object({
-  projectId: z.string().uuid(),
+  projectId: z.string().min(1),
   roleSlug: z.string().min(1),
   input: z.string().min(1),
   config: z.record(z.unknown()).optional(),
@@ -16,7 +16,9 @@ const executeTaskSchema = z.object({
 taskRouter.post("/execute", async (req: Request, res: Response) => {
   const parsed = executeTaskSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
+    res
+      .status(400)
+      .json({ error: "Validation failed", details: parsed.error.issues });
     return;
   }
 
@@ -92,7 +94,9 @@ taskRouter.get("/logs", async (req: Request, res: Response) => {
   const where: Record<string, unknown> = {};
   if (projectId) where.projectId = String(projectId);
   if (roleSlug) {
-    const role = await prisma.role.findUnique({ where: { slug: String(roleSlug) } });
+    const role = await prisma.role.findUnique({
+      where: { slug: String(roleSlug) },
+    });
     if (role) where.roleId = role.id;
   }
 

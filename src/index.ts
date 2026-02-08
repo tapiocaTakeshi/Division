@@ -5,6 +5,7 @@ import { assignmentRouter } from "./routes/assignments";
 import { taskRouter } from "./routes/tasks";
 import { projectRouter } from "./routes/projects";
 import { agentRouter } from "./routes/agent";
+import providersListRouter from "./routes/providers-list";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,7 +14,7 @@ app.use(express.json());
 
 // Health check
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "ai-role-assignment-api" });
+  res.json({ status: "ok", service: "division-api" });
 });
 
 // API routes
@@ -23,6 +24,7 @@ app.use("/api/projects", projectRouter);
 app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", taskRouter);
 app.use("/api/agent", agentRouter);
+app.use("/api/models", providersListRouter);
 
 // Error handler
 app.use(
@@ -40,7 +42,7 @@ app.use(
 // Only start server when running locally (not on Vercel)
 if (!process.env.VERCEL) {
   app.listen(PORT, () => {
-    console.log(`AI Role Assignment API running on port ${PORT}`);
+    console.log(`Division API running on port ${PORT}`);
   });
 }
 

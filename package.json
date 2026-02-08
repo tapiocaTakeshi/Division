@@ -1,7 +1,7 @@
 {
-  "name": "ai-role-assignment-api",
+  "name": "division-api",
   "version": "1.0.0",
-  "description": "AI Role Assignment API - Assign different AI models to different roles/tasks",
+  "description": "Division API - AI agent orchestration with multi-model routing",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

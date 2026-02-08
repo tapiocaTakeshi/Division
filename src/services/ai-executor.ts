@@ -106,6 +106,40 @@ function buildRequestBody(
         },
       };
 
+    case "xai":
+      return {
+        url: "/v1/chat/completions",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey || ""}`,
+        },
+        body: {
+          model: modelId,
+          max_tokens: (config?.maxTokens as number) || 4096,
+          messages: [
+            { role: "system", content: `You are acting as the ${roleContext} role.` },
+            { role: "user", content: input },
+          ],
+        },
+      };
+
+    case "deepseek":
+      return {
+        url: "/chat/completions",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey || ""}`,
+        },
+        body: {
+          model: modelId,
+          max_tokens: (config?.maxTokens as number) || 4096,
+          messages: [
+            { role: "system", content: `You are acting as the ${roleContext} role.` },
+            { role: "user", content: input },
+          ],
+        },
+      };
+
     default:
       return null;
   }
@@ -123,7 +157,9 @@ function parseResponse(apiType: string, data: unknown): string {
       return content?.map((c) => c.text).join("") || JSON.stringify(data);
     }
     case "openai":
-    case "perplexity": {
+    case "perplexity":
+    case "xai":
+    case "deepseek": {
       const choices = d.choices as Array<{ message: { content: string } }>;
       return choices?.[0]?.message?.content || JSON.stringify(data);
     }

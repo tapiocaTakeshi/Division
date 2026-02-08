@@ -130,24 +130,49 @@ function resolveApiKey(
   // Map model-level names to API key aliases
   const keyMap: Record<string, string[]> = {
     // Anthropic models
+    "claude-opus-4.6": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
+    "claude-sonnet-4.5": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
+    "claude-haiku-4.5": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
     "claude-sonnet": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-    "claude-haiku": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
     "claude-opus": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
+    "claude-haiku": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
     claude: ["anthropic", "claude", "ANTHROPIC_API_KEY"],
     // Google models
+    "gemini-3-pro": ["google", "gemini", "GOOGLE_API_KEY"],
+    "gemini-3-flash": ["google", "gemini", "GOOGLE_API_KEY"],
+    "gemini-2.5-pro": ["google", "gemini", "GOOGLE_API_KEY"],
+    "gemini-2.5-flash": ["google", "gemini", "GOOGLE_API_KEY"],
+    "gemini-2.0-flash": ["google", "gemini", "GOOGLE_API_KEY"],
     "gemini-flash": ["google", "gemini", "GOOGLE_API_KEY"],
     "gemini-pro": ["google", "gemini", "GOOGLE_API_KEY"],
     gemini: ["google", "gemini", "GOOGLE_API_KEY"],
     // Perplexity models
-    "perplexity-sonar": ["perplexity", "PERPLEXITY_API_KEY"],
+    "perplexity-deep-research": ["perplexity", "PERPLEXITY_API_KEY"],
+    "perplexity-reasoning-pro": ["perplexity", "PERPLEXITY_API_KEY"],
     "perplexity-sonar-pro": ["perplexity", "PERPLEXITY_API_KEY"],
+    "perplexity-sonar": ["perplexity", "PERPLEXITY_API_KEY"],
     perplexity: ["perplexity", "PERPLEXITY_API_KEY"],
     // OpenAI models
+    "gpt-5.2": ["openai", "gpt", "OPENAI_API_KEY"],
+    "gpt-5.1": ["openai", "gpt", "OPENAI_API_KEY"],
+    "gpt-4.1": ["openai", "gpt", "OPENAI_API_KEY"],
+    "gpt-4.1-mini": ["openai", "gpt", "OPENAI_API_KEY"],
+    "gpt-4.1-nano": ["openai", "gpt", "OPENAI_API_KEY"],
     "gpt-4o": ["openai", "gpt", "OPENAI_API_KEY"],
     "gpt-4o-mini": ["openai", "gpt", "OPENAI_API_KEY"],
     o3: ["openai", "gpt", "OPENAI_API_KEY"],
     "o3-mini": ["openai", "gpt", "OPENAI_API_KEY"],
     gpt: ["openai", "gpt", "OPENAI_API_KEY"],
+    // xAI (Grok) models
+    "grok-4.1-fast": ["xai", "grok", "XAI_API_KEY"],
+    "grok-4": ["xai", "grok", "XAI_API_KEY"],
+    "grok-3": ["xai", "grok", "XAI_API_KEY"],
+    "grok-3-mini": ["xai", "grok", "XAI_API_KEY"],
+    grok: ["xai", "grok", "XAI_API_KEY"],
+    // DeepSeek models
+    "deepseek-v3.2": ["deepseek", "DEEPSEEK_API_KEY"],
+    "deepseek-r1": ["deepseek", "DEEPSEEK_API_KEY"],
+    deepseek: ["deepseek", "DEEPSEEK_API_KEY"],
   };
 
   const aliases = keyMap[providerName] || [];

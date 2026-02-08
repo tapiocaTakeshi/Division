@@ -127,16 +127,31 @@ function resolveApiKey(
   // Direct match
   if (apiKeys[providerName]) return apiKeys[providerName];
 
-  // Try common aliases
-  const aliases: Record<string, string[]> = {
+  // Map model-level names to API key aliases
+  const keyMap: Record<string, string[]> = {
+    // Anthropic models
+    "claude-sonnet": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
+    "claude-haiku": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
+    "claude-opus": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
     claude: ["anthropic", "claude", "ANTHROPIC_API_KEY"],
+    // Google models
+    "gemini-flash": ["google", "gemini", "GOOGLE_API_KEY"],
+    "gemini-pro": ["google", "gemini", "GOOGLE_API_KEY"],
     gemini: ["google", "gemini", "GOOGLE_API_KEY"],
-    gpt: ["openai", "gpt", "OPENAI_API_KEY"],
+    // Perplexity models
+    "perplexity-sonar": ["perplexity", "PERPLEXITY_API_KEY"],
+    "perplexity-sonar-pro": ["perplexity", "PERPLEXITY_API_KEY"],
     perplexity: ["perplexity", "PERPLEXITY_API_KEY"],
+    // OpenAI models
+    "gpt-4o": ["openai", "gpt", "OPENAI_API_KEY"],
+    "gpt-4o-mini": ["openai", "gpt", "OPENAI_API_KEY"],
+    o3: ["openai", "gpt", "OPENAI_API_KEY"],
+    "o3-mini": ["openai", "gpt", "OPENAI_API_KEY"],
+    gpt: ["openai", "gpt", "OPENAI_API_KEY"],
   };
 
-  const providerAliases = aliases[providerName] || [];
-  for (const alias of providerAliases) {
+  const aliases = keyMap[providerName] || [];
+  for (const alias of aliases) {
     if (apiKeys[alias]) return apiKeys[alias];
   }
 

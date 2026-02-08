@@ -3,60 +3,216 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 async function main() {
-  // --- Providers ---
+  // --- Providers (model-level granularity) ---
+
+  // Anthropic models
+  const claudeSonnet = await prisma.provider.upsert({
+    where: { name: "claude-sonnet" },
+    update: {},
+    create: {
+      name: "claude-sonnet",
+      displayName: "Claude Sonnet (Anthropic)",
+      apiBaseUrl: "https://api.anthropic.com",
+      apiType: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
+      description: "Anthropic Claude Sonnet - balanced coding & writing",
+    },
+  });
+
+  const claudeHaiku = await prisma.provider.upsert({
+    where: { name: "claude-haiku" },
+    update: {},
+    create: {
+      name: "claude-haiku",
+      displayName: "Claude Haiku (Anthropic)",
+      apiBaseUrl: "https://api.anthropic.com",
+      apiType: "anthropic",
+      modelId: "claude-haiku-3-20250414",
+      description: "Anthropic Claude Haiku - fast & lightweight",
+    },
+  });
+
+  const claudeOpus = await prisma.provider.upsert({
+    where: { name: "claude-opus" },
+    update: {},
+    create: {
+      name: "claude-opus",
+      displayName: "Claude Opus (Anthropic)",
+      apiBaseUrl: "https://api.anthropic.com",
+      apiType: "anthropic",
+      modelId: "claude-opus-4-20250514",
+      description: "Anthropic Claude Opus - most powerful, deep reasoning",
+    },
+  });
+
+  // Google models
+  const geminiFlash = await prisma.provider.upsert({
+    where: { name: "gemini-flash" },
+    update: {},
+    create: {
+      name: "gemini-flash",
+      displayName: "Gemini 2.0 Flash (Google)",
+      apiBaseUrl: "https://generativelanguage.googleapis.com",
+      apiType: "google",
+      modelId: "gemini-2.0-flash",
+      description: "Google Gemini 2.0 Flash - fast & efficient",
+    },
+  });
+
+  const geminiPro = await prisma.provider.upsert({
+    where: { name: "gemini-pro" },
+    update: {},
+    create: {
+      name: "gemini-pro",
+      displayName: "Gemini 2.5 Pro (Google)",
+      apiBaseUrl: "https://generativelanguage.googleapis.com",
+      apiType: "google",
+      modelId: "gemini-2.5-pro-preview-06-05",
+      description: "Google Gemini 2.5 Pro - advanced reasoning & planning",
+    },
+  });
+
+  // Perplexity models
+  const perplexitySonar = await prisma.provider.upsert({
+    where: { name: "perplexity-sonar" },
+    update: {},
+    create: {
+      name: "perplexity-sonar",
+      displayName: "Perplexity Sonar",
+      apiBaseUrl: "https://api.perplexity.ai",
+      apiType: "perplexity",
+      modelId: "sonar",
+      description: "Perplexity Sonar - fast search",
+    },
+  });
+
+  const perplexitySonarPro = await prisma.provider.upsert({
+    where: { name: "perplexity-sonar-pro" },
+    update: {},
+    create: {
+      name: "perplexity-sonar-pro",
+      displayName: "Perplexity Sonar Pro",
+      apiBaseUrl: "https://api.perplexity.ai",
+      apiType: "perplexity",
+      modelId: "sonar-pro",
+      description: "Perplexity Sonar Pro - deep research with citations",
+    },
+  });
+
+  // OpenAI models
+  const gpt4o = await prisma.provider.upsert({
+    where: { name: "gpt-4o" },
+    update: {},
+    create: {
+      name: "gpt-4o",
+      displayName: "GPT-4o (OpenAI)",
+      apiBaseUrl: "https://api.openai.com",
+      apiType: "openai",
+      modelId: "gpt-4o",
+      description: "OpenAI GPT-4o - flagship multimodal model",
+    },
+  });
+
+  const gpt4oMini = await prisma.provider.upsert({
+    where: { name: "gpt-4o-mini" },
+    update: {},
+    create: {
+      name: "gpt-4o-mini",
+      displayName: "GPT-4o Mini (OpenAI)",
+      apiBaseUrl: "https://api.openai.com",
+      apiType: "openai",
+      modelId: "gpt-4o-mini",
+      description: "OpenAI GPT-4o Mini - fast & affordable",
+    },
+  });
+
+  const o3 = await prisma.provider.upsert({
+    where: { name: "o3" },
+    update: {},
+    create: {
+      name: "o3",
+      displayName: "o3 (OpenAI)",
+      apiBaseUrl: "https://api.openai.com",
+      apiType: "openai",
+      modelId: "o3",
+      description: "OpenAI o3 - advanced reasoning model",
+    },
+  });
+
+  const o3Mini = await prisma.provider.upsert({
+    where: { name: "o3-mini" },
+    update: {},
+    create: {
+      name: "o3-mini",
+      displayName: "o3 Mini (OpenAI)",
+      apiBaseUrl: "https://api.openai.com",
+      apiType: "openai",
+      modelId: "o3-mini",
+      description: "OpenAI o3 Mini - fast reasoning",
+    },
+  });
+
+  // Legacy aliases (point to default models)
   const claude = await prisma.provider.upsert({
     where: { name: "claude" },
-    update: {},
+    update: { modelId: "claude-sonnet-4-20250514" },
     create: {
       name: "claude",
       displayName: "Claude (Anthropic)",
       apiBaseUrl: "https://api.anthropic.com",
       apiType: "anthropic",
       modelId: "claude-sonnet-4-20250514",
-      description: "Anthropic's Claude - excellent for coding and writing",
+      description: "Alias → Claude Sonnet",
     },
   });
 
   const gemini = await prisma.provider.upsert({
     where: { name: "gemini" },
-    update: {},
+    update: { modelId: "gemini-2.0-flash" },
     create: {
       name: "gemini",
       displayName: "Gemini (Google)",
       apiBaseUrl: "https://generativelanguage.googleapis.com",
       apiType: "google",
       modelId: "gemini-2.0-flash",
-      description: "Google's Gemini - strong at planning and reasoning",
+      description: "Alias → Gemini 2.0 Flash",
     },
   });
 
   const perplexity = await prisma.provider.upsert({
     where: { name: "perplexity" },
-    update: {},
+    update: { modelId: "sonar-pro" },
     create: {
       name: "perplexity",
       displayName: "Perplexity",
       apiBaseUrl: "https://api.perplexity.ai",
       apiType: "perplexity",
       modelId: "sonar-pro",
-      description: "Perplexity - specialized in real-time search and research",
+      description: "Alias → Perplexity Sonar Pro",
     },
   });
 
   const gpt = await prisma.provider.upsert({
     where: { name: "gpt" },
-    update: {},
+    update: { modelId: "gpt-4o" },
     create: {
       name: "gpt",
       displayName: "GPT (OpenAI)",
       apiBaseUrl: "https://api.openai.com",
       apiType: "openai",
       modelId: "gpt-4o",
-      description: "OpenAI's GPT - general-purpose AI assistant",
+      description: "Alias → GPT-4o",
     },
   });
 
-  console.log("Providers seeded:", [claude, gemini, perplexity, gpt].map((p) => p.name));
+  const allProviders = [
+    claudeSonnet, claudeHaiku, claudeOpus,
+    geminiFlash, geminiPro,
+    perplexitySonar, perplexitySonarPro,
+    gpt4o, gpt4oMini, o3, o3Mini,
+    claude, gemini, perplexity, gpt,
+  ];
+  console.log("Providers seeded:", allProviders.map((p) => p.name));
 
   // --- Roles ---
   const coding = await prisma.role.upsert({

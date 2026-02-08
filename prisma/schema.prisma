@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+/// AI provider (e.g. Claude, Gemini, Perplexity, GPT, etc.)
+model Provider {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  displayName String
+  apiBaseUrl  String
+  apiType     String   // "openai" | "anthropic" | "google" | "custom"
+  modelId     String   // default model ID for this provider
+  description String?
+  isEnabled   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments RoleAssignment[]
+}
+
+/// A role/task category (e.g. coding, search, planning, writing)
+model Role {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments RoleAssignment[]
+  taskLogs    TaskLog[]
+}
+
+/// Maps a provider to a role within a project
+model RoleAssignment {
+  id         String   @id @default(uuid())
+  projectId  String
+  roleId     String
+  providerId String
+  priority   Int      @default(0)
+  config     String?  // JSON string for provider-specific overrides
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  role     Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, roleId, providerId])
+  @@index([projectId])
+}
+
+/// A project that groups role assignments
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// Execution log for tasks sent to AI providers
+model TaskLog {
+  id         String   @id @default(uuid())
+  projectId  String
+  roleId     String
+  providerId String
+  input      String
+  output     String?
+  status     String   // "pending" | "success" | "error"
+  errorMsg   String?
+  durationMs Int?
+  createdAt  DateTime @default(now())
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@index([projectId])
+}

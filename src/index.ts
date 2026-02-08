@@ -6,6 +6,7 @@ import { taskRouter } from "./routes/tasks";
 import { projectRouter } from "./routes/projects";
 import { agentRouter } from "./routes/agent";
 import providersListRouter from "./routes/providers-list";
+import mcpRouter from "./routes/mcp";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,6 +26,7 @@ app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", taskRouter);
 app.use("/api/agent", agentRouter);
 app.use("/api/models", providersListRouter);
+app.use("/mcp", mcpRouter);
 
 // Error handler
 app.use(

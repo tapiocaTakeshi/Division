@@ -6,11 +6,10 @@ function getDatabaseUrl(): string {
   // On Vercel: copy bundled DB to writable /tmp
   if (process.env.VERCEL) {
     const tmpDb = "/tmp/dev.db";
-    if (!fs.existsSync(tmpDb)) {
-      const sourceDb = path.join(__dirname, "../prisma/dev.db");
-      if (fs.existsSync(sourceDb)) {
-        fs.copyFileSync(sourceDb, tmpDb);
-      }
+    const sourceDb = path.join(__dirname, "../prisma/dev.db");
+    // Always copy the latest seeded DB to ensure deployment updates are applied
+    if (fs.existsSync(sourceDb)) {
+      fs.copyFileSync(sourceDb, tmpDb);
     }
     return `file:${tmpDb}`;
   }

@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Division API | Multi-Agent Research Report 2026</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --primary: #6366f1;
+        --secondary: #ec4899;
+        --bg: #030712;
+        --card-bg: rgba(255, 255, 255, 0.03);
+        --card-border: rgba(255, 255, 255, 0.1);
+        --text-main: #f9fafb;
+        --text-dim: #9ca3af;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: "Outfit", sans-serif;
+      }
+
+      body {
+        background-color: var(--bg);
+        color: var(--text-main);
+        line-height: 1.6;
+        overflow-x: hidden;
+        background-image:
+          radial-gradient(
+            circle at 10% 20%,
+            rgba(99, 102, 241, 0.15) 0%,
+            transparent 40%
+          ),
+          radial-gradient(
+            circle at 90% 80%,
+            rgba(236, 72, 153, 0.1) 0%,
+            transparent 40%
+          );
+      }
+
+      /* Glassmorphism Styles */
+      .glass {
+        background: var(--card-bg);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid var(--card-border);
+        border-radius: 24px;
+      }
+
+      .container {
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 40px 24px;
+      }
+
+      /* Hero Section */
+      header {
+        text-align: center;
+        padding: 100px 0 60px;
+      }
+
+      .agent-badge {
+        display: inline-flex;
+        gap: 12px;
+        margin-bottom: 24px;
+      }
+
+      .badge-item {
+        padding: 6px 16px;
+        border-radius: 50px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        border: 1px solid var(--card-border);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .badge-item.active {
+        background: var(--primary);
+        border-color: var(--primary);
+      }
+
+      h1 {
+        font-size: clamp(2.5rem, 8vw, 4.5rem);
+        font-weight: 800;
+        margin-bottom: 16px;
+        background: linear-gradient(to right, #fff, var(--text-dim));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .hero-sub {
+        font-size: 1.25rem;
+        color: var(--text-dim);
+        max-width: 600px;
+        margin: 0 auto;
+      }
+
+      /* Section Layout */
+      section {
+        margin-bottom: 80px;
+        opacity: 0;
+        transform: translateY(30px);
+        transition: all 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+
+      section.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      h2 {
+        font-size: 2rem;
+        margin-bottom: 32px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      h2::before {
+        content: "";
+        width: 8px;
+        height: 32px;
+        background: var(--primary);
+        border-radius: 4px;
+      }
+
+      .content-card {
+        padding: 40px;
+      }
+
+      /* Comparison Grid */
+      .comparison-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        margin-top: 24px;
+      }
+
+      .comp-card {
+        padding: 24px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--card-border);
+      }
+
+      .comp-card h4 {
+        color: var(--primary);
+        margin-bottom: 12px;
+      }
+
+      /* Timeline */
+      .timeline {
+        position: relative;
+        padding-left: 32px;
+      }
+
+      .timeline::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: var(--card-border);
+      }
+
+      .timeline-item {
+        position: relative;
+        margin-bottom: 40px;
+      }
+
+      .timeline-item::before {
+        content: "";
+        position: absolute;
+        left: -32px;
+        top: 8px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--secondary);
+        box-shadow: 0 0 15px var(--secondary);
+        transform: translateX(-50%);
+      }
+
+      /* Footer */
+      footer {
+        text-align: center;
+        padding: 60px 0;
+        border-top: 1px solid var(--card-border);
+        color: var(--text-dim);
+        font-size: 14px;
+      }
+
+      /* Animations */
+      @keyframes float {
+        0% {
+          transform: translateY(0px);
+        }
+        50% {
+          transform: translateY(-10px);
+        }
+        100% {
+          transform: translateY(0px);
+        }
+      }
+
+      .floating {
+        animation: float 6s ease-in-out infinite;
+      }
+
+      /* Scroll Progress */
+      .progress-bar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 3px;
+        background: linear-gradient(to right, var(--primary), var(--secondary));
+        z-index: 1000;
+        width: 0%;
+      }
+
+      @media (max-width: 768px) {
+        .comparison-grid {
+          grid-template-columns: 1fr;
+        }
+        h1 {
+          font-size: 2.8rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="progress-bar" id="progress"></div>
+
+    <div class="container">
+      <header>
+        <div class="agent-badge">
+          <span class="badge-item">Role 1: Search</span>
+          <span class="badge-item">Role 2: Planning</span>
+          <span class="badge-item active">Role 3: Coding</span>
+        </div>
+        <h1 class="floating">Division API</h1>
+        <p class="hero-sub">
+          秘密分散技術が切り拓く、2026年のAIプライバシー・フロンティア
+        </p>
+      </header>
+
+      <section id="summary" class="glass content-card">
+        <h2>エグゼクティブ・サマリー</h2>
+        <p>
+          Division API (Divide API)
+          は、ACMOS社が提供する秘密分散技術のクラウドAPIです。ファイルを意味のない「破片（シュレッド）」に分解し、複数の場所に分散保存することで、従来の暗号化を超える数学的（情報理論的）安全性を実現します。
+        </p>
+      </section>
+
+      <section id="tech" class="glass content-card">
+        <h2>コア・テクノロジー</h2>
+        <p>
+          排他的論理和（XOR）に基づく高速な演算により、データの完全な分散と超高速な復元を両立しています。
+        </p>
+        <div class="comparison-grid">
+          <div class="comp-card">
+            <h4>従来の暗号化 (PKI)</h4>
+            <p>
+              鍵の管理がボトルネックとなり、量子コンピュータによる将来的な解読リスクが存在します。
+            </p>
+          </div>
+          <div class="comp-card">
+            <h4>Division API (秘密分散)</h4>
+            <p>
+              鍵という概念自体を排除。断片単体からは1ビットの情報も得られない理論的な安全性を誇ります。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="ai" class="glass content-card">
+        <h2>2026年のAI・ロードマップ</h2>
+        <div class="timeline">
+          <div class="timeline-item">
+            <h4>AIプライバシーの確立</h4>
+            <p>
+              SMPC (セキュア・マルチパーティ計算)
+              と秘密分散が統合され、企業間で生データを共有せずに共同でAIを訓練することが標準化されます。
+            </p>
+          </div>
+          <div class="timeline-item">
+            <h4>連合学習 (Federated Learning) の普及</h4>
+            <p>
+              各端末に分散されたデータの「断片」を用いて、中央サーバーを介さずセキュアにモデルを最適化。GDPRを越える厳しい規制にも対応可能です。
+            </p>
+          </div>
+          <div class="timeline-item">
+            <h4>分散型AIインフラの完成</h4>
+            <p>
+              データの断片化・分散・AI演算が一貫して行われるインフラが、エッジコンピューティングにおいて主流となります。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="conclusion" class="glass content-card">
+        <h2>結論</h2>
+        <p>
+          Division
+          APIは単なるストレージ・セキュリティに留まらず、次世代の「信頼のインフラ」としての地位を確立しようとしています。AIが遍在する社会において、秘密分散はデータの主権を守る最後の砦となるでしょう。
+        </p>
+      </section>
+
+      <footer>
+        <p>© 2026 Developed by Multi-Agent Synergy Flow using Division API</p>
+      </footer>
+    </div>
+
+    <script>
+      // Reveal elements on scroll
+      const sections = document.querySelectorAll("section");
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("visible");
+            }
+          });
+        },
+        { threshold: 0.1 },
+      );
+
+      sections.forEach((s) => observer.observe(s));
+
+      // Scroll progress bar
+      window.addEventListener("scroll", () => {
+        const h = document.documentElement,
+          b = document.body,
+          st = "scrollTop",
+          sh = "scrollHeight";
+        const percent =
+          ((h[st] || b[st]) / ((h[sh] || b[sh]) - h.clientHeight)) * 100;
+        document.getElementById("progress").style.width = percent + "%";
+      });
+    </script>
+  </body>
+</html>

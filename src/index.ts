@@ -15,7 +15,12 @@ app.use(express.json());
 
 // Health check
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "division-api" });
+  const keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "PERPLEXITY_API_KEY", "XAI_API_KEY", "DEEPSEEK_API_KEY"];
+  const configured: Record<string, boolean> = {};
+  for (const k of keys) {
+    configured[k] = !!process.env[k];
+  }
+  res.json({ status: "ok", service: "division-api", apiKeys: configured });
 });
 
 // API routes

@@ -41,6 +41,7 @@ export interface OrchestratorResult {
   input: string;
   leaderProvider: string;
   leaderModel: string;
+  leaderError?: string;
   tasks: SubTaskResult[];
   totalDurationMs: number;
   status: "success" | "partial" | "error";
@@ -222,6 +223,7 @@ export async function runAgent(
       input: req.input,
       leaderProvider: leaderAssignment.provider.displayName,
       leaderModel: leaderAssignment.provider.modelId,
+      leaderError: leaderResult.errorMsg,
       tasks: [],
       totalDurationMs: Date.now() - startTime,
       status: "error",

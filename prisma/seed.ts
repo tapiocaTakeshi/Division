@@ -203,6 +203,15 @@ async function main() {
     description: "Fast reasoning",
   });
 
+  const gpt5 = await upsertProvider({
+    name: "gpt-5",
+    displayName: "GPT-5 (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "gpt-5",
+    description: "Major generational leap — deep reasoning & multimodal",
+  });
+
   // --- Perplexity ---
   const perplexityDeepResearch = await upsertProvider({
     name: "perplexity-deep-research",
@@ -296,6 +305,290 @@ async function main() {
     description: "Chain-of-thought reasoning specialist",
   });
 
+  await upsertProvider({
+    name: "deepseek-r1-0528",
+    displayName: "DeepSeek R1-0528",
+    apiBaseUrl: "https://api.deepseek.com",
+    apiType: "deepseek",
+    modelId: "deepseek-r1-0528",
+    description: "Updated reasoning model — improved chain-of-thought",
+  });
+
+  await upsertProvider({
+    name: "deepseek-coder-v2",
+    displayName: "DeepSeek-Coder-V2",
+    apiBaseUrl: "https://api.deepseek.com",
+    apiType: "deepseek",
+    modelId: "deepseek-coder-v2",
+    description: "Specialized coding model — code generation & analysis",
+  });
+
+  // --- Meta (Llama) ---
+  const llama4Scout = await upsertProvider({
+    name: "llama-4-scout",
+    displayName: "Llama 4 Scout (Meta)",
+    apiBaseUrl: "https://api.llama.com",
+    apiType: "meta",
+    modelId: "Llama-4-Scout-17B-16E",
+    description: "Efficient MoE — 17B active params, 16 experts, 10M context",
+  });
+
+  const llama4Maverick = await upsertProvider({
+    name: "llama-4-maverick",
+    displayName: "Llama 4 Maverick (Meta)",
+    apiBaseUrl: "https://api.llama.com",
+    apiType: "meta",
+    modelId: "Llama-4-Maverick-17B-128E",
+    description: "Large MoE — 17B active params, 128 experts, 1M context",
+  });
+
+  await upsertProvider({
+    name: "llama-3.1-405b",
+    displayName: "Llama 3.1 405B (Meta)",
+    apiBaseUrl: "https://api.llama.com",
+    apiType: "meta",
+    modelId: "Llama-3.1-405B",
+    description: "Largest open-weight dense model — 405B parameters",
+  });
+
+  await upsertProvider({
+    name: "llama-3.1-70b",
+    displayName: "Llama 3.1 70B (Meta)",
+    apiBaseUrl: "https://api.llama.com",
+    apiType: "meta",
+    modelId: "Llama-3.1-70B",
+    description: "Balanced open-weight model — 70B parameters",
+  });
+
+  await upsertProvider({
+    name: "llama-3.1-8b",
+    displayName: "Llama 3.1 8B (Meta)",
+    apiBaseUrl: "https://api.llama.com",
+    apiType: "meta",
+    modelId: "Llama-3.1-8B",
+    description: "Compact open-weight model — 8B parameters",
+  });
+
+  // --- Alibaba (Qwen) ---
+  const qwen3235B = await upsertProvider({
+    name: "qwen3-235b",
+    displayName: "Qwen3-235B (Alibaba)",
+    apiBaseUrl: "https://dashscope-intl.aliyuncs.com",
+    apiType: "qwen",
+    modelId: "qwen3-235b-a22b",
+    description: "Flagship MoE — 235B total, 22B active, 100+ languages",
+  });
+
+  await upsertProvider({
+    name: "qwen3-32b",
+    displayName: "Qwen3-32B (Alibaba)",
+    apiBaseUrl: "https://dashscope-intl.aliyuncs.com",
+    apiType: "qwen",
+    modelId: "qwen3-32b",
+    description: "Dense 32B — strong reasoning, matches larger models",
+  });
+
+  await upsertProvider({
+    name: "qwen3-4b",
+    displayName: "Qwen3-4B (Alibaba)",
+    apiBaseUrl: "https://dashscope-intl.aliyuncs.com",
+    apiType: "qwen",
+    modelId: "qwen3-4b",
+    description: "Lightweight 4B — mobile & edge deployment",
+  });
+
+  await upsertProvider({
+    name: "qwen3-coder",
+    displayName: "Qwen3-Coder (Alibaba)",
+    apiBaseUrl: "https://dashscope-intl.aliyuncs.com",
+    apiType: "qwen",
+    modelId: "qwen3-coder",
+    description: "Code-specialized — generation, debugging, review",
+  });
+
+  await upsertProvider({
+    name: "qwen-vl",
+    displayName: "Qwen-VL (Alibaba)",
+    apiBaseUrl: "https://dashscope-intl.aliyuncs.com",
+    apiType: "qwen",
+    modelId: "qwen-vl-max",
+    description: "Vision-language model — image understanding & OCR",
+  });
+
+  // --- Mistral ---
+  const mistralLarge3 = await upsertProvider({
+    name: "mistral-large-3",
+    displayName: "Mistral Large 3 (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "mistral-large-latest",
+    description: "Flagship — 128K context, top-tier reasoning & coding",
+  });
+
+  await upsertProvider({
+    name: "mixtral-8x22b",
+    displayName: "Mixtral 8x22B (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "open-mixtral-8x22b",
+    description: "Open MoE — 8 experts x 22B, strong multilingual",
+  });
+
+  await upsertProvider({
+    name: "mistral-7b",
+    displayName: "Mistral 7B (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "open-mistral-7b",
+    description: "Compact open model — efficient general purpose",
+  });
+
+  await upsertProvider({
+    name: "mistral-nemo-12b",
+    displayName: "Mistral NeMo 12B (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "open-mistral-nemo",
+    description: "12B co-developed with NVIDIA — 128K context",
+  });
+
+  await upsertProvider({
+    name: "pixtral-12b",
+    displayName: "Pixtral 12B (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "pixtral-12b-2409",
+    description: "Multimodal — vision + language, image understanding",
+  });
+
+  await upsertProvider({
+    name: "codestral-mamba",
+    displayName: "Codestral Mamba (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "codestral-mamba-latest",
+    description: "Code-specialized Mamba architecture — fast inference",
+  });
+
+  await upsertProvider({
+    name: "mathstral-7b",
+    displayName: "Mathstral 7B (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "mathstral-7b",
+    description: "Math-specialized — scientific & mathematical reasoning",
+  });
+
+  await upsertProvider({
+    name: "ministral-3b",
+    displayName: "Ministral 3B (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "ministral-3b-latest",
+    description: "Ultra-compact 3B — edge & on-device inference",
+  });
+
+  // --- Edge / Lightweight ---
+  await upsertProvider({
+    name: "gemma-2-27b",
+    displayName: "Gemma 2 27B (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "gemma-2-27b",
+    description: "Google open model — 27B, research & fine-tuning",
+  });
+
+  await upsertProvider({
+    name: "gemma-2-9b",
+    displayName: "Gemma 2 9B (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "gemma-2-9b",
+    description: "Google open model — 9B, balanced performance",
+  });
+
+  await upsertProvider({
+    name: "gemma-2-2b",
+    displayName: "Gemma 2 2B (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "gemma-2-2b",
+    description: "Google open model — 2B, ultra-lightweight",
+  });
+
+  await upsertProvider({
+    name: "phi-4-mini",
+    displayName: "Phi-4-mini (Microsoft)",
+    apiBaseUrl: "https://models.inference.ai.azure.com",
+    apiType: "openai",
+    modelId: "Phi-4-mini",
+    description: "Microsoft SLM — strong reasoning for its size",
+  });
+
+  await upsertProvider({
+    name: "phi-3.5-mini",
+    displayName: "Phi-3.5-mini (Microsoft)",
+    apiBaseUrl: "https://models.inference.ai.azure.com",
+    apiType: "openai",
+    modelId: "Phi-3.5-mini-instruct",
+    description: "Microsoft SLM — 3.8B, 128K context, multilingual",
+  });
+
+  await upsertProvider({
+    name: "stablelm-2",
+    displayName: "StableLM 2 (Stability AI)",
+    apiBaseUrl: "https://api.stability.ai",
+    apiType: "openai",
+    modelId: "stablelm-2-12b",
+    description: "Stability AI — 12B, open-weight, efficient",
+  });
+
+  await upsertProvider({
+    name: "vicuna-13b",
+    displayName: "Vicuna-13B (LMSYS)",
+    apiBaseUrl: "http://localhost:11434",
+    apiType: "openai",
+    modelId: "vicuna-13b",
+    description: "Open-source chatbot — fine-tuned LLaMA, self-hosted",
+  });
+
+  await upsertProvider({
+    name: "smollm3-3b",
+    displayName: "SmolLM3-3B (Hugging Face)",
+    apiBaseUrl: "https://api-inference.huggingface.co",
+    apiType: "openai",
+    modelId: "SmolLM3-3B",
+    description: "Hugging Face compact model — 3B, edge-optimized",
+  });
+
+  await upsertProvider({
+    name: "minicpm",
+    displayName: "MiniCPM (OpenBMB)",
+    apiBaseUrl: "http://localhost:11434",
+    apiType: "openai",
+    modelId: "minicpm-latest",
+    description: "Ultra-compact — on-device, multimodal capable",
+  });
+
+  // --- Special / Niche ---
+  await upsertProvider({
+    name: "kimi-k2",
+    displayName: "Kimi K2 (Moonshot AI)",
+    apiBaseUrl: "https://api.moonshot.cn",
+    apiType: "moonshot",
+    modelId: "kimi-k2",
+    description: "Massive MoE — 1T total params, agentic & coding",
+  });
+
+  await upsertProvider({
+    name: "command-r-plus",
+    displayName: "Command R+ (Cohere)",
+    apiBaseUrl: "https://api.cohere.com",
+    apiType: "cohere",
+    modelId: "command-r-plus",
+    description: "Enterprise RAG-optimized — retrieval & tool use",
+  });
+
   // --- Legacy aliases (backward compatibility) ---
   const claude = await upsertProvider({
     name: "claude",
@@ -329,8 +622,8 @@ async function main() {
     displayName: "GPT (OpenAI)",
     apiBaseUrl: "https://api.openai.com",
     apiType: "openai",
-    modelId: "gpt-4.1",
-    description: "Alias → GPT-4.1",
+    modelId: "gpt-5.2",
+    description: "Alias → GPT-5.2",
   });
 
   const grok = await upsertProvider({
@@ -349,6 +642,51 @@ async function main() {
     apiType: "deepseek",
     modelId: "deepseek-chat",
     description: "Alias → DeepSeek V3.2",
+  });
+
+  await upsertProvider({
+    name: "llama",
+    displayName: "Llama (Meta)",
+    apiBaseUrl: "https://api.llama.com",
+    apiType: "meta",
+    modelId: "Llama-4-Maverick-17B-128E",
+    description: "Alias → Llama 4 Maverick",
+  });
+
+  await upsertProvider({
+    name: "qwen",
+    displayName: "Qwen (Alibaba)",
+    apiBaseUrl: "https://dashscope-intl.aliyuncs.com",
+    apiType: "qwen",
+    modelId: "qwen3-235b-a22b",
+    description: "Alias → Qwen3-235B",
+  });
+
+  await upsertProvider({
+    name: "mistral",
+    displayName: "Mistral (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "mistral-large-latest",
+    description: "Alias → Mistral Large 3",
+  });
+
+  await upsertProvider({
+    name: "kimi",
+    displayName: "Kimi (Moonshot AI)",
+    apiBaseUrl: "https://api.moonshot.cn",
+    apiType: "moonshot",
+    modelId: "kimi-k2",
+    description: "Alias → Kimi K2",
+  });
+
+  await upsertProvider({
+    name: "cohere",
+    displayName: "Cohere",
+    apiBaseUrl: "https://api.cohere.com",
+    apiType: "cohere",
+    modelId: "command-r-plus",
+    description: "Alias → Command R+",
   });
 
   // Also keep old model-level names for backward compat
@@ -370,7 +708,7 @@ async function main() {
     description: "Alias → Gemini 2.5 Pro",
   });
 
-  console.log("Providers seeded (30+ models)");
+  console.log("Providers seeded (70+ models)");
 
   // ===== ROLES =====
   const coding = await prisma.role.upsert({

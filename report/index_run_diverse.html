@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Division API | Specialized Multi-Agent Review 2026</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #050505;
+        --accent-search: #3b82f6; /* Blue for Search/Perplexity */
+        --accent-plan: #10b981; /* Green for Plan/GPT-4o */
+        --accent-code: #f59e0b; /* Amber for Code/Qwen */
+        --text-primary: #ffffff;
+        --text-secondary: #a1a1aa;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background-color: var(--bg);
+        color: var(--text-primary);
+        font-family: "Space Grotesk", sans-serif;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 40px;
+      }
+
+      /* Diverse Agent Header */
+      header {
+        padding: 120px 0 80px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .agent-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        margin-bottom: 60px;
+      }
+
+      .agent-card {
+        padding: 24px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
+        text-align: left;
+      }
+
+      .agent-card.search {
+        border-top: 4px solid var(--accent-search);
+      }
+      .agent-card.plan {
+        border-top: 4px solid var(--accent-plan);
+      }
+      .agent-card.code {
+        border-top: 4px solid var(--accent-code);
+      }
+
+      .agent-card h5 {
+        font-family: "IBM+Plex+Mono", monospace;
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+      }
+      .agent-card h4 {
+        font-size: 18px;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      .agent-card p {
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+
+      h1 {
+        font-size: clamp(3rem, 12vw, 5.5rem);
+        line-height: 0.9;
+        font-weight: 700;
+        margin-bottom: 40px;
+        letter-spacing: -0.04em;
+      }
+
+      /* Specialized Sections */
+      .section {
+        padding: 80px 0;
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 60px;
+      }
+
+      .section-label {
+        font-family: "IBM+Plex+Mono", monospace;
+        font-size: 14px;
+        color: var(--text-secondary);
+        padding-top: 10px;
+      }
+
+      .section-content h2 {
+        font-size: 2.8rem;
+        margin-bottom: 32px;
+        letter-spacing: -0.02em;
+      }
+      .section-content p {
+        font-size: 1.25rem;
+        color: var(--text-secondary);
+        margin-bottom: 24px;
+      }
+
+      /* Tech Highlights (Qwen Code Aesthetic) */
+      .tech-highlight {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 2px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        margin-top: 40px;
+      }
+
+      .tech-item {
+        background: var(--bg);
+        padding: 30px;
+      }
+
+      .tech-item h6 {
+        font-family: "IBM+Plex+Mono", monospace;
+        color: var(--accent-code);
+        margin-bottom: 12px;
+      }
+      .tech-item span {
+        font-size: 24px;
+        font-weight: 700;
+      }
+
+      /* 2026 Timeline (GPT-4o Planning Logic) */
+      .timeline {
+        margin-top: 40px;
+      }
+      .step {
+        position: relative;
+        padding-left: 30px;
+        margin-bottom: 40px;
+        border-left: 1px solid var(--accent-plan);
+      }
+      .step::after {
+        content: "";
+        position: absolute;
+        left: -5px;
+        top: 0;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--accent-plan);
+      }
+      .step h4 {
+        color: #fff;
+        margin-bottom: 8px;
+      }
+
+      /* Subtle Animations */
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .animate {
+        animation: fadeIn 0.8s forwards;
+      }
+
+      footer {
+        padding: 60px 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.05);
+        text-align: center;
+      }
+      footer p {
+        font-family: "IBM+Plex+Mono", monospace;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+
+      @media (max-width: 900px) {
+        .agent-grid {
+          grid-template-columns: 1fr;
+        }
+        .section {
+          grid-template-columns: 1fr;
+          gap: 20px;
+        }
+        h1 {
+          font-size: 3.5rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <div class="agent-grid animate">
+          <div class="agent-card search">
+            <h5>ROLE: SEARCH</h5>
+            <h4>Perplexity Sonar</h4>
+            <p>Citations & Technical Grounding</p>
+          </div>
+          <div class="agent-card plan">
+            <h5>ROLE: PLANNING</h5>
+            <h4>GPT-4o</h4>
+            <p>Logical Flow & User Journey</p>
+          </div>
+          <div class="agent-card code">
+            <h5>ROLE: CODING</h5>
+            <h4>Qwen 3 Coder</h4>
+            <p>High-Performance Assets</p>
+          </div>
+        </div>
+        <h1 class="animate" style="animation-delay: 0.2s">
+          Secure<br />Division API
+        </h1>
+        <p
+          class="animate"
+          style="
+            animation-delay: 0.3s;
+            font-size: 1.5rem;
+            color: var(--text-secondary);
+            max-width: 800px;
+          "
+        >
+          2026年のAIプライバシー革命を牽引する、マルチエージェント・レポート。
+        </p>
+      </header>
+
+      <section class="section animate" style="animation-delay: 0.4s">
+        <div class="section-label">01. RESEARCH DATA</div>
+        <div class="section-content">
+          <h2>秘密分散の解体。</h2>
+          <p>
+            Division API (Divide API)
+            は、ファイルを数学的に意味のない断片へと分解します。従来の暗号化が「鍵」を隠すのに対し、秘密分散は「データそのもの」を存在させない手法です。
+          </p>
+          <div class="tech-highlight">
+            <div class="tech-item">
+              <h6>METHOD</h6>
+              <span>(k, n) Threshold</span>
+            </div>
+            <div class="tech-item">
+              <h6>LOGIC</h6>
+              <span>XOR Engine</span>
+            </div>
+            <div class="tech-item">
+              <h6>SECURITY</h6>
+              <span>Information-Theoretic</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section animate" style="animation-delay: 0.5s">
+        <div class="section-label" style="color: var(--accent-plan)">
+          02. STRATEGY PLAN
+        </div>
+        <div class="section-content">
+          <h2>AIプライバシーの統合。</h2>
+          <p>
+            2026年、データの分散は単なるストレージの要件ではなく、AIモデル訓練の前提となります。
+          </p>
+          <div class="timeline">
+            <div class="step">
+              <h4>SMPCの標準化</h4>
+              <p>
+                マルチパーティ計算により、機密データを復元せずに直接AI演算を実施。
+              </p>
+            </div>
+            <div class="step">
+              <h4>分散連合学習</h4>
+              <p>
+                エッジ端末での断片化処理により、プライバシーを完全に保護した状態でのモデル最適化。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section animate" style="animation-delay: 0.6s">
+        <div class="section-label" style="color: var(--accent-code)">
+          03. CODE DELIVERY
+        </div>
+        <div class="section-content">
+          <h2>結論。</h2>
+          <p>
+            異なる専門性を持つエージェントが協調することで、技術的な正確さと感動を与えるデザインの両立が可能になりました。Division
+            APIは、未来のデジタル主権を支えるOSとなります。
+          </p>
+        </div>
+      </section>
+
+      <footer>
+        <p>
+          // 2026 MULTI-AGENT ORCHESTRATION RECENT BUILD. // NO HOMOGENEOUS
+          MODELS USED.
+        </p>
+      </footer>
+    </div>
+
+    <script>
+      // Simple scroll animation trigger
+      const items = document.querySelectorAll(".animate");
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("visible"); // Not strictly needed as CSS handles initial
+            }
+          });
+        },
+        { threshold: 0.1 },
+      );
+      items.forEach((i) => observer.observe(i));
+    </script>
+  </body>
+</html>

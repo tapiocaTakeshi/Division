@@ -1,0 +1,34 @@
+{
+  "sessionId": "b65c2dcf-bbfa-447b-9150-56e7109e6c15",
+  "input": "2026年現在のマルチAIオーケストレーションAPI市場を調査し、Division APIとの差別化ポイントを分析した上で、Division APIの優位性を示すランディングページをHTMLで作成して。",
+  "leaderProvider": "Gemini 2.5 Flash (Google)",
+  "leaderModel": "gemini-2.5-flash",
+  "tasks": [
+    {
+      "role": "search",
+      "provider": "Perplexity Sonar Pro",
+      "model": "sonar-pro",
+      "status": "success",
+      "durationMs": 12966,
+      "summary": "2026年AIオーケストレーション市場調査: 85億ドル規模、78%企業がマルチモデル戦略、327%成長。主要プレイヤー: LangChain, Flowise, Autogen, NovaSphere, Agentforce, Databricks"
+    },
+    {
+      "role": "planning",
+      "provider": "Gemini 2.5 Pro (Google)",
+      "model": "gemini-2.5-pro",
+      "status": "success",
+      "durationMs": 44923,
+      "summary": "差別化ポイント5つ: コスト最適化, ハイブリッドフロー制御, エンタープライズセキュリティ, ベンダーロック回避, 真のマルチAI協調。LP構成・コンテンツ詳細設計"
+    },
+    {
+      "role": "coding",
+      "provider": "Claude Sonnet 4.5 (Anthropic)",
+      "model": "claude-sonnet-4-5-20250929",
+      "status": "success",
+      "durationMs": 41504,
+      "summary": "HTML/CSS/JS完全実装。ヒーロー, 差別化カード, 競合比較表, 機能紹介, SVGアーキテクチャ図, 料金プラン, CTA"
+    }
+  ],
+  "totalDurationMs": 114157,
+  "status": "success"
+}

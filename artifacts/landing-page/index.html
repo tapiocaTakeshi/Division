@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Division API - マルチAIオーケストレーションの新基準</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&family=Noto+Sans+JP:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1e40af;
+            --secondary: #7c3aed;
+            --accent: #06b6d4;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text: #1e293b;
+            --text-sub: #64748b;
+            --bg: #f8fafc;
+            --bg-white: #ffffff;
+            --border: #e2e8f0;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,.1);
+            --shadow-md: 0 4px 6px rgba(0,0,0,.1);
+            --shadow-lg: 0 10px 25px rgba(0,0,0,.1);
+        }
+
+        body {
+            font-family: 'Noto Sans JP','Inter',sans-serif;
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+        /* ===== Header ===== */
+        header { background: var(--bg-white); box-shadow: var(--shadow-sm); position: sticky; top: 0; z-index: 1000; }
+        nav { display: flex; justify-content: space-between; align-items: center; padding: 18px 0; }
+        .logo { font-size: 24px; font-weight: 900; background: linear-gradient(135deg,var(--primary),var(--secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .nav-links { display: flex; gap: 28px; list-style: none; }
+        .nav-links a { color: var(--text); text-decoration: none; font-weight: 600; transition: color .3s; font-size: 15px; }
+        .nav-links a:hover { color: var(--primary); }
+
+        .cta-btn {
+            background: linear-gradient(135deg,var(--primary),var(--secondary));
+            color: #fff; padding: 12px 30px; border-radius: 8px; text-decoration: none;
+            font-weight: 700; transition: transform .3s,box-shadow .3s; display: inline-block;
+            border: none; cursor: pointer; font-size: 16px;
+        }
+        .cta-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(37,99,235,.3); }
+        .cta-btn-outline { background: var(--bg-white); color: var(--primary); border: 2px solid var(--primary); }
+        .cta-btn-outline:hover { background: var(--primary); color: #fff; }
+        .cta-btn-white { background: #fff; color: var(--primary); }
+        .cta-btn-white:hover { background: #f0f0f0; }
+
+        /* ===== Hero ===== */
+        .hero {
+            background: linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+            padding: 120px 0 100px; color: #fff; position: relative; overflow: hidden;
+        }
+        .hero::before {
+            content: ''; position: absolute; inset: 0;
+            background: url('data:image/svg+xml,<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg"><defs><pattern id="g" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0L0 0 0 40" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1"/></pattern></defs><rect width="100" height="100" fill="url(%23g)"/></svg>');
+            opacity: .5;
+        }
+        .hero-content { position: relative; z-index: 1; max-width: 800px; margin: 0 auto; text-align: center; }
+        .hero h1 { font-size: 52px; font-weight: 900; margin-bottom: 24px; line-height: 1.2; }
+        .hero h1 span { display: block; font-size: 28px; font-weight: 400; opacity: .9; margin-bottom: 8px; }
+        .hero p { font-size: 20px; margin-bottom: 40px; opacity: .95; }
+        .hero-buttons { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+        .hero-stats { display: flex; justify-content: center; gap: 60px; margin-top: 80px; flex-wrap: wrap; }
+        .stat-number { font-size: 48px; font-weight: 900; display: block; }
+        .stat-label { font-size: 15px; opacity: .9; }
+
+        /* ===== Section Common ===== */
+        .section-header { text-align: center; margin-bottom: 70px; }
+        .section-header h2 { font-size: 40px; font-weight: 900; margin-bottom: 16px; }
+        .section-header p { font-size: 18px; color: var(--text-sub); max-width: 700px; margin: 0 auto; }
+
+        /* ===== Differentiators ===== */
+        .differentiators { padding: 100px 0; background: var(--bg); }
+        .diff-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 28px; }
+        .diff-card {
+            background: var(--bg-white); padding: 36px; border-radius: 16px;
+            box-shadow: var(--shadow-md); transition: transform .3s,box-shadow .3s;
+            border-top: 4px solid var(--primary);
+        }
+        .diff-card:hover { transform: translateY(-6px); box-shadow: var(--shadow-lg); }
+        .diff-card:nth-child(2) { border-top-color: var(--secondary); }
+        .diff-card:nth-child(3) { border-top-color: var(--accent); }
+        .diff-card:nth-child(4) { border-top-color: var(--success); }
+        .diff-card:nth-child(5) { border-top-color: var(--warning); }
+        .diff-icon {
+            width: 56px; height: 56px; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            margin-bottom: 20px; font-size: 26px; color: #fff;
+        }
+        .diff-card:nth-child(1) .diff-icon { background: linear-gradient(135deg,var(--primary),#3b82f6); }
+        .diff-card:nth-child(2) .diff-icon { background: linear-gradient(135deg,var(--secondary),#a78bfa); }
+        .diff-card:nth-child(3) .diff-icon { background: linear-gradient(135deg,var(--accent),#22d3ee); }
+        .diff-card:nth-child(4) .diff-icon { background: linear-gradient(135deg,var(--success),#34d399); }
+        .diff-card:nth-child(5) .diff-icon { background: linear-gradient(135deg,var(--warning),#fbbf24); }
+        .diff-card h3 { font-size: 20px; font-weight: 700; margin-bottom: 12px; }
+        .diff-card p { color: var(--text-sub); line-height: 1.8; font-size: 15px; }
+
+        /* ===== Comparison Table ===== */
+        .comparison { padding: 100px 0; background: var(--bg-white); }
+        .table-wrap { overflow-x: auto; margin-top: 40px; }
+        table { width: 100%; border-collapse: collapse; box-shadow: var(--shadow-md); border-radius: 12px; overflow: hidden; }
+        thead { background: linear-gradient(135deg,var(--primary),var(--secondary)); color: #fff; }
+        th,td { padding: 18px 20px; text-align: center; font-size: 15px; }
+        th { font-weight: 700; }
+        th:first-child,td:first-child { text-align: left; }
+        tbody tr { border-bottom: 1px solid var(--border); }
+        tbody tr:hover { background: var(--bg); }
+        .highlight-col { background: #eff6ff; font-weight: 600; }
+        .ck { color: var(--success); font-size: 18px; }
+        .cr { color: var(--danger); font-size: 18px; }
+        .pt { color: var(--warning); font-size: 18px; }
+
+        /* ===== Features ===== */
+        .features { padding: 100px 0; background: var(--bg); }
+        .feat-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(340px,1fr)); gap: 36px; }
+        .feat-card { background: var(--bg-white); padding: 36px; border-radius: 16px; box-shadow: var(--shadow-md); }
+        .feat-card h3 { font-size: 22px; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
+        .feat-card h3 i { color: var(--primary); }
+        .feat-card p { color: var(--text-sub); margin-bottom: 16px; }
+        .feat-list { list-style: none; }
+        .feat-list li { padding: 10px 0; border-bottom: 1px solid var(--border); color: var(--text-sub); display: flex; align-items: center; gap: 10px; }
+        .feat-list li:last-child { border-bottom: none; }
+        .feat-list li i { color: var(--success); }
+
+        /* ===== Architecture ===== */
+        .architecture { padding: 100px 0; background: var(--bg-white); }
+        .arch-wrap { margin-top: 50px; background: var(--bg); padding: 40px; border-radius: 16px; box-shadow: var(--shadow-md); display: flex; justify-content: center; }
+        .arch-wrap svg { max-width: 100%; height: auto; }
+
+        /* ===== Pricing ===== */
+        .pricing { padding: 100px 0; background: var(--bg); }
+        .price-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(300px,1fr)); gap: 28px; }
+        .price-card { background: var(--bg-white); padding: 40px; border-radius: 16px; box-shadow: var(--shadow-md); transition: transform .3s; position: relative; }
+        .price-card:hover { transform: translateY(-6px); }
+        .price-card.featured { border: 3px solid var(--primary); }
+        .pop-badge { position: absolute; top: -14px; right: 20px; background: var(--primary); color: #fff; padding: 6px 18px; border-radius: 20px; font-weight: 700; font-size: 13px; }
+        .price-card h3 { font-size: 26px; font-weight: 700; margin-bottom: 8px; }
+        .price-card .price { font-size: 48px; font-weight: 900; color: var(--primary); }
+        .price-card .price span { font-size: 16px; color: var(--text-sub); font-weight: 400; }
+        .price-card .price-desc { color: var(--text-sub); margin: 12px 0 24px; font-size: 15px; }
+        .price-features { list-style: none; margin-bottom: 30px; }
+        .price-features li { padding: 10px 0; display: flex; align-items: center; gap: 10px; color: var(--text-sub); }
+        .price-features li i { color: var(--success); }
+
+        /* ===== Final CTA ===== */
+        .final-cta { padding: 100px 0; background: linear-gradient(135deg,var(--primary),var(--secondary)); color: #fff; text-align: center; }
+        .final-cta h2 { font-size: 42px; font-weight: 900; margin-bottom: 20px; }
+        .final-cta p { font-size: 20px; margin-bottom: 40px; opacity: .95; max-width: 600px; margin-left: auto; margin-right: auto; }
+
+        /* ===== Footer ===== */
+        footer { background: var(--text); color: #fff; padding: 50px 0 20px; }
+        .footer-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap: 40px; margin-bottom: 40px; }
+        .footer-grid h4 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+        .footer-grid ul { list-style: none; }
+        .footer-grid li { padding: 4px 0; }
+        .footer-grid a { color: #94a3b8; text-decoration: none; font-size: 14px; }
+        .footer-grid a:hover { color: #fff; }
+        .footer-bottom { text-align: center; border-top: 1px solid #334155; padding-top: 20px; color: #64748b; font-size: 14px; }
+
+        /* ===== Responsive ===== */
+        @media(max-width:768px){
+            .hero h1 { font-size: 32px; }
+            .hero h1 span { font-size: 20px; }
+            .hero-stats { gap: 30px; }
+            .stat-number { font-size: 36px; }
+            .section-header h2 { font-size: 28px; }
+            .nav-links { display: none; }
+            .diff-grid,.feat-grid,.price-grid { grid-template-columns: 1fr; }
+            .price-card.featured { transform: none; }
+            th,td { padding: 12px 10px; font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+    <div class="container">
+        <nav>
+            <div class="logo">Division API</div>
+            <ul class="nav-links">
+                <li><a href="#features">機能</a></li>
+                <li><a href="#comparison">比較</a></li>
+                <li><a href="#architecture">構成</a></li>
+                <li><a href="#pricing">料金</a></li>
+            </ul>
+            <a href="#cta" class="cta-btn" style="padding:10px 24px;font-size:14px;">無料で始める</a>
+        </nav>
+    </div>
+</header>
+
+<!-- Hero -->
+<section class="hero">
+    <div class="container">
+        <div class="hero-content">
+            <h1><span>マルチAIオーケストレーションの新基準</span>1つのリクエストで<br>複数AIが協調する</h1>
+            <p>Leader AIがタスクを自動分解し、Claude・GPT・Gemini・Perplexityが<br>それぞれの得意分野で並列処理。単なるAPIゲートウェイを超えた知的協調。</p>
+            <div class="hero-buttons">
+                <a href="#cta" class="cta-btn">無料で始める <i class="fas fa-arrow-right"></i></a>
+                <a href="#architecture" class="cta-btn cta-btn-white">アーキテクチャを見る</a>
+            </div>
+            <div class="hero-stats">
+                <div class="stat-item"><span class="stat-number">6</span><span class="stat-label">対応AIプロバイダー</span></div>
+                <div class="stat-item"><span class="stat-number">38+</span><span class="stat-label">利用可能モデル</span></div>
+                <div class="stat-item"><span class="stat-number">&lt;2s</span><span class="stat-label">Leader分解レイテンシ</span></div>
+                <div class="stat-item"><span class="stat-number">MCP</span><span class="stat-label">プロトコル対応</span></div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Differentiators -->
+<section class="differentiators">
+    <div class="container">
+        <div class="section-header">
+            <h2>なぜ Division API なのか</h2>
+            <p>2026年、85億ドル規模のAIオーケストレーション市場で、Division APIが選ばれる5つの理由</p>
+        </div>
+        <div class="diff-grid">
+            <div class="diff-card">
+                <div class="diff-icon"><i class="fas fa-brain"></i></div>
+                <h3>ロールベース協調</h3>
+                <p>単なるモデル切替ではなく、coding・search・planning・review・leaderといった「役割」にAIを割り当て。1リクエストで複数AIが協調動作します。</p>
+            </div>
+            <div class="diff-card">
+                <div class="diff-icon"><i class="fas fa-sitemap"></i></div>
+                <h3>Leader AIタスク分解</h3>
+                <p>Leader AIが入力を自動分析し、最適なサブタスクに分解。各専門AIに並列ディスパッチし、結果を統合して返却します。</p>
+            </div>
+            <div class="diff-card">
+                <div class="diff-icon"><i class="fas fa-search-dollar"></i></div>
+                <h3>リアルタイム検索統合</h3>
+                <p>Perplexityによるリアルタイム検索をパイプラインに組み込み。最新の情報を取得した上でコーディングやレビューに反映できます。</p>
+            </div>
+            <div class="diff-card">
+                <div class="diff-icon"><i class="fas fa-exchange-alt"></i></div>
+                <h3>ベンダーロックイン回避</h3>
+                <p>ダッシュボードからワンクリックでAI割り当てを変更可能。特定ベンダーに依存せず、常に最適なモデルを自由に選択できます。</p>
+            </div>
+            <div class="diff-card">
+                <div class="diff-icon"><i class="fas fa-plug"></i></div>
+                <h3>MCP対応</h3>
+                <p>Model Context Protocol標準に対応。Claude DesktopやAIエージェントからツールとして直接利用でき、エコシステムを拡張します。</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Comparison Table -->
+<section class="comparison" id="comparison">
+    <div class="container">
+        <div class="section-header">
+            <h2>競合比較</h2>
+            <p>Perplexityによる2026年市場調査に基づく主要プレイヤーとの比較</p>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>項目</th>
+                        <th class="highlight-col">Division API</th>
+                        <th>OpenRouter</th>
+                        <th>LangChain</th>
+                        <th>LiteLLM</th>
+                        <th>Flowise</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>アプローチ</strong></td>
+                        <td class="highlight-col">マルチAI協調</td>
+                        <td>統一ゲートウェイ</td>
+                        <td>フレームワーク</td>
+                        <td>プロキシ</td>
+                        <td>ローコード</td>
+                    </tr>
+                    <tr>
+                        <td><strong>1リクエスト→複数AI協調</strong></td>
+                        <td class="highlight-col"><i class="fas fa-check-circle ck"></i></td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-minus-circle pt"></i> 要実装</td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-minus-circle pt"></i> 要実装</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Leader AIタスク分解</strong></td>
+                        <td class="highlight-col"><i class="fas fa-check-circle ck"></i> 組込み</td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-minus-circle pt"></i> 要実装</td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                    </tr>
+                    <tr>
+                        <td><strong>ロールベース割り当て</strong></td>
+                        <td class="highlight-col"><i class="fas fa-check-circle ck"></i></td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-minus-circle pt"></i> カスタム</td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-minus-circle pt"></i> カスタム</td>
+                    </tr>
+                    <tr>
+                        <td><strong>リアルタイム検索統合</strong></td>
+                        <td class="highlight-col"><i class="fas fa-check-circle ck"></i> Perplexity</td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-minus-circle pt"></i> 要実装</td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-minus-circle pt"></i> 要実装</td>
+                    </tr>
+                    <tr>
+                        <td><strong>対応モデル数</strong></td>
+                        <td class="highlight-col">38+</td>
+                        <td>300+</td>
+                        <td>100+</td>
+                        <td>100+</td>
+                        <td>50+</td>
+                    </tr>
+                    <tr>
+                        <td><strong>MCP対応</strong></td>
+                        <td class="highlight-col"><i class="fas fa-check-circle ck"></i></td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-minus-circle pt"></i></td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                    </tr>
+                    <tr>
+                        <td><strong>セルフホスト</strong></td>
+                        <td class="highlight-col"><i class="fas fa-check-circle ck"></i></td>
+                        <td><i class="fas fa-times-circle cr"></i></td>
+                        <td><i class="fas fa-check-circle ck"></i></td>
+                        <td><i class="fas fa-check-circle ck"></i></td>
+                        <td><i class="fas fa-check-circle ck"></i></td>
+                    </tr>
+                    <tr>
+                        <td><strong>セットアップ難易度</strong></td>
+                        <td class="highlight-col">低（API呼ぶだけ）</td>
+                        <td>低</td>
+                        <td>高</td>
+                        <td>中</td>
+                        <td>低</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<!-- Features -->
+<section class="features" id="features">
+    <div class="container">
+        <div class="section-header">
+            <h2>主要機能</h2>
+            <p>エンドポイント1つで、AIチームが動き出す</p>
+        </div>
+        <div class="feat-grid">
+            <div class="feat-card">
+                <h3><i class="fas fa-robot"></i> エージェントオーケストレーション</h3>
+                <p>POST /api/agent/run 一発で、複数AIが協調動作</p>
+                <ul class="feat-list">
+                    <li><i class="fas fa-check"></i> Leader AIがタスクを自動分解</li>
+                    <li><i class="fas fa-check"></i> 各ロールに最適なAIをディスパッチ</li>
+                    <li><i class="fas fa-check"></i> 結果を統合して返却</li>
+                    <li><i class="fas fa-check"></i> 実行ログ自動記録</li>
+                </ul>
+            </div>
+            <div class="feat-card">
+                <h3><i class="fas fa-sliders-h"></i> 柔軟なロール管理</h3>
+                <p>プロジェクトごとにAI割り当てをカスタマイズ</p>
+                <ul class="feat-list">
+                    <li><i class="fas fa-check"></i> coding / search / planning / review / writing</li>
+                    <li><i class="fas fa-check"></i> ワンクリックでプロバイダー切替</li>
+                    <li><i class="fas fa-check"></i> Bulk APIで一括設定</li>
+                    <li><i class="fas fa-check"></i> 優先度ベースのフォールバック</li>
+                </ul>
+            </div>
+            <div class="feat-card">
+                <h3><i class="fas fa-puzzle-piece"></i> マルチプロバイダー統合</h3>
+                <p>6社38+モデルを統一インターフェースで利用</p>
+                <ul class="feat-list">
+                    <li><i class="fas fa-check"></i> Anthropic (Claude 4.5 / Opus 4.6)</li>
+                    <li><i class="fas fa-check"></i> OpenAI (GPT-4.1 / GPT-5.2)</li>
+                    <li><i class="fas fa-check"></i> Google (Gemini 2.5 / 3)</li>
+                    <li><i class="fas fa-check"></i> Perplexity / xAI / DeepSeek</li>
+                </ul>
+            </div>
+            <div class="feat-card">
+                <h3><i class="fas fa-server"></i> MCP &amp; REST API</h3>
+                <p>どこからでもアクセスできる柔軟なインターフェース</p>
+                <ul class="feat-list">
+                    <li><i class="fas fa-check"></i> RESTful CRUD API（27エンドポイント）</li>
+                    <li><i class="fas fa-check"></i> MCP (Model Context Protocol) 対応</li>
+                    <li><i class="fas fa-check"></i> Claude Desktopからツール利用</li>
+                    <li><i class="fas fa-check"></i> Vercelワンクリックデプロイ</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Architecture -->
+<section class="architecture" id="architecture">
+    <div class="container">
+        <div class="section-header">
+            <h2>アーキテクチャ</h2>
+            <p>Leader AIを中核とした知的オーケストレーション</p>
+        </div>
+        <div class="arch-wrap">
+            <svg viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans JP',sans-serif">
+                <!-- Background -->
+                <rect width="900" height="480" fill="#f8fafc" rx="12"/>
+
+                <!-- User Request -->
+                <rect x="20" y="200" width="140" height="60" rx="10" fill="#1e293b"/>
+                <text x="90" y="225" fill="#fff" font-size="13" font-weight="700" text-anchor="middle">ユーザー</text>
+                <text x="90" y="245" fill="#94a3b8" font-size="11" text-anchor="middle">POST /api/agent/run</text>
+
+                <!-- Arrow to Leader -->
+                <line x1="160" y1="230" x2="230" y2="230" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+                <!-- Leader AI -->
+                <rect x="230" y="180" width="160" height="100" rx="12" fill="url(#leaderGrad)" stroke="#2563eb" stroke-width="2"/>
+                <text x="310" y="215" fill="#fff" font-size="14" font-weight="900" text-anchor="middle">Leader AI</text>
+                <text x="310" y="235" fill="rgba(255,255,255,0.9)" font-size="11" text-anchor="middle">Gemini 2.5 Flash</text>
+                <text x="310" y="255" fill="rgba(255,255,255,0.8)" font-size="10" text-anchor="middle">タスク分解 &amp; ルーティング</text>
+
+                <!-- Arrows from Leader to Roles -->
+                <line x1="390" y1="210" x2="500" y2="70" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrowBlue)"/>
+                <line x1="390" y1="220" x2="500" y2="170" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrowPurple)"/>
+                <line x1="390" y1="230" x2="500" y2="270" stroke="#10b981" stroke-width="2" marker-end="url(#arrowGreen)"/>
+                <line x1="390" y1="240" x2="500" y2="370" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowYellow)"/>
+
+                <!-- Coding Role -->
+                <rect x="500" y="40" width="160" height="60" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+                <text x="580" y="63" fill="#1e40af" font-size="12" font-weight="700" text-anchor="middle">Coding</text>
+                <text x="580" y="82" fill="#3b82f6" font-size="11" text-anchor="middle">Claude Sonnet 4.5</text>
+
+                <!-- Search Role -->
+                <rect x="500" y="140" width="160" height="60" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+                <text x="580" y="163" fill="#5b21b6" font-size="12" font-weight="700" text-anchor="middle">Search</text>
+                <text x="580" y="182" fill="#7c3aed" font-size="11" text-anchor="middle">Perplexity Sonar Pro</text>
+
+                <!-- Review Role -->
+                <rect x="500" y="240" width="160" height="60" rx="10" fill="#d1fae5" stroke="#10b981" stroke-width="1.5"/>
+                <text x="580" y="263" fill="#065f46" font-size="12" font-weight="700" text-anchor="middle">Review</text>
+                <text x="580" y="282" fill="#10b981" font-size="11" text-anchor="middle">GPT-4.1</text>
+
+                <!-- Planning Role -->
+                <rect x="500" y="340" width="160" height="60" rx="10" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+                <text x="580" y="363" fill="#92400e" font-size="12" font-weight="700" text-anchor="middle">Planning</text>
+                <text x="580" y="382" fill="#f59e0b" font-size="11" text-anchor="middle">Gemini 2.5 Flash</text>
+
+                <!-- Arrows to Result -->
+                <line x1="660" y1="70" x2="740" y2="225" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="5,5"/>
+                <line x1="660" y1="170" x2="740" y2="225" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="5,5"/>
+                <line x1="660" y1="270" x2="740" y2="230" stroke="#10b981" stroke-width="1.5" stroke-dasharray="5,5"/>
+                <line x1="660" y1="370" x2="740" y2="235" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5,5"/>
+
+                <!-- Result Aggregation -->
+                <rect x="740" y="195" width="140" height="70" rx="10" fill="#1e293b"/>
+                <text x="810" y="222" fill="#fff" font-size="13" font-weight="700" text-anchor="middle">統合レスポンス</text>
+                <text x="810" y="245" fill="#94a3b8" font-size="11" text-anchor="middle">JSON (全タスク結果)</text>
+
+                <!-- DB -->
+                <rect x="260" y="370" width="100" height="50" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+                <text x="310" y="392" fill="#64748b" font-size="11" font-weight="600" text-anchor="middle">SQLite DB</text>
+                <text x="310" y="408" fill="#94a3b8" font-size="10" text-anchor="middle">ロール / 割り当て</text>
+                <line x1="310" y1="280" x2="310" y2="370" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,4"/>
+
+                <!-- Defs -->
+                <defs>
+                    <linearGradient id="leaderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#2563eb"/>
+                        <stop offset="100%" style="stop-color:#7c3aed"/>
+                    </linearGradient>
+                    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#64748b"/></marker>
+                    <marker id="arrowBlue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#3b82f6"/></marker>
+                    <marker id="arrowPurple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#7c3aed"/></marker>
+                    <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#10b981"/></marker>
+                    <marker id="arrowYellow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#f59e0b"/></marker>
+                </defs>
+            </svg>
+        </div>
+    </div>
+</section>
+
+<!-- Pricing -->
+<section class="pricing" id="pricing">
+    <div class="container">
+        <div class="section-header">
+            <h2>料金プラン</h2>
+            <p>セルフホストは完全無料。マネージド版でさらに楽に。</p>
+        </div>
+        <div class="price-grid">
+            <div class="price-card">
+                <h3>Free</h3>
+                <div class="price">$0<span> / 月</span></div>
+                <p class="price-desc">セルフホスト・オープンソース</p>
+                <ul class="price-features">
+                    <li><i class="fas fa-check"></i> 全38+モデル利用可能</li>
+                    <li><i class="fas fa-check"></i> マルチAI協調（無制限）</li>
+                    <li><i class="fas fa-check"></i> MCP対応</li>
+                    <li><i class="fas fa-check"></i> REST API（27エンドポイント）</li>
+                    <li><i class="fas fa-check"></i> Vercelワンクリックデプロイ</li>
+                    <li><i class="fas fa-check"></i> コミュニティサポート</li>
+                </ul>
+                <a href="#" class="cta-btn cta-btn-outline" style="width:100%;text-align:center;">GitHubで取得</a>
+            </div>
+            <div class="price-card featured">
+                <div class="pop-badge">人気</div>
+                <h3>Pro</h3>
+                <div class="price">$49<span> / 月</span></div>
+                <p class="price-desc">マネージドホスティング + 優先サポート</p>
+                <ul class="price-features">
+                    <li><i class="fas fa-check"></i> Free の全機能</li>
+                    <li><i class="fas fa-check"></i> マネージドインフラ</li>
+                    <li><i class="fas fa-check"></i> ダッシュボードUI</li>
+                    <li><i class="fas fa-check"></i> 実行ログ分析・可視化</li>
+                    <li><i class="fas fa-check"></i> 自動スケーリング</li>
+                    <li><i class="fas fa-check"></i> メールサポート</li>
+                </ul>
+                <a href="#" class="cta-btn" style="width:100%;text-align:center;">14日間無料体験</a>
+            </div>
+            <div class="price-card">
+                <h3>Enterprise</h3>
+                <div class="price">要問合せ</div>
+                <p class="price-desc">大規模・高セキュリティ要件向け</p>
+                <ul class="price-features">
+                    <li><i class="fas fa-check"></i> Pro の全機能</li>
+                    <li><i class="fas fa-check"></i> VPC / オンプレデプロイ</li>
+                    <li><i class="fas fa-check"></i> SSO / RBAC</li>
+                    <li><i class="fas fa-check"></i> PII自動マスキング</li>
+                    <li><i class="fas fa-check"></i> 監査ログ</li>
+                    <li><i class="fas fa-check"></i> 専任サポート・SLA保証</li>
+                </ul>
+                <a href="#" class="cta-btn cta-btn-outline" style="width:100%;text-align:center;">お問い合わせ</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Final CTA -->
+<section class="final-cta" id="cta">
+    <div class="container">
+        <h2>AIチームを、今すぐ起動しよう</h2>
+        <p>1つのAPIコールで、複数のAIが協調して課題を解決する世界へ。</p>
+        <div style="display:flex;gap:20px;justify-content:center;flex-wrap:wrap;">
+            <a href="#" class="cta-btn cta-btn-white">無料で始める <i class="fas fa-arrow-right"></i></a>
+            <a href="#" class="cta-btn" style="background:rgba(255,255,255,.15);border:2px solid #fff;">ドキュメントを読む</a>
+        </div>
+    </div>
+</section>
+
+<!-- Footer -->
+<footer>
+    <div class="container">
+        <div class="footer-grid">
+            <div>
+                <h4>Division API</h4>
+                <ul>
+                    <li><a href="#">ドキュメント</a></li>
+                    <li><a href="#">APIリファレンス</a></li>
+                    <li><a href="#">チュートリアル</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4>プロダクト</h4>
+                <ul>
+                    <li><a href="#">エージェント機能</a></li>
+                    <li><a href="#">MCP統合</a></li>
+                    <li><a href="#">モデル一覧</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4>リソース</h4>
+                <ul>
+                    <li><a href="#">GitHub</a></li>
+                    <li><a href="#">ブログ</a></li>
+                    <li><a href="#">コミュニティ</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4>サポート</h4>
+                <ul>
+                    <li><a href="#">お問い合わせ</a></li>
+                    <li><a href="#">ステータス</a></li>
+                    <li><a href="#">利用規約</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">&copy; 2026 Division API. All rights reserved.</div>
+    </div>
+</footer>
+
+<script>
+// Smooth scroll
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', e => {
+        e.preventDefault();
+        const target = document.querySelector(a.getAttribute('href'));
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+});
+</script>
+</body>
+</html>

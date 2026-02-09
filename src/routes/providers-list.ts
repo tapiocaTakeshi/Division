@@ -1,31 +1,25 @@
 import { Router } from "express";
 import { prisma } from "../db";
+import { asyncHandler } from "../middleware/async-handler";
 
 const router = Router();
 
 /**
- * GET /api/providers
+ * GET /api/models
  * List all available AI providers/models
  */
-router.get("/", async (_req, res) => {
-  try {
-    const providers = await prisma.provider.findMany({
-      orderBy: { name: "asc" },
-      select: {
-        name: true,
-        displayName: true,
-        apiType: true,
-        modelId: true,
-        description: true,
-      },
-    });
-    res.json({ providers });
-  } catch (err: unknown) {
-    res.status(500).json({
-      error: "Failed to list providers",
-      message: err instanceof Error ? err.message : String(err),
-    });
-  }
-});
+router.get("/", asyncHandler(async (_req, res) => {
+  const providers = await prisma.provider.findMany({
+    orderBy: { name: "asc" },
+    select: {
+      name: true,
+      displayName: true,
+      apiType: true,
+      modelId: true,
+      description: true,
+    },
+  });
+  res.json({ providers });
+}));
 
 export default router;

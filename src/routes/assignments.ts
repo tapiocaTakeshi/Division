@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db";
 import { z } from "zod";
+import { asyncHandler } from "../middleware/async-handler";
 
 export const assignmentRouter = Router();
 
@@ -19,7 +20,7 @@ const updateAssignmentSchema = z.object({
 });
 
 // List assignments (optionally filtered by projectId)
-assignmentRouter.get("/", async (req: Request, res: Response) => {
+assignmentRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
   const { projectId } = req.query;
   const where = projectId ? { projectId: String(projectId) } : {};
   const assignments = await prisma.roleAssignment.findMany({
@@ -28,10 +29,10 @@ assignmentRouter.get("/", async (req: Request, res: Response) => {
     orderBy: [{ role: { name: "asc" } }, { priority: "desc" }],
   });
   res.json(assignments);
-});
+}));
 
 // Get a single assignment
-assignmentRouter.get("/:id", async (req: Request, res: Response) => {
+assignmentRouter.get("/:id", asyncHandler(async (req: Request, res: Response) => {
   const assignment = await prisma.roleAssignment.findUnique({
     where: { id: req.params.id },
     include: { role: true, provider: true },
@@ -41,10 +42,10 @@ assignmentRouter.get("/:id", async (req: Request, res: Response) => {
     return;
   }
   res.json(assignment);
-});
+}));
 
 // Create an assignment (assign AI to a role in a project)
-assignmentRouter.post("/", async (req: Request, res: Response) => {
+assignmentRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   const parsed = createAssignmentSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
@@ -70,10 +71,10 @@ assignmentRouter.post("/", async (req: Request, res: Response) => {
       throw err;
     }
   }
-});
+}));
 
 // Update an assignment (switch AI provider for a role)
-assignmentRouter.put("/:id", async (req: Request, res: Response) => {
+assignmentRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => {
   const parsed = updateAssignmentSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
@@ -94,20 +95,20 @@ assignmentRouter.put("/:id", async (req: Request, res: Response) => {
   } catch {
     res.status(404).json({ error: "Assignment not found" });
   }
-});
+}));
 
 // Delete an assignment
-assignmentRouter.delete("/:id", async (req: Request, res: Response) => {
+assignmentRouter.delete("/:id", asyncHandler(async (req: Request, res: Response) => {
   try {
     await prisma.roleAssignment.delete({ where: { id: req.params.id } });
     res.status(204).send();
   } catch {
     res.status(404).json({ error: "Assignment not found" });
   }
-});
+}));
 
 // Bulk assign: set all role assignments for a project at once
-assignmentRouter.post("/bulk", async (req: Request, res: Response) => {
+assignmentRouter.post("/bulk", asyncHandler(async (req: Request, res: Response) => {
   const bulkSchema = z.object({
     projectId: z.string().min(1),
     assignments: z.array(
@@ -150,4 +151,4 @@ assignmentRouter.post("/bulk", async (req: Request, res: Response) => {
   });
 
   res.status(201).json(result);
-});
+}));

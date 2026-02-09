@@ -2,8 +2,8 @@
  * AI Executor Service
  *
  * Abstraction layer that dispatches requests to different AI providers
- * based on their apiType. In production, each provider type would call
- * the actual API. Here we provide the structure and a mock implementation.
+ * based on their apiType. Calls the actual AI provider APIs using
+ * configured API keys (from request or environment variables).
  */
 
 export interface ExecutionRequest {
@@ -29,6 +29,16 @@ export interface ExecutionResult {
   status: "success" | "error";
   errorMsg?: string;
 }
+
+/** Maps apiType to the corresponding environment variable name */
+const ENV_KEY_MAP: Record<string, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GOOGLE_API_KEY",
+  openai: "OPENAI_API_KEY",
+  perplexity: "PERPLEXITY_API_KEY",
+  xai: "XAI_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
+};
 
 /** API types that use the OpenAI-compatible chat completions format */
 const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
@@ -161,26 +171,25 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     };
   }
 
-  const apiKey = (req.config?.apiKey as string) || "";
+  // Resolve API key: environment variable > config (request)
+  const envVar = ENV_KEY_MAP[req.provider.apiType];
+  const apiKey = (envVar ? process.env[envVar] : undefined) || (req.config?.apiKey as string) || "";
   if (!apiKey) {
-    // Dry-run mode: return the request that would be sent
     return {
-      output: JSON.stringify(
-        {
-          dryRun: true,
-          message: "No API key configured. Showing the request that would be sent.",
-          provider: req.provider.name,
-          model: req.provider.modelId,
-          role: req.role.name,
-          endpoint: `${req.provider.apiBaseUrl}${requestSpec.url}`,
-          requestBody: requestSpec.body,
-        },
-        null,
-        2
-      ),
+      output: "",
       durationMs: Date.now() - start,
-      status: "success",
+      status: "error",
+      errorMsg: `No API key found for ${req.provider.name} (${req.provider.apiType}). Set ${envVar || "the API key"} environment variable.`,
     };
+  }
+
+  // Update headers with the resolved API key
+  if (req.provider.apiType === "anthropic") {
+    requestSpec.headers["x-api-key"] = apiKey;
+  } else if (req.provider.apiType === "google") {
+    requestSpec.headers["x-goog-api-key"] = apiKey;
+  } else if (OPENAI_COMPATIBLE_TYPES[req.provider.apiType]) {
+    requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
   try {

@@ -127,25 +127,41 @@ function parseLeaderResponse(output: string): SubTask[] {
   }
 }
 
+/** Maps apiType to the corresponding environment variable name */
+const ENV_KEY_MAP: Record<string, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GOOGLE_API_KEY",
+  openai: "OPENAI_API_KEY",
+  perplexity: "PERPLEXITY_API_KEY",
+  xai: "XAI_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
+};
+
 /**
  * Resolve the API key for a given provider using its apiType.
- * Looks up the key from user-supplied apiKeys using the provider name,
- * apiType, or common aliases (e.g. "claude" -> anthropic key).
+ * Priority: 1) environment variables (Vercel/production), 2) user-supplied apiKeys (request)
  */
 function resolveApiKey(
   providerName: string,
   apiType: string,
   apiKeys?: Record<string, string>
 ): string | undefined {
-  if (!apiKeys) return undefined;
+  // 1. Check environment variables first (production / Vercel)
+  const envVar = ENV_KEY_MAP[apiType];
+  if (envVar && process.env[envVar]) {
+    return process.env[envVar];
+  }
 
-  // Direct match by provider name
-  if (apiKeys[providerName]) return apiKeys[providerName];
+  // 2. Fall back to user-supplied apiKeys from request
+  if (apiKeys) {
+    // Direct match by provider name
+    if (apiKeys[providerName]) return apiKeys[providerName];
 
-  // Look up by apiType aliases
-  const aliases = API_KEY_ALIASES[apiType] || [];
-  for (const alias of aliases) {
-    if (apiKeys[alias]) return apiKeys[alias];
+    // Look up by apiType aliases
+    const aliases = API_KEY_ALIASES[apiType] || [];
+    for (const alias of aliases) {
+      if (apiKeys[alias]) return apiKeys[alias];
+    }
   }
 
   return undefined;
@@ -215,43 +231,30 @@ export async function runAgent(
   // 3. Parse Leader's task breakdown
   let subTasks: SubTask[];
   try {
-    // In dry-run mode, the output is a JSON string containing the request info
-    const outputData = JSON.parse(leaderResult.output);
-    if (outputData.dryRun) {
-      // Dry-run: simulate a task decomposition
-      subTasks = simulateLeaderDecomposition(req.input);
-      console.log(`[Agent] Dry-run mode: simulated ${subTasks.length} tasks`);
-    } else {
-      subTasks = parseLeaderResponse(leaderResult.output);
-    }
-  } catch {
-    // If it's not JSON (real API response), try parsing directly
-    try {
-      subTasks = parseLeaderResponse(leaderResult.output);
-    } catch (parseErr) {
-      return {
-        sessionId,
-        input: req.input,
-        leaderProvider: leaderAssignment.provider.displayName,
-        leaderModel: leaderAssignment.provider.modelId,
-        tasks: [
-          {
-            role: "leader",
-            input: req.input,
-            reason: "Task decomposition failed",
-            provider: leaderAssignment.provider.displayName,
-            model: leaderAssignment.provider.modelId,
-            output: leaderResult.output,
-            status: "error",
-            errorMsg:
-              parseErr instanceof Error ? parseErr.message : String(parseErr),
-            durationMs: leaderResult.durationMs,
-          },
-        ],
-        totalDurationMs: Date.now() - startTime,
-        status: "error",
-      };
-    }
+    subTasks = parseLeaderResponse(leaderResult.output);
+  } catch (parseErr) {
+    return {
+      sessionId,
+      input: req.input,
+      leaderProvider: leaderAssignment.provider.displayName,
+      leaderModel: leaderAssignment.provider.modelId,
+      tasks: [
+        {
+          role: "leader",
+          input: req.input,
+          reason: "Task decomposition failed",
+          provider: leaderAssignment.provider.displayName,
+          model: leaderAssignment.provider.modelId,
+          output: leaderResult.output,
+          status: "error",
+          errorMsg:
+            parseErr instanceof Error ? parseErr.message : String(parseErr),
+          durationMs: leaderResult.durationMs,
+        },
+      ],
+      totalDurationMs: Date.now() - startTime,
+      status: "error",
+    };
   }
 
   console.log(`[Agent] Leader decomposed into ${subTasks.length} tasks:`);
@@ -398,78 +401,3 @@ export async function runAgent(
   };
 }
 
-/**
- * Simulate Leader decomposition for dry-run mode
- */
-function simulateLeaderDecomposition(input: string): SubTask[] {
-  const tasks: SubTask[] = [];
-  const lowerInput = input.toLowerCase();
-
-  // Always start with search for context
-  tasks.push({
-    role: "search",
-    input: `${input}に関する最新の情報やベストプラクティスを調べてください`,
-    reason: "最新情報の収集",
-  });
-
-  // Planning if it sounds like a project
-  if (
-    lowerInput.includes("作") ||
-    lowerInput.includes("開発") ||
-    lowerInput.includes("設計") ||
-    lowerInput.includes("アプリ") ||
-    lowerInput.includes("システム") ||
-    lowerInput.includes("build") ||
-    lowerInput.includes("create") ||
-    lowerInput.includes("develop")
-  ) {
-    tasks.push({
-      role: "planning",
-      input: `「${input}」のプロジェクト計画とアーキテクチャを設計してください`,
-      reason: "設計方針の策定",
-    });
-  }
-
-  // Coding if it involves code
-  if (
-    lowerInput.includes("コード") ||
-    lowerInput.includes("実装") ||
-    lowerInput.includes("作") ||
-    lowerInput.includes("開発") ||
-    lowerInput.includes("code") ||
-    lowerInput.includes("implement") ||
-    lowerInput.includes("build") ||
-    lowerInput.includes("アプリ")
-  ) {
-    tasks.push({
-      role: "coding",
-      input: `${input}`,
-      reason: "コード生成",
-    });
-  }
-
-  // Writing if it involves documentation
-  if (
-    lowerInput.includes("ドキュメント") ||
-    lowerInput.includes("文章") ||
-    lowerInput.includes("記事") ||
-    lowerInput.includes("書") ||
-    lowerInput.includes("write") ||
-    lowerInput.includes("document")
-  ) {
-    tasks.push({
-      role: "writing",
-      input: `${input}`,
-      reason: "文章作成",
-    });
-  }
-
-  // Always end with review
-  tasks.push({
-    role: "review",
-    input: `前のエージェントたちの作業結果をレビューし、改善点や問題点を指摘してください`,
-    reason: "品質確認",
-  });
-
-  return tasks;
-}

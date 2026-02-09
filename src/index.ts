@@ -13,14 +13,14 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Health check
+// Health check – v2 (shows API key config status)
 app.get("/health", (_req, res) => {
   const keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "PERPLEXITY_API_KEY", "XAI_API_KEY", "DEEPSEEK_API_KEY"];
   const configured: Record<string, boolean> = {};
   for (const k of keys) {
     configured[k] = !!process.env[k];
   }
-  res.json({ status: "ok", service: "division-api", apiKeys: configured });
+  res.json({ status: "ok", service: "division-api", version: "v2", apiKeys: configured });
 });
 
 // API routes

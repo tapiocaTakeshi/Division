@@ -9,7 +9,7 @@
  */
 
 import { prisma } from "../db";
-import { executeTask, ExecutionResult } from "./ai-executor";
+import { executeTask } from "./ai-executor";
 
 // --- Types ---
 
@@ -72,6 +72,18 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 }
 \`\`\``;
 
+// --- API Key Resolution ---
+
+/** Maps apiType to the env var name and common aliases users might pass */
+const API_KEY_ALIASES: Record<string, string[]> = {
+  anthropic: ["anthropic", "claude", "ANTHROPIC_API_KEY"],
+  google: ["google", "gemini", "GOOGLE_API_KEY"],
+  openai: ["openai", "gpt", "OPENAI_API_KEY"],
+  perplexity: ["perplexity", "PERPLEXITY_API_KEY"],
+  xai: ["xai", "grok", "XAI_API_KEY"],
+  deepseek: ["deepseek", "DEEPSEEK_API_KEY"],
+};
+
 // --- Core Functions ---
 
 /**
@@ -116,66 +128,22 @@ function parseLeaderResponse(output: string): SubTask[] {
 }
 
 /**
- * Resolve the API key for a given provider
+ * Resolve the API key for a given provider using its apiType.
+ * Looks up the key from user-supplied apiKeys using the provider name,
+ * apiType, or common aliases (e.g. "claude" -> anthropic key).
  */
 function resolveApiKey(
   providerName: string,
+  apiType: string,
   apiKeys?: Record<string, string>
 ): string | undefined {
   if (!apiKeys) return undefined;
 
-  // Direct match
+  // Direct match by provider name
   if (apiKeys[providerName]) return apiKeys[providerName];
 
-  // Map model-level names to API key aliases
-  const keyMap: Record<string, string[]> = {
-    // Anthropic models
-    "claude-opus-4.6": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-    "claude-sonnet-4.5": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-    "claude-haiku-4.5": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-    "claude-sonnet": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-    "claude-opus": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-    "claude-haiku": ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-    claude: ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-    // Google models
-    "gemini-3-pro": ["google", "gemini", "GOOGLE_API_KEY"],
-    "gemini-3-flash": ["google", "gemini", "GOOGLE_API_KEY"],
-    "gemini-2.5-pro": ["google", "gemini", "GOOGLE_API_KEY"],
-    "gemini-2.5-flash": ["google", "gemini", "GOOGLE_API_KEY"],
-    "gemini-2.0-flash": ["google", "gemini", "GOOGLE_API_KEY"],
-    "gemini-flash": ["google", "gemini", "GOOGLE_API_KEY"],
-    "gemini-pro": ["google", "gemini", "GOOGLE_API_KEY"],
-    gemini: ["google", "gemini", "GOOGLE_API_KEY"],
-    // Perplexity models
-    "perplexity-deep-research": ["perplexity", "PERPLEXITY_API_KEY"],
-    "perplexity-reasoning-pro": ["perplexity", "PERPLEXITY_API_KEY"],
-    "perplexity-sonar-pro": ["perplexity", "PERPLEXITY_API_KEY"],
-    "perplexity-sonar": ["perplexity", "PERPLEXITY_API_KEY"],
-    perplexity: ["perplexity", "PERPLEXITY_API_KEY"],
-    // OpenAI models
-    "gpt-5.2": ["openai", "gpt", "OPENAI_API_KEY"],
-    "gpt-5.1": ["openai", "gpt", "OPENAI_API_KEY"],
-    "gpt-4.1": ["openai", "gpt", "OPENAI_API_KEY"],
-    "gpt-4.1-mini": ["openai", "gpt", "OPENAI_API_KEY"],
-    "gpt-4.1-nano": ["openai", "gpt", "OPENAI_API_KEY"],
-    "gpt-4o": ["openai", "gpt", "OPENAI_API_KEY"],
-    "gpt-4o-mini": ["openai", "gpt", "OPENAI_API_KEY"],
-    o3: ["openai", "gpt", "OPENAI_API_KEY"],
-    "o3-mini": ["openai", "gpt", "OPENAI_API_KEY"],
-    gpt: ["openai", "gpt", "OPENAI_API_KEY"],
-    // xAI (Grok) models
-    "grok-4.1-fast": ["xai", "grok", "XAI_API_KEY"],
-    "grok-4": ["xai", "grok", "XAI_API_KEY"],
-    "grok-3": ["xai", "grok", "XAI_API_KEY"],
-    "grok-3-mini": ["xai", "grok", "XAI_API_KEY"],
-    grok: ["xai", "grok", "XAI_API_KEY"],
-    // DeepSeek models
-    "deepseek-v3.2": ["deepseek", "DEEPSEEK_API_KEY"],
-    "deepseek-r1": ["deepseek", "DEEPSEEK_API_KEY"],
-    deepseek: ["deepseek", "DEEPSEEK_API_KEY"],
-  };
-
-  const aliases = keyMap[providerName] || [];
+  // Look up by apiType aliases
+  const aliases = API_KEY_ALIASES[apiType] || [];
   for (const alias of aliases) {
     if (apiKeys[alias]) return apiKeys[alias];
   }
@@ -213,6 +181,7 @@ export async function runAgent(
 
   const leaderApiKey = resolveApiKey(
     leaderAssignment.provider.name,
+    leaderAssignment.provider.apiType,
     req.apiKeys
   );
 
@@ -228,6 +197,7 @@ export async function runAgent(
     config: { apiKey: leaderApiKey },
     input: req.input,
     role: { slug: "leader", name: "Leader" },
+    systemPrompt: LEADER_SYSTEM_PROMPT,
   });
 
   if (leaderResult.status === "error") {
@@ -312,11 +282,18 @@ export async function runAgent(
     }
 
     // Find assignment (check overrides first, then DB)
-    let provider: { id: string; name: string; displayName: string; apiBaseUrl: string; apiType: string; modelId: string; isEnabled: boolean } | null = null;
+    let provider: {
+      id: string;
+      name: string;
+      displayName: string;
+      apiBaseUrl: string;
+      apiType: string;
+      modelId: string;
+      isEnabled: boolean;
+    } | null = null;
 
     const overrideProviderName = req.overrides?.[task.role];
     if (overrideProviderName) {
-      // User specified a provider override for this role
       const overrideProvider = await prisma.provider.findUnique({
         where: { name: overrideProviderName },
       });
@@ -326,7 +303,6 @@ export async function runAgent(
     }
 
     if (!provider) {
-      // Fall back to DB assignment
       const assignment = await prisma.roleAssignment.findFirst({
         where: { projectId: req.projectId, roleId: role.id },
         include: { provider: true },
@@ -356,7 +332,7 @@ export async function runAgent(
       enrichedInput = `## これまでの他のエージェントの作業結果:\n${previousContext}\n\n## あなたへの指示:\n${task.input}`;
     }
 
-    const apiKey = resolveApiKey(provider.name, req.apiKeys);
+    const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys);
 
     console.log(
       `[Agent] Executing: [${task.role}] → ${provider.displayName}`
@@ -426,7 +402,6 @@ export async function runAgent(
  * Simulate Leader decomposition for dry-run mode
  */
 function simulateLeaderDecomposition(input: string): SubTask[] {
-  // Simple keyword-based simulation
   const tasks: SubTask[] = [];
   const lowerInput = input.toLowerCase();
 

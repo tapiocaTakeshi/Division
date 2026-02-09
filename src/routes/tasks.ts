@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { prisma } from "../db";
 import { z } from "zod";
 import { executeTask } from "../services/ai-executor";
+import { asyncHandler } from "../middleware/async-handler";
 
 export const taskRouter = Router();
 
@@ -13,7 +14,7 @@ const executeTaskSchema = z.object({
 });
 
 // Execute a task: route to the AI assigned to the given role in the project
-taskRouter.post("/execute", async (req: Request, res: Response) => {
+taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => {
   const parsed = executeTaskSchema.safeParse(req.body);
   if (!parsed.success) {
     res
@@ -85,10 +86,10 @@ taskRouter.post("/execute", async (req: Request, res: Response) => {
     model: assignment.provider.modelId,
     ...result,
   });
-});
+}));
 
 // Get task execution logs
-taskRouter.get("/logs", async (req: Request, res: Response) => {
+taskRouter.get("/logs", asyncHandler(async (req: Request, res: Response) => {
   const { projectId, roleSlug, limit } = req.query;
 
   const where: Record<string, unknown> = {};
@@ -108,4 +109,4 @@ taskRouter.get("/logs", async (req: Request, res: Response) => {
   });
 
   res.json(logs);
-});
+}));

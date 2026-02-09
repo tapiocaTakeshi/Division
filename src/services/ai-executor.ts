@@ -19,6 +19,8 @@ export interface ExecutionRequest {
     slug: string;
     name: string;
   };
+  /** Override the default system prompt for this request */
+  systemPrompt?: string;
 }
 
 export interface ExecutionResult {
@@ -28,6 +30,14 @@ export interface ExecutionResult {
   errorMsg?: string;
 }
 
+/** API types that use the OpenAI-compatible chat completions format */
+const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
+  openai: "/v1/chat/completions",
+  perplexity: "/chat/completions",
+  xai: "/v1/chat/completions",
+  deepseek: "/chat/completions",
+};
+
 /**
  * Build the request body for each API type
  */
@@ -35,114 +45,67 @@ function buildRequestBody(
   apiType: string,
   modelId: string,
   input: string,
-  roleContext: string,
+  systemPrompt: string,
   config?: Record<string, unknown>
 ): { url: string; headers: Record<string, string>; body: unknown } | null {
   const apiKey = config?.apiKey as string | undefined;
+  const maxTokens = (config?.maxTokens as number) || 4096;
 
-  switch (apiType) {
-    case "anthropic":
-      return {
-        url: "/v1/messages",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey || "",
-          "anthropic-version": "2023-06-01",
-        },
-        body: {
-          model: modelId,
-          max_tokens: (config?.maxTokens as number) || 4096,
-          system: `You are acting as the ${roleContext} role.`,
-          messages: [{ role: "user", content: input }],
-        },
-      };
-
-    case "openai":
-      return {
-        url: "/v1/chat/completions",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey || ""}`,
-        },
-        body: {
-          model: modelId,
-          max_tokens: (config?.maxTokens as number) || 4096,
-          messages: [
-            { role: "system", content: `You are acting as the ${roleContext} role.` },
-            { role: "user", content: input },
-          ],
-        },
-      };
-
-    case "google":
-      return {
-        url: `/v1beta/models/${modelId}:generateContent?key=${apiKey || ""}`,
-        headers: { "Content-Type": "application/json" },
-        body: {
-          systemInstruction: {
-            parts: [{ text: `You are acting as the ${roleContext} role.` }],
-          },
-          contents: [{ parts: [{ text: input }] }],
-          generationConfig: {
-            maxOutputTokens: (config?.maxTokens as number) || 4096,
-          },
-        },
-      };
-
-    case "perplexity":
-      return {
-        url: "/chat/completions",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey || ""}`,
-        },
-        body: {
-          model: modelId,
-          max_tokens: (config?.maxTokens as number) || 4096,
-          messages: [
-            { role: "system", content: `You are acting as the ${roleContext} role.` },
-            { role: "user", content: input },
-          ],
-        },
-      };
-
-    case "xai":
-      return {
-        url: "/v1/chat/completions",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey || ""}`,
-        },
-        body: {
-          model: modelId,
-          max_tokens: (config?.maxTokens as number) || 4096,
-          messages: [
-            { role: "system", content: `You are acting as the ${roleContext} role.` },
-            { role: "user", content: input },
-          ],
-        },
-      };
-
-    case "deepseek":
-      return {
-        url: "/chat/completions",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey || ""}`,
-        },
-        body: {
-          model: modelId,
-          max_tokens: (config?.maxTokens as number) || 4096,
-          messages: [
-            { role: "system", content: `You are acting as the ${roleContext} role.` },
-            { role: "user", content: input },
-          ],
-        },
-      };
-
-    default:
-      return null;
+  if (apiType === "anthropic") {
+    return {
+      url: "/v1/messages",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey || "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: {
+        model: modelId,
+        max_tokens: maxTokens,
+        system: systemPrompt,
+        messages: [{ role: "user", content: input }],
+      },
+    };
   }
+
+  if (apiType === "google") {
+    return {
+      url: `/v1beta/models/${modelId}:generateContent`,
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey || "",
+      },
+      body: {
+        systemInstruction: {
+          parts: [{ text: systemPrompt }],
+        },
+        contents: [{ parts: [{ text: input }] }],
+        generationConfig: { maxOutputTokens: maxTokens },
+      },
+    };
+  }
+
+  // OpenAI-compatible providers (openai, perplexity, xai, deepseek)
+  const endpoint = OPENAI_COMPATIBLE_TYPES[apiType];
+  if (endpoint) {
+    return {
+      url: endpoint,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey || ""}`,
+      },
+      body: {
+        model: modelId,
+        max_tokens: maxTokens,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: input },
+        ],
+      },
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -151,27 +114,25 @@ function buildRequestBody(
 function parseResponse(apiType: string, data: unknown): string {
   const d = data as Record<string, unknown>;
 
-  switch (apiType) {
-    case "anthropic": {
-      const content = d.content as Array<{ type: string; text: string }>;
-      return content?.map((c) => c.text).join("") || JSON.stringify(data);
-    }
-    case "openai":
-    case "perplexity":
-    case "xai":
-    case "deepseek": {
-      const choices = d.choices as Array<{ message: { content: string } }>;
-      return choices?.[0]?.message?.content || JSON.stringify(data);
-    }
-    case "google": {
-      const candidates = d.candidates as Array<{
-        content: { parts: Array<{ text: string }> };
-      }>;
-      return candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || JSON.stringify(data);
-    }
-    default:
-      return JSON.stringify(data);
+  if (apiType === "anthropic") {
+    const content = d.content as Array<{ type: string; text: string }>;
+    return content?.map((c) => c.text).join("") || JSON.stringify(data);
   }
+
+  if (apiType === "google") {
+    const candidates = d.candidates as Array<{
+      content: { parts: Array<{ text: string }> };
+    }>;
+    return candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || JSON.stringify(data);
+  }
+
+  // OpenAI-compatible providers
+  if (OPENAI_COMPATIBLE_TYPES[apiType]) {
+    const choices = d.choices as Array<{ message: { content: string } }>;
+    return choices?.[0]?.message?.content || JSON.stringify(data);
+  }
+
+  return JSON.stringify(data);
 }
 
 /**
@@ -180,11 +141,14 @@ function parseResponse(apiType: string, data: unknown): string {
 export async function executeTask(req: ExecutionRequest): Promise<ExecutionResult> {
   const start = Date.now();
 
+  const systemPrompt =
+    req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
+
   const requestSpec = buildRequestBody(
     req.provider.apiType,
     req.provider.modelId,
     req.input,
-    `${req.role.name} (${req.role.slug})`,
+    systemPrompt,
     req.config || undefined
   );
 

@@ -166,7 +166,22 @@ interface JsonRpcResponse {
   error?: { code: number; message: string; data?: unknown };
 }
 
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const sessions = new Map<string, { created: number }>();
+
+/** Remove sessions older than SESSION_TTL_MS */
+function cleanupStaleSessions(): void {
+  const now = Date.now();
+  for (const [id, session] of sessions) {
+    if (now - session.created > SESSION_TTL_MS) {
+      sessions.delete(id);
+    }
+  }
+}
+
+// Periodically clean up stale sessions (every 10 minutes)
+const cleanupInterval = setInterval(cleanupStaleSessions, 10 * 60 * 1000);
+cleanupInterval.unref(); // Don't prevent process exit
 
 async function handleJsonRpc(
   req: JsonRpcRequest,

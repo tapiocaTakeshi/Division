@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db";
 import { z } from "zod";
+import { asyncHandler } from "../middleware/async-handler";
 
 export const providerRouter = Router();
 
@@ -8,7 +9,7 @@ const createProviderSchema = z.object({
   name: z.string().min(1),
   displayName: z.string().min(1),
   apiBaseUrl: z.string().url(),
-  apiType: z.enum(["openai", "anthropic", "google", "perplexity", "custom"]),
+  apiType: z.enum(["openai", "anthropic", "google", "perplexity", "xai", "deepseek", "custom"]),
   modelId: z.string().min(1),
   description: z.string().optional(),
   isEnabled: z.boolean().optional(),
@@ -17,16 +18,16 @@ const createProviderSchema = z.object({
 const updateProviderSchema = createProviderSchema.partial();
 
 // List all providers
-providerRouter.get("/", async (_req: Request, res: Response) => {
+providerRouter.get("/", asyncHandler(async (_req: Request, res: Response) => {
   const providers = await prisma.provider.findMany({
     orderBy: { name: "asc" },
     include: { assignments: { select: { id: true, projectId: true, roleId: true } } },
   });
   res.json(providers);
-});
+}));
 
 // Get a single provider
-providerRouter.get("/:id", async (req: Request, res: Response) => {
+providerRouter.get("/:id", asyncHandler(async (req: Request, res: Response) => {
   const provider = await prisma.provider.findUnique({
     where: { id: req.params.id },
     include: { assignments: { include: { role: true } } },
@@ -36,10 +37,10 @@ providerRouter.get("/:id", async (req: Request, res: Response) => {
     return;
   }
   res.json(provider);
-});
+}));
 
 // Create a provider
-providerRouter.post("/", async (req: Request, res: Response) => {
+providerRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   const parsed = createProviderSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
@@ -47,10 +48,10 @@ providerRouter.post("/", async (req: Request, res: Response) => {
   }
   const provider = await prisma.provider.create({ data: parsed.data });
   res.status(201).json(provider);
-});
+}));
 
 // Update a provider
-providerRouter.put("/:id", async (req: Request, res: Response) => {
+providerRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => {
   const parsed = updateProviderSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
@@ -65,14 +66,14 @@ providerRouter.put("/:id", async (req: Request, res: Response) => {
   } catch {
     res.status(404).json({ error: "Provider not found" });
   }
-});
+}));
 
 // Delete a provider
-providerRouter.delete("/:id", async (req: Request, res: Response) => {
+providerRouter.delete("/:id", asyncHandler(async (req: Request, res: Response) => {
   try {
     await prisma.provider.delete({ where: { id: req.params.id } });
     res.status(204).send();
   } catch {
     res.status(404).json({ error: "Provider not found" });
   }
-});
+}));

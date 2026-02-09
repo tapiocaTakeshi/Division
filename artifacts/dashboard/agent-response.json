@@ -1,0 +1,31 @@
+{
+  "sessionId": "fc9e492b-a884-49ec-8b60-76f8815f9256",
+  "input": "モダンなダッシュボードのHTMLページを作って。1ファイルで完結させて（HTML/CSS/JSすべてインライン）。グラフ表示、統計カード、サイドバーナビゲーション、ダークテーマ対応を含めて。Chart.jsをCDNで読み込んで使って。",
+  "leaderProvider": "Gemini 2.5 Flash (Google)",
+  "leaderModel": "gemini-2.5-flash",
+  "tasks": [
+    {
+      "role": "planning",
+      "provider": "Gemini 2.5 Pro (Google)",
+      "model": "gemini-2.5-pro",
+      "status": "success",
+      "durationMs": 36436
+    },
+    {
+      "role": "coding",
+      "provider": "Claude Sonnet 4.5 (Anthropic)",
+      "model": "claude-sonnet-4-5-20250929",
+      "status": "success",
+      "durationMs": 40484
+    },
+    {
+      "role": "review",
+      "provider": "GPT-4.1 (OpenAI)",
+      "model": "gpt-4.1",
+      "status": "success",
+      "durationMs": 24388
+    }
+  ],
+  "totalDurationMs": 108558,
+  "status": "success"
+}

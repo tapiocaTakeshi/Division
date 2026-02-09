@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>モダン ダッシュボード</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-primary: #f5f7fa;
+            --bg-secondary: #ffffff;
+            --bg-sidebar: #1e293b;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --text-sidebar: #e2e8f0;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --border: #e2e8f0;
+            --shadow: rgba(0, 0, 0, 0.1);
+            --trend-up: #10b981;
+            --trend-down: #ef4444;
+        }
+
+        [data-theme="dark"] {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-sidebar: #020617;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-sidebar: #e2e8f0;
+            --border: #334155;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .dashboard-container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* サイドバー */
+        .sidebar {
+            width: 260px;
+            background-color: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 2rem 0;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+
+        .sidebar-header {
+            padding: 0 1.5rem 2rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar-header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-sidebar);
+        }
+
+        .sidebar-nav {
+            padding: 1.5rem 0;
+        }
+
+        .sidebar-nav ul {
+            list-style: none;
+        }
+
+        .sidebar-nav li {
+            margin: 0.5rem 0;
+        }
+
+        .sidebar-nav a {
+            display: flex;
+            align-items: center;
+            padding: 0.875rem 1.5rem;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            transition: background-color 0.2s ease;
+            gap: 1rem;
+        }
+
+        .sidebar-nav a:hover,
+        .sidebar-nav li.active a {
+            background-color: rgba(59, 130, 246, 0.2);
+            border-left: 3px solid var(--accent);
+        }
+
+        .sidebar-nav i {
+            font-size: 1.125rem;
+            width: 20px;
+        }
+
+        /* メインコンテンツ */
+        .main-content {
+            flex: 1;
+            margin-left: 260px;
+            padding: 2rem;
+            transition: margin-left 0.3s ease;
+        }
+
+        .main-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .hamburger-menu {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            color: var(--text-primary);
+            cursor: pointer;
+        }
+
+        /* テーマスイッチャー */
+        .theme-switcher-container {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .theme-switcher {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+
+        .theme-switcher input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--accent);
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(24px);
+        }
+
+        /* 統計カード */
+        .stats-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background-color: var(--bg-secondary);
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px var(--shadow);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 16px var(--shadow);
+        }
+
+        .card h3 {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 0.75rem;
+        }
+
+        .card p {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .card-trend {
+            font-size: 0.875rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .card-trend.up {
+            color: var(--trend-up);
+        }
+
+        .card-trend.down {
+            color: var(--trend-down);
+        }
+
+        /* グラフエリア */
+        .charts {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .chart-container {
+            padding: 1.5rem;
+        }
+
+        .chart-container h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            color: var(--text-primary);
+        }
+
+        canvas {
+            max-height: 300px;
+        }
+
+        /* レスポンシブ */
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+
+            .sidebar.active {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0;
+            }
+
+            .hamburger-menu {
+                display: block;
+            }
+
+            .charts {
+                grid-template-columns: 1fr;
+            }
+
+            .stats-cards {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .main-content {
+                padding: 1rem;
+            }
+
+            .card p {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body data-theme="light">
+    <div class="dashboard-container">
+        <!-- サイドバー -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h1>Dashboard</h1>
+            </div>
+            <nav class="sidebar-nav">
+                <ul>
+                    <li class="active"><a href="#"><i class="fas fa-home"></i><span>概要</span></a></li>
+                    <li><a href="#"><i class="fas fa-chart-line"></i><span>レポート</span></a></li>
+                    <li><a href="#"><i class="fas fa-users"></i><span>ユーザー</span></a></li>
+                    <li><a href="#"><i class="fas fa-shopping-cart"></i><span>注文</span></a></li>
+                    <li><a href="#"><i class="fas fa-cog"></i><span>設定</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <!-- メインコンテンツ -->
+        <main class="main-content">
+            <header class="main-header">
+                <button class="hamburger-menu" id="hamburger" aria-label="メニューを開く">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <div class="theme-switcher-container">
+                    <span><i class="fas fa-sun"></i></span>
+                    <label class="theme-switcher">
+                        <input type="checkbox" id="theme-toggle">
+                        <span class="slider"></span>
+                    </label>
+                    <span><i class="fas fa-moon"></i></span>
+                </div>
+            </header>
+
+            <!-- 統計カード -->
+            <section class="stats-cards">
+                <div class="card">
+                    <h3>総売上</h3>
+                    <p>&yen;10,240,000</p>
+                    <span class="card-trend up"><i class="fas fa-arrow-up"></i> 5.2%</span>
+                </div>
+                <div class="card">
+                    <h3>アクティブユーザー数</h3>
+                    <p>1,234人</p>
+                    <span class="card-trend down"><i class="fas fa-arrow-down"></i> 1.8%</span>
+                </div>
+                <div class="card">
+                    <h3>新規注文数</h3>
+                    <p>567件</p>
+                    <span class="card-trend up"><i class="fas fa-arrow-up"></i> 8.1%</span>
+                </div>
+                <div class="card">
+                    <h3>コンバージョン率</h3>
+                    <p>3.24%</p>
+                    <span class="card-trend up"><i class="fas fa-arrow-up"></i> 0.4%</span>
+                </div>
+            </section>
+
+            <!-- グラフ -->
+            <section class="charts">
+                <div class="chart-container card">
+                    <h3>月次売上推移</h3>
+                    <canvas id="lineChart"></canvas>
+                </div>
+                <div class="chart-container card">
+                    <h3>カテゴリ別売上</h3>
+                    <canvas id="barChart"></canvas>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        // テーマ切り替え
+        const themeToggle = document.getElementById('theme-toggle');
+        const body = document.body;
+
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        body.setAttribute('data-theme', savedTheme);
+        themeToggle.checked = savedTheme === 'dark';
+
+        themeToggle.addEventListener('change', () => {
+            const theme = themeToggle.checked ? 'dark' : 'light';
+            body.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+            updateChartColors(theme);
+        });
+
+        // ハンバーガーメニュー
+        const hamburger = document.getElementById('hamburger');
+        const sidebar = document.getElementById('sidebar');
+
+        hamburger.addEventListener('click', () => {
+            sidebar.classList.toggle('active');
+        });
+
+        // Chart.js カラー設定
+        const getColors = (theme) => {
+            return theme === 'dark' ? {
+                text: '#94a3b8',
+                grid: '#334155',
+                primary: '#3b82f6',
+                secondary: '#8b5cf6',
+                tertiary: '#10b981',
+                quaternary: '#f59e0b',
+                quinary: '#ef4444',
+                senary: '#ec4899'
+            } : {
+                text: '#64748b',
+                grid: '#e2e8f0',
+                primary: '#3b82f6',
+                secondary: '#8b5cf6',
+                tertiary: '#10b981',
+                quaternary: '#f59e0b',
+                quinary: '#ef4444',
+                senary: '#ec4899'
+            };
+        };
+
+        const currentTheme = body.getAttribute('data-theme');
+        const colors = getColors(currentTheme);
+
+        // 折れ線グラフ
+        const lineCtx = document.getElementById('lineChart').getContext('2d');
+        const lineChart = new Chart(lineCtx, {
+            type: 'line',
+            data: {
+                labels: ['1月', '2月', '3月', '4月', '5月', '6月', '7月'],
+                datasets: [{
+                    label: '売上 (万円)',
+                    data: [4200, 5100, 4800, 6200, 7100, 6800, 8400],
+                    borderColor: colors.primary,
+                    backgroundColor: colors.primary + '20',
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointBackgroundColor: colors.primary
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        labels: { color: colors.text }
+                    }
+                },
+                scales: {
+                    y: {
+                        ticks: { color: colors.text },
+                        grid: { color: colors.grid }
+                    },
+                    x: {
+                        ticks: { color: colors.text },
+                        grid: { color: colors.grid }
+                    }
+                }
+            }
+        });
+
+        // 棒グラフ
+        const barCtx = document.getElementById('barChart').getContext('2d');
+        const barChart = new Chart(barCtx, {
+            type: 'bar',
+            data: {
+                labels: ['電子機器', '衣類', '食品', '書籍', '家具', 'スポーツ'],
+                datasets: [{
+                    label: '売上額 (万円)',
+                    data: [320, 280, 150, 190, 240, 110],
+                    backgroundColor: [
+                        colors.primary,
+                        colors.secondary,
+                        colors.tertiary,
+                        colors.quaternary,
+                        colors.quinary,
+                        colors.senary
+                    ],
+                    borderRadius: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        labels: { color: colors.text }
+                    }
+                },
+                scales: {
+                    y: {
+                        ticks: { color: colors.text },
+                        grid: { color: colors.grid }
+                    },
+                    x: {
+                        ticks: { color: colors.text },
+                        grid: { color: colors.grid }
+                    }
+                }
+            }
+        });
+
+        // テーマ切替時のグラフ再配色
+        function updateChartColors(theme) {
+            const c = getColors(theme);
+
+            // 折れ線グラフ
+            lineChart.data.datasets[0].borderColor = c.primary;
+            lineChart.data.datasets[0].backgroundColor = c.primary + '20';
+            lineChart.data.datasets[0].pointBackgroundColor = c.primary;
+            lineChart.options.plugins.legend.labels.color = c.text;
+            lineChart.options.scales.y.ticks.color = c.text;
+            lineChart.options.scales.y.grid.color = c.grid;
+            lineChart.options.scales.x.ticks.color = c.text;
+            lineChart.options.scales.x.grid.color = c.grid;
+            lineChart.update();
+
+            // 棒グラフ
+            barChart.data.datasets[0].backgroundColor = [
+                c.primary, c.secondary, c.tertiary,
+                c.quaternary, c.quinary, c.senary
+            ];
+            barChart.options.plugins.legend.labels.color = c.text;
+            barChart.options.scales.y.ticks.color = c.text;
+            barChart.options.scales.y.grid.color = c.grid;
+            barChart.options.scales.x.ticks.color = c.text;
+            barChart.options.scales.x.grid.color = c.grid;
+            barChart.update();
+        }
+
+        // 初期テーマがダークの場合、グラフにも反映
+        if (savedTheme === 'dark') {
+            updateChartColors('dark');
+        }
+    </script>
+</body>
+</html>

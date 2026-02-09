@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { runAgent } from "../services/orchestrator";
+import { asyncHandler } from "../middleware/async-handler";
 
 export const agentRouter = Router();
 
@@ -19,7 +20,7 @@ const agentRunSchema = z.object({
  * automatically dispatch each to the assigned AI provider, and return
  * the aggregated results.
  */
-agentRouter.post("/run", async (req: Request, res: Response) => {
+agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
   const parsed = agentRunSchema.safeParse(req.body);
   if (!parsed.success) {
     res
@@ -35,4 +36,4 @@ agentRouter.post("/run", async (req: Request, res: Response) => {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: "Agent execution failed", message });
   }
-});
+}));

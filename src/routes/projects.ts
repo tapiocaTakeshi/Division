@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db";
 import { z } from "zod";
+import { asyncHandler } from "../middleware/async-handler";
 
 export const projectRouter = Router();
 
@@ -12,13 +13,13 @@ const createProjectSchema = z.object({
 const updateProjectSchema = createProjectSchema.partial();
 
 // List all projects
-projectRouter.get("/", async (_req: Request, res: Response) => {
+projectRouter.get("/", asyncHandler(async (_req: Request, res: Response) => {
   const projects = await prisma.project.findMany({ orderBy: { createdAt: "desc" } });
   res.json(projects);
-});
+}));
 
 // Get a project with its role assignments
-projectRouter.get("/:id", async (req: Request, res: Response) => {
+projectRouter.get("/:id", asyncHandler(async (req: Request, res: Response) => {
   const project = await prisma.project.findUnique({
     where: { id: req.params.id },
   });
@@ -32,10 +33,10 @@ projectRouter.get("/:id", async (req: Request, res: Response) => {
     orderBy: { role: { name: "asc" } },
   });
   res.json({ ...project, assignments });
-});
+}));
 
 // Create a project
-projectRouter.post("/", async (req: Request, res: Response) => {
+projectRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   const parsed = createProjectSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
@@ -43,10 +44,10 @@ projectRouter.post("/", async (req: Request, res: Response) => {
   }
   const project = await prisma.project.create({ data: parsed.data });
   res.status(201).json(project);
-});
+}));
 
 // Update a project
-projectRouter.put("/:id", async (req: Request, res: Response) => {
+projectRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => {
   const parsed = updateProjectSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
@@ -61,10 +62,10 @@ projectRouter.put("/:id", async (req: Request, res: Response) => {
   } catch {
     res.status(404).json({ error: "Project not found" });
   }
-});
+}));
 
 // Delete a project
-projectRouter.delete("/:id", async (req: Request, res: Response) => {
+projectRouter.delete("/:id", asyncHandler(async (req: Request, res: Response) => {
   try {
     await prisma.roleAssignment.deleteMany({ where: { projectId: req.params.id } });
     await prisma.project.delete({ where: { id: req.params.id } });
@@ -72,4 +73,4 @@ projectRouter.delete("/:id", async (req: Request, res: Response) => {
   } catch {
     res.status(404).json({ error: "Project not found" });
   }
-});
+}));

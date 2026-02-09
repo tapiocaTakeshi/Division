@@ -145,8 +145,35 @@ function parseResponse(apiType: string, data: unknown): string {
   return JSON.stringify(data);
 }
 
+/** HTTP status codes that are safe to retry */
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 529]);
+
+/** Maximum number of retry attempts for retryable errors */
+const MAX_RETRIES = 4;
+
+/** Base delay in ms for exponential backoff (doubles each attempt) */
+const BASE_DELAY_MS = 2000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * Execute a task by calling the assigned AI provider's API
+ * Parse the Retry-After header value into milliseconds.
+ * Supports both delta-seconds and HTTP-date formats.
+ */
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (!Number.isNaN(seconds)) return seconds * 1000;
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  return null;
+}
+
+/**
+ * Execute a task by calling the assigned AI provider's API.
+ * Automatically retries on 429 (rate limit) and 5xx errors with exponential backoff.
  */
 export async function executeTask(req: ExecutionRequest): Promise<ExecutionResult> {
   const start = Date.now();
@@ -192,38 +219,78 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
-  try {
-    const fullUrl = `${req.provider.apiBaseUrl}${requestSpec.url}`;
-    const response = await fetch(fullUrl, {
-      method: "POST",
-      headers: requestSpec.headers,
-      body: JSON.stringify(requestSpec.body),
-    });
+  const fullUrl = `${req.provider.apiBaseUrl}${requestSpec.url}`;
+  let lastErrorMsg = "";
 
-    if (!response.ok) {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(fullUrl, {
+        method: "POST",
+        headers: requestSpec.headers,
+        body: JSON.stringify(requestSpec.body),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const output = parseResponse(req.provider.apiType, data);
+        return {
+          output,
+          durationMs: Date.now() - start,
+          status: "success",
+        };
+      }
+
       const errorText = await response.text();
-      return {
-        output: "",
-        durationMs: Date.now() - start,
-        status: "error",
-        errorMsg: `API error ${response.status}: ${errorText}`,
-      };
+      lastErrorMsg = `API error ${response.status}: ${errorText}`;
+
+      // Only retry on retryable status codes
+      if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt === MAX_RETRIES) {
+        return {
+          output: "",
+          durationMs: Date.now() - start,
+          status: "error",
+          errorMsg: lastErrorMsg,
+        };
+      }
+
+      // Determine backoff delay: prefer Retry-After header, fall back to exponential backoff
+      const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+      const backoffMs = retryAfterMs ?? BASE_DELAY_MS * Math.pow(2, attempt);
+
+      console.warn(
+        `[ai-executor] ${response.status} from ${req.provider.name} (${req.provider.modelId}), ` +
+        `retry ${attempt + 1}/${MAX_RETRIES} after ${backoffMs}ms`
+      );
+
+      await sleep(backoffMs);
+    } catch (err: unknown) {
+      lastErrorMsg = err instanceof Error ? err.message : String(err);
+
+      // Retry network errors too
+      if (attempt === MAX_RETRIES) {
+        return {
+          output: "",
+          durationMs: Date.now() - start,
+          status: "error",
+          errorMsg: lastErrorMsg,
+        };
+      }
+
+      const backoffMs = BASE_DELAY_MS * Math.pow(2, attempt);
+      console.warn(
+        `[ai-executor] Network error from ${req.provider.name}: ${lastErrorMsg}, ` +
+        `retry ${attempt + 1}/${MAX_RETRIES} after ${backoffMs}ms`
+      );
+
+      await sleep(backoffMs);
     }
-
-    const data = await response.json();
-    const output = parseResponse(req.provider.apiType, data);
-
-    return {
-      output,
-      durationMs: Date.now() - start,
-      status: "success",
-    };
-  } catch (err: unknown) {
-    return {
-      output: "",
-      durationMs: Date.now() - start,
-      status: "error",
-      errorMsg: err instanceof Error ? err.message : String(err),
-    };
   }
+
+  // Should not reach here, but safety net
+  return {
+    output: "",
+    durationMs: Date.now() - start,
+    status: "error",
+    errorMsg: lastErrorMsg,
+  };
 }

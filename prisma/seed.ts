@@ -425,6 +425,11 @@ async function main() {
   console.log("Project seeded:", project.name);
 
   // ===== ASSIGNMENTS (optimized defaults) =====
+  // Clear existing assignments for this project to avoid stale entries
+  await prisma.roleAssignment.deleteMany({
+    where: { projectId: project.id },
+  });
+
   const assignments = [
     { role: coding, provider: claudeSonnet45, label: "Coding    -> Claude Sonnet 4.5" },
     { role: search, provider: perplexitySonarPro, label: "Search    -> Perplexity Sonar Pro" },
@@ -435,16 +440,8 @@ async function main() {
   ];
 
   for (const a of assignments) {
-    await prisma.roleAssignment.upsert({
-      where: {
-        projectId_roleId_providerId: {
-          projectId: project.id,
-          roleId: a.role.id,
-          providerId: a.provider.id,
-        },
-      },
-      update: {},
-      create: {
+    await prisma.roleAssignment.create({
+      data: {
         projectId: project.id,
         roleId: a.role.id,
         providerId: a.provider.id,

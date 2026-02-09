@@ -38,6 +38,11 @@ const ENV_KEY_MAP: Record<string, string> = {
   perplexity: "PERPLEXITY_API_KEY",
   xai: "XAI_API_KEY",
   deepseek: "DEEPSEEK_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  meta: "META_API_KEY",
+  qwen: "QWEN_API_KEY",
+  cohere: "COHERE_API_KEY",
+  moonshot: "MOONSHOT_API_KEY",
 };
 
 /** API types that use the OpenAI-compatible chat completions format */
@@ -46,6 +51,11 @@ const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
   perplexity: "/chat/completions",
   xai: "/v1/chat/completions",
   deepseek: "/chat/completions",
+  mistral: "/v1/chat/completions",
+  meta: "/v1/chat/completions",
+  qwen: "/compatible-mode/v1/chat/completions",
+  cohere: "/v2/chat",
+  moonshot: "/v1/chat/completions",
 };
 
 /**

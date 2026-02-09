@@ -428,7 +428,7 @@ async function main() {
   const assignments = [
     { role: coding, provider: claudeSonnet45, label: "Coding    -> Claude Sonnet 4.5" },
     { role: search, provider: perplexitySonarPro, label: "Search    -> Perplexity Sonar Pro" },
-    { role: planning, provider: gemini25Pro, label: "Planning  -> Gemini 2.5 Pro" },
+    { role: planning, provider: gemini25Flash, label: "Planning  -> Gemini 2.5 Flash" },
     { role: writing, provider: claudeSonnet45, label: "Writing   -> Claude Sonnet 4.5" },
     { role: review, provider: gpt41, label: "Review    -> GPT-4.1" },
     { role: leader, provider: gemini25Flash, label: "Leader    -> Gemini 2.5 Flash" },

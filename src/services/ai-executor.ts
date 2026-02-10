@@ -156,6 +156,181 @@ function parseResponse(apiType: string, data: unknown): string {
 }
 
 /**
+ * Enable streaming on the request body for a given API type.
+ * Returns the modified body and the SSE endpoint URL (for Google).
+ */
+function enableStreaming(
+  apiType: string,
+  url: string,
+  body: unknown
+): { url: string; body: unknown } {
+  if (apiType === "google") {
+    // Google uses a different endpoint for streaming
+    const streamUrl = url.replace(":generateContent", ":streamGenerateContent") + "?alt=sse";
+    return { url: streamUrl, body };
+  }
+  // Anthropic & OpenAI-compatible: just add stream: true
+  return { url, body: { ...(body as Record<string, unknown>), stream: true } };
+}
+
+/**
+ * Parse a single SSE chunk and extract the text delta.
+ * Returns the text fragment, or null if the chunk is not a content event.
+ */
+function parseStreamChunk(apiType: string, data: string): string | null {
+  try {
+    const parsed = JSON.parse(data);
+
+    if (apiType === "anthropic") {
+      // Anthropic: content_block_delta with delta.text
+      if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+        return parsed.delta.text;
+      }
+      return null;
+    }
+
+    if (apiType === "google") {
+      // Google: candidates[0].content.parts[0].text
+      const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+      return text || null;
+    }
+
+    // OpenAI-compatible: choices[0].delta.content
+    const content = parsed.choices?.[0]?.delta?.content;
+    return content || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Execute a task with streaming, calling onChunk for each text fragment.
+ * Returns the full accumulated output when complete.
+ */
+export async function executeTaskStream(
+  req: ExecutionRequest,
+  onChunk: (text: string) => void
+): Promise<ExecutionResult> {
+  const start = Date.now();
+
+  const systemPrompt =
+    req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
+
+  const requestSpec = buildRequestBody(
+    req.provider.apiType,
+    req.provider.modelId,
+    req.input,
+    systemPrompt,
+    req.config || undefined
+  );
+
+  if (!requestSpec) {
+    return {
+      output: "",
+      durationMs: Date.now() - start,
+      status: "error",
+      errorMsg: `Unsupported API type: ${req.provider.apiType}`,
+    };
+  }
+
+  // Resolve API key
+  const envVar = ENV_KEY_MAP[req.provider.apiType];
+  const apiKey = (envVar ? process.env[envVar] : undefined) || (req.config?.apiKey as string) || "";
+  if (!apiKey) {
+    return {
+      output: "",
+      durationMs: Date.now() - start,
+      status: "error",
+      errorMsg: `No API key found for ${req.provider.name} (${req.provider.apiType}). Set ${envVar || "the API key"} environment variable.`,
+    };
+  }
+
+  // Update headers with the resolved API key
+  if (req.provider.apiType === "anthropic") {
+    requestSpec.headers["x-api-key"] = apiKey;
+  } else if (req.provider.apiType === "google") {
+    requestSpec.headers["x-goog-api-key"] = apiKey;
+  } else if (OPENAI_COMPATIBLE_TYPES[req.provider.apiType]) {
+    requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+
+  // Enable streaming
+  const { url: streamUrl, body: streamBody } = enableStreaming(
+    req.provider.apiType,
+    requestSpec.url,
+    requestSpec.body
+  );
+
+  try {
+    const fullUrl = `${req.provider.apiBaseUrl}${streamUrl}`;
+    const response = await fetch(fullUrl, {
+      method: "POST",
+      headers: requestSpec.headers,
+      body: JSON.stringify(streamBody),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        output: "",
+        durationMs: Date.now() - start,
+        status: "error",
+        errorMsg: `API error ${response.status}: ${errorText}`,
+      };
+    }
+
+    if (!response.body) {
+      return {
+        output: "",
+        durationMs: Date.now() - start,
+        status: "error",
+        errorMsg: "No response body for streaming",
+      };
+    }
+
+    // Read SSE stream
+    let accumulated = "";
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]") continue;
+
+        const text = parseStreamChunk(req.provider.apiType, data);
+        if (text) {
+          accumulated += text;
+          onChunk(text);
+        }
+      }
+    }
+
+    return {
+      output: accumulated,
+      durationMs: Date.now() - start,
+      status: "success",
+    };
+  } catch (err: unknown) {
+    return {
+      output: "",
+      durationMs: Date.now() - start,
+      status: "error",
+      errorMsg: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
  * Execute a task by calling the assigned AI provider's API
  */
 export async function executeTask(req: ExecutionRequest): Promise<ExecutionResult> {

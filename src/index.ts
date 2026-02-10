@@ -5,6 +5,7 @@ import { assignmentRouter } from "./routes/assignments";
 import { taskRouter } from "./routes/tasks";
 import { projectRouter } from "./routes/projects";
 import { agentRouter } from "./routes/agent";
+import { generateRouter } from "./routes/generate";
 import providersListRouter from "./routes/providers-list";
 import mcpRouter from "./routes/mcp";
 
@@ -25,6 +26,7 @@ app.use("/api/projects", projectRouter);
 app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", taskRouter);
 app.use("/api/agent", agentRouter);
+app.use("/api/generate", generateRouter);
 app.use("/api/models", providersListRouter);
 app.use("/mcp", mcpRouter);
 

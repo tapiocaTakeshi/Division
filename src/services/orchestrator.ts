@@ -9,7 +9,7 @@
  */
 
 import { prisma } from "../db";
-import { executeTask } from "./ai-executor";
+import { executeTask, executeTaskStream } from "./ai-executor";
 
 // --- Types ---
 
@@ -399,5 +399,246 @@ export async function runAgent(
     totalDurationMs,
     status,
   };
+}
+
+// --- Stream Event Types ---
+
+export type StreamEvent =
+  | { type: "session_start"; sessionId: string; input: string; leader: string }
+  | { type: "leader_start"; provider: string; model: string }
+  | { type: "leader_chunk"; text: string }
+  | { type: "leader_done"; taskCount: number; tasks: Array<{ role: string; reason: string }> }
+  | { type: "leader_error"; error: string }
+  | { type: "task_start"; index: number; total: number; role: string; provider: string; model: string }
+  | { type: "task_chunk"; index: number; role: string; text: string }
+  | { type: "task_done"; index: number; role: string; status: string; durationMs: number }
+  | { type: "task_error"; index: number; role: string; error: string }
+  | { type: "session_done"; status: string; totalDurationMs: number; taskCount: number };
+
+/**
+ * Streaming orchestrator: run the full agent pipeline, emitting SSE events via the callback.
+ */
+export async function runAgentStream(
+  req: OrchestratorRequest,
+  emit: (event: StreamEvent) => void
+): Promise<void> {
+  const startTime = Date.now();
+  const sessionId = crypto.randomUUID();
+
+  // 1. Find the Leader assignment
+  const leaderRole = await prisma.role.findUnique({
+    where: { slug: "leader" },
+  });
+  if (!leaderRole) {
+    emit({ type: "leader_error", error: 'Role "leader" not found. Please run db:seed.' });
+    return;
+  }
+
+  const leaderAssignment = await prisma.roleAssignment.findFirst({
+    where: { projectId: req.projectId, roleId: leaderRole.id },
+    include: { provider: true },
+    orderBy: { priority: "desc" },
+  });
+  if (!leaderAssignment) {
+    emit({ type: "leader_error", error: 'No AI provider assigned to "leader" role in this project.' });
+    return;
+  }
+
+  const leaderApiKey = resolveApiKey(
+    leaderAssignment.provider.name,
+    leaderAssignment.provider.apiType,
+    req.apiKeys
+  );
+
+  // 2. Emit session start
+  emit({
+    type: "session_start",
+    sessionId,
+    input: req.input,
+    leader: leaderAssignment.provider.displayName,
+  });
+
+  emit({
+    type: "leader_start",
+    provider: leaderAssignment.provider.displayName,
+    model: leaderAssignment.provider.modelId,
+  });
+
+  // 3. Ask Leader to decompose (streaming)
+  const leaderResult = await executeTaskStream(
+    {
+      provider: leaderAssignment.provider,
+      config: { apiKey: leaderApiKey },
+      input: req.input,
+      role: { slug: "leader", name: "Leader" },
+      systemPrompt: LEADER_SYSTEM_PROMPT,
+    },
+    (text) => emit({ type: "leader_chunk", text })
+  );
+
+  if (leaderResult.status === "error") {
+    emit({ type: "leader_error", error: leaderResult.errorMsg || "Leader execution failed" });
+    emit({
+      type: "session_done",
+      status: "error",
+      totalDurationMs: Date.now() - startTime,
+      taskCount: 0,
+    });
+    return;
+  }
+
+  // 4. Parse Leader's task breakdown
+  let subTasks: SubTask[];
+  try {
+    subTasks = parseLeaderResponse(leaderResult.output);
+  } catch (parseErr) {
+    emit({
+      type: "leader_error",
+      error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+    });
+    emit({
+      type: "session_done",
+      status: "error",
+      totalDurationMs: Date.now() - startTime,
+      taskCount: 0,
+    });
+    return;
+  }
+
+  emit({
+    type: "leader_done",
+    taskCount: subTasks.length,
+    tasks: subTasks.map((t) => ({ role: t.role, reason: t.reason })),
+  });
+
+  // 5. Execute each sub-task sequentially (streaming)
+  let previousContext = "";
+
+  for (let i = 0; i < subTasks.length; i++) {
+    const task = subTasks[i];
+
+    // Find role
+    const role = await prisma.role.findUnique({
+      where: { slug: task.role },
+    });
+    if (!role) {
+      emit({ type: "task_error", index: i, role: task.role, error: `Role not found: ${task.role}` });
+      continue;
+    }
+
+    // Find provider (check overrides first, then DB)
+    let provider: {
+      id: string;
+      name: string;
+      displayName: string;
+      apiBaseUrl: string;
+      apiType: string;
+      modelId: string;
+      isEnabled: boolean;
+    } | null = null;
+
+    const overrideProviderName = req.overrides?.[task.role];
+    if (overrideProviderName) {
+      const overrideProvider = await prisma.provider.findUnique({
+        where: { name: overrideProviderName },
+      });
+      if (overrideProvider) {
+        provider = overrideProvider;
+      }
+    }
+
+    if (!provider) {
+      const assignment = await prisma.roleAssignment.findFirst({
+        where: { projectId: req.projectId, roleId: role.id },
+        include: { provider: true },
+        orderBy: { priority: "desc" },
+      });
+      if (assignment) {
+        provider = assignment.provider;
+      }
+    }
+
+    if (!provider) {
+      emit({
+        type: "task_error",
+        index: i,
+        role: task.role,
+        error: `No provider assigned to role "${task.role}"`,
+      });
+      continue;
+    }
+
+    // Build enriched input
+    let enrichedInput = task.input;
+    if (previousContext) {
+      enrichedInput = `## これまでの他のエージェントの作業結果:\n${previousContext}\n\n## あなたへの指示:\n${task.input}`;
+    }
+
+    const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys);
+
+    emit({
+      type: "task_start",
+      index: i,
+      total: subTasks.length,
+      role: task.role,
+      provider: provider.displayName,
+      model: provider.modelId,
+    });
+
+    const result = await executeTaskStream(
+      {
+        provider,
+        config: { apiKey },
+        input: enrichedInput,
+        role: { slug: role.slug, name: role.name },
+      },
+      (text) => emit({ type: "task_chunk", index: i, role: task.role, text })
+    );
+
+    if (result.status === "success") {
+      emit({
+        type: "task_done",
+        index: i,
+        role: task.role,
+        status: "success",
+        durationMs: result.durationMs,
+      });
+    } else {
+      emit({
+        type: "task_error",
+        index: i,
+        role: task.role,
+        error: result.errorMsg || "Execution failed",
+      });
+    }
+
+    // Log to DB
+    await prisma.taskLog.create({
+      data: {
+        projectId: req.projectId,
+        roleId: role.id,
+        providerId: provider.id,
+        input: enrichedInput,
+        output: result.output || null,
+        status: result.status,
+        errorMsg: result.errorMsg || null,
+        durationMs: result.durationMs,
+      },
+    });
+
+    // Add to context for next task
+    if (result.status === "success" && result.output) {
+      previousContext += `\n### ${role.name} (${provider.displayName}):\n${result.output}\n`;
+    }
+  }
+
+  // 6. Determine overall status
+  const totalDurationMs = Date.now() - startTime;
+  emit({
+    type: "session_done",
+    status: "success",
+    totalDurationMs,
+    taskCount: subTasks.length,
+  });
 }
 

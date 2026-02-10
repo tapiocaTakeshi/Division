@@ -403,20 +403,114 @@ export async function runAgent(
 
 // --- Stream Event Types ---
 
+export interface StreamEventSessionStart {
+  type: "session_start";
+  id: string;
+  sessionId: string;
+  input: string;
+  leader: string;
+}
+export interface StreamEventLeaderStart {
+  type: "leader_start";
+  id: string;
+  provider: string;
+  model: string;
+}
+export interface StreamEventLeaderChunk {
+  type: "leader_chunk";
+  id: string;
+  text: string;
+}
+export interface StreamEventLeaderDone {
+  type: "leader_done";
+  id: string;
+  taskCount: number;
+  tasks: Array<{ role: string; input: string; reason: string }>;
+  rawOutput: string;
+}
+export interface StreamEventLeaderError {
+  type: "leader_error";
+  id: string;
+  error: string;
+}
+export interface StreamEventTaskStart {
+  type: "task_start";
+  id: string;
+  index: number;
+  total: number;
+  role: string;
+  provider: string;
+  model: string;
+  input: string;
+}
+export interface StreamEventTaskChunk {
+  type: "task_chunk";
+  id: string;
+  index: number;
+  role: string;
+  text: string;
+}
+export interface StreamEventTaskDone {
+  type: "task_done";
+  id: string;
+  index: number;
+  role: string;
+  provider: string;
+  model: string;
+  output: string;
+  status: string;
+  durationMs: number;
+}
+export interface StreamEventTaskError {
+  type: "task_error";
+  id: string;
+  index: number;
+  role: string;
+  error: string;
+}
+export interface StreamEventSessionDone {
+  type: "session_done";
+  id: string;
+  sessionId: string;
+  status: string;
+  totalDurationMs: number;
+  taskCount: number;
+  results: Array<{
+    role: string;
+    provider: string;
+    model: string;
+    output: string;
+    status: string;
+    durationMs: number;
+  }>;
+}
+export interface StreamEventHeartbeat {
+  type: "heartbeat";
+  id: string;
+  timestamp: number;
+}
+
 export type StreamEvent =
-  | { type: "session_start"; sessionId: string; input: string; leader: string }
-  | { type: "leader_start"; provider: string; model: string }
-  | { type: "leader_chunk"; text: string }
-  | { type: "leader_done"; taskCount: number; tasks: Array<{ role: string; reason: string }> }
-  | { type: "leader_error"; error: string }
-  | { type: "task_start"; index: number; total: number; role: string; provider: string; model: string }
-  | { type: "task_chunk"; index: number; role: string; text: string }
-  | { type: "task_done"; index: number; role: string; status: string; durationMs: number }
-  | { type: "task_error"; index: number; role: string; error: string }
-  | { type: "session_done"; status: string; totalDurationMs: number; taskCount: number };
+  | StreamEventSessionStart
+  | StreamEventLeaderStart
+  | StreamEventLeaderChunk
+  | StreamEventLeaderDone
+  | StreamEventLeaderError
+  | StreamEventTaskStart
+  | StreamEventTaskChunk
+  | StreamEventTaskDone
+  | StreamEventTaskError
+  | StreamEventSessionDone
+  | StreamEventHeartbeat;
 
 /**
  * Streaming orchestrator: run the full agent pipeline, emitting SSE events via the callback.
+ *
+ * Enhanced event stream includes:
+ *   - Unique event IDs for reliable reconnection (Last-Event-ID)
+ *   - Task output included in task_done events
+ *   - Full aggregated results in session_done event
+ *   - Heartbeat support via returned interval handle
  */
 export async function runAgentStream(
   req: OrchestratorRequest,
@@ -424,13 +518,37 @@ export async function runAgentStream(
 ): Promise<void> {
   const startTime = Date.now();
   const sessionId = crypto.randomUUID();
+  let eventSeq = 0;
+  const nextId = () => `${sessionId}-${eventSeq++}`;
 
+  // Heartbeat: emit every 15s to keep the connection alive on proxies/load-balancers
+  const heartbeatInterval = setInterval(() => {
+    emit({ type: "heartbeat", id: nextId(), timestamp: Date.now() });
+  }, 15_000);
+
+  try {
+    await runAgentStreamCore(req, emit, sessionId, nextId, startTime);
+  } finally {
+    clearInterval(heartbeatInterval);
+  }
+}
+
+/**
+ * Internal streaming implementation.
+ */
+async function runAgentStreamCore(
+  req: OrchestratorRequest,
+  emit: (event: StreamEvent) => void,
+  sessionId: string,
+  nextId: () => string,
+  startTime: number
+): Promise<void> {
   // 1. Find the Leader assignment
   const leaderRole = await prisma.role.findUnique({
     where: { slug: "leader" },
   });
   if (!leaderRole) {
-    emit({ type: "leader_error", error: 'Role "leader" not found. Please run db:seed.' });
+    emit({ type: "leader_error", id: nextId(), error: 'Role "leader" not found. Please run db:seed.' });
     return;
   }
 
@@ -440,7 +558,7 @@ export async function runAgentStream(
     orderBy: { priority: "desc" },
   });
   if (!leaderAssignment) {
-    emit({ type: "leader_error", error: 'No AI provider assigned to "leader" role in this project.' });
+    emit({ type: "leader_error", id: nextId(), error: 'No AI provider assigned to "leader" role in this project.' });
     return;
   }
 
@@ -453,6 +571,7 @@ export async function runAgentStream(
   // 2. Emit session start
   emit({
     type: "session_start",
+    id: nextId(),
     sessionId,
     input: req.input,
     leader: leaderAssignment.provider.displayName,
@@ -460,6 +579,7 @@ export async function runAgentStream(
 
   emit({
     type: "leader_start",
+    id: nextId(),
     provider: leaderAssignment.provider.displayName,
     model: leaderAssignment.provider.modelId,
   });
@@ -473,16 +593,19 @@ export async function runAgentStream(
       role: { slug: "leader", name: "Leader" },
       systemPrompt: LEADER_SYSTEM_PROMPT,
     },
-    (text) => emit({ type: "leader_chunk", text })
+    (text) => emit({ type: "leader_chunk", id: nextId(), text })
   );
 
   if (leaderResult.status === "error") {
-    emit({ type: "leader_error", error: leaderResult.errorMsg || "Leader execution failed" });
+    emit({ type: "leader_error", id: nextId(), error: leaderResult.errorMsg || "Leader execution failed" });
     emit({
       type: "session_done",
+      id: nextId(),
+      sessionId,
       status: "error",
       totalDurationMs: Date.now() - startTime,
       taskCount: 0,
+      results: [],
     });
     return;
   }
@@ -494,25 +617,39 @@ export async function runAgentStream(
   } catch (parseErr) {
     emit({
       type: "leader_error",
+      id: nextId(),
       error: parseErr instanceof Error ? parseErr.message : String(parseErr),
     });
     emit({
       type: "session_done",
+      id: nextId(),
+      sessionId,
       status: "error",
       totalDurationMs: Date.now() - startTime,
       taskCount: 0,
+      results: [],
     });
     return;
   }
 
   emit({
     type: "leader_done",
+    id: nextId(),
     taskCount: subTasks.length,
-    tasks: subTasks.map((t) => ({ role: t.role, reason: t.reason })),
+    tasks: subTasks.map((t) => ({ role: t.role, input: t.input, reason: t.reason })),
+    rawOutput: leaderResult.output,
   });
 
   // 5. Execute each sub-task sequentially (streaming)
   let previousContext = "";
+  const taskResults: Array<{
+    role: string;
+    provider: string;
+    model: string;
+    output: string;
+    status: string;
+    durationMs: number;
+  }> = [];
 
   for (let i = 0; i < subTasks.length; i++) {
     const task = subTasks[i];
@@ -522,7 +659,15 @@ export async function runAgentStream(
       where: { slug: task.role },
     });
     if (!role) {
-      emit({ type: "task_error", index: i, role: task.role, error: `Role not found: ${task.role}` });
+      emit({ type: "task_error", id: nextId(), index: i, role: task.role, error: `Role not found: ${task.role}` });
+      taskResults.push({
+        role: task.role,
+        provider: "unknown",
+        model: "unknown",
+        output: "",
+        status: "error",
+        durationMs: 0,
+      });
       continue;
     }
 
@@ -561,9 +706,18 @@ export async function runAgentStream(
     if (!provider) {
       emit({
         type: "task_error",
+        id: nextId(),
         index: i,
         role: task.role,
         error: `No provider assigned to role "${task.role}"`,
+      });
+      taskResults.push({
+        role: task.role,
+        provider: "unassigned",
+        model: "unassigned",
+        output: "",
+        status: "error",
+        durationMs: 0,
       });
       continue;
     }
@@ -578,11 +732,13 @@ export async function runAgentStream(
 
     emit({
       type: "task_start",
+      id: nextId(),
       index: i,
       total: subTasks.length,
       role: task.role,
       provider: provider.displayName,
       model: provider.modelId,
+      input: task.input,
     });
 
     const result = await executeTaskStream(
@@ -592,25 +748,39 @@ export async function runAgentStream(
         input: enrichedInput,
         role: { slug: role.slug, name: role.name },
       },
-      (text) => emit({ type: "task_chunk", index: i, role: task.role, text })
+      (text) => emit({ type: "task_chunk", id: nextId(), index: i, role: task.role, text })
     );
 
     if (result.status === "success") {
       emit({
         type: "task_done",
+        id: nextId(),
         index: i,
         role: task.role,
+        provider: provider.displayName,
+        model: provider.modelId,
+        output: result.output,
         status: "success",
         durationMs: result.durationMs,
       });
     } else {
       emit({
         type: "task_error",
+        id: nextId(),
         index: i,
         role: task.role,
         error: result.errorMsg || "Execution failed",
       });
     }
+
+    taskResults.push({
+      role: task.role,
+      provider: provider.displayName,
+      model: provider.modelId,
+      output: result.output,
+      status: result.status,
+      durationMs: result.durationMs,
+    });
 
     // Log to DB
     await prisma.taskLog.create({
@@ -632,13 +802,20 @@ export async function runAgentStream(
     }
   }
 
-  // 6. Determine overall status
+  // 6. Determine overall status & emit session_done with full results
+  const allSuccess = taskResults.every((r) => r.status === "success");
+  const allError = taskResults.every((r) => r.status === "error");
+  const status = allSuccess ? "success" : allError ? "error" : "partial";
   const totalDurationMs = Date.now() - startTime;
+
   emit({
     type: "session_done",
-    status: "success",
+    id: nextId(),
+    sessionId,
+    status,
     totalDurationMs,
     taskCount: subTasks.length,
+    results: taskResults,
   });
 }
 

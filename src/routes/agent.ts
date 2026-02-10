@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
-import { runAgent } from "../services/orchestrator";
+import { runAgent, runAgentStream } from "../services/orchestrator";
 import { asyncHandler } from "../middleware/async-handler";
 
 export const agentRouter = Router();
@@ -37,3 +37,45 @@ agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
     res.status(500).json({ error: "Agent execution failed", message });
   }
 }));
+
+/**
+ * POST /api/agent/stream
+ *
+ * SSE (Server-Sent Events) streaming version.
+ * Emits events as each step completes:
+ *   session      -> session started
+ *   leader_start -> leader AI starting
+ *   leader_done  -> leader decomposed tasks
+ *   task_start   -> sub-task starting
+ *   task_done    -> sub-task completed
+ *   done         -> all tasks complete
+ *   error        -> fatal error
+ */
+agentRouter.post("/stream", async (req: Request, res: Response) => {
+  const parsed = agentRunSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
+    return;
+  }
+
+  // SSE headers
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  const emit = (event: string, data: unknown) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    await runAgentStream(parsed.data, emit);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    emit("error", { message });
+  }
+
+  res.end();
+});

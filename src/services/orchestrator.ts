@@ -403,3 +403,143 @@ export async function runAgent(
   };
 }
 
+/**
+ * Streaming orchestrator: emits SSE events as each step completes.
+ */
+export async function runAgentStream(
+  req: OrchestratorRequest,
+  emit: (event: string, data: unknown) => void
+): Promise<void> {
+  const startTime = Date.now();
+  const sessionId = crypto.randomUUID();
+
+  emit("session", { sessionId, input: req.input });
+
+  // 1. Find Leader
+  const leaderRole = await prisma.role.findUnique({ where: { slug: "leader" } });
+  if (!leaderRole) { emit("error", { message: 'Role "leader" not found.' }); return; }
+
+  const leaderAssignment = await prisma.roleAssignment.findFirst({
+    where: { projectId: req.projectId, roleId: leaderRole.id },
+    include: { provider: true },
+    orderBy: { priority: "desc" },
+  });
+  if (!leaderAssignment) { emit("error", { message: "No leader provider assigned." }); return; }
+
+  const leaderApiKey = resolveApiKey(leaderAssignment.provider.name, leaderAssignment.provider.apiType, req.apiKeys);
+
+  emit("leader_start", {
+    provider: leaderAssignment.provider.displayName,
+    model: leaderAssignment.provider.modelId,
+  });
+
+  // 2. Leader decomposition
+  const leaderResult = await executeTask({
+    provider: leaderAssignment.provider,
+    config: { apiKey: leaderApiKey },
+    input: req.input,
+    role: { slug: "leader", name: "Leader" },
+    systemPrompt: LEADER_SYSTEM_PROMPT,
+  });
+
+  if (leaderResult.status === "error") {
+    emit("leader_error", { error: leaderResult.errorMsg, durationMs: leaderResult.durationMs });
+    emit("done", { sessionId, status: "error", totalDurationMs: Date.now() - startTime });
+    return;
+  }
+
+  let subTasks: SubTask[];
+  try {
+    subTasks = parseLeaderResponse(leaderResult.output);
+  } catch (parseErr) {
+    emit("leader_error", { error: parseErr instanceof Error ? parseErr.message : String(parseErr) });
+    emit("done", { sessionId, status: "error", totalDurationMs: Date.now() - startTime });
+    return;
+  }
+
+  emit("leader_done", {
+    durationMs: leaderResult.durationMs,
+    tasks: subTasks.map((t) => ({ role: t.role, reason: t.reason })),
+  });
+
+  // 3. Execute sub-tasks sequentially, emitting each result
+  let previousContext = "";
+  const results: SubTaskResult[] = [];
+
+  for (let i = 0; i < subTasks.length; i++) {
+    const task = subTasks[i];
+
+    const role = await prisma.role.findUnique({ where: { slug: task.role } });
+    if (!role) {
+      const errResult: SubTaskResult = { ...task, provider: "unknown", model: "unknown", output: "", status: "error", errorMsg: `Role not found: ${task.role}`, durationMs: 0 };
+      results.push(errResult);
+      emit("task_error", { index: i, ...errResult });
+      continue;
+    }
+
+    let provider: { id: string; name: string; displayName: string; apiBaseUrl: string; apiType: string; modelId: string; isEnabled: boolean } | null = null;
+    const overrideProviderName = req.overrides?.[task.role];
+    if (overrideProviderName) {
+      provider = await prisma.provider.findUnique({ where: { name: overrideProviderName } });
+    }
+    if (!provider) {
+      const assignment = await prisma.roleAssignment.findFirst({
+        where: { projectId: req.projectId, roleId: role.id },
+        include: { provider: true },
+        orderBy: { priority: "desc" },
+      });
+      if (assignment) provider = assignment.provider;
+    }
+    if (!provider) {
+      const errResult: SubTaskResult = { ...task, provider: "unassigned", model: "unassigned", output: "", status: "error", errorMsg: `No provider for "${task.role}"`, durationMs: 0 };
+      results.push(errResult);
+      emit("task_error", { index: i, ...errResult });
+      continue;
+    }
+
+    emit("task_start", { index: i, role: task.role, provider: provider.displayName, model: provider.modelId });
+
+    let enrichedInput = task.input;
+    if (previousContext) {
+      enrichedInput = `## これまでの他のエージェントの作業結果:\n${previousContext}\n\n## あなたへの指示:\n${task.input}`;
+    }
+
+    const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys);
+    const result = await executeTask({
+      provider,
+      config: { apiKey },
+      input: enrichedInput,
+      role: { slug: role.slug, name: role.name },
+    });
+
+    const subResult: SubTaskResult = {
+      ...task, provider: provider.displayName, model: provider.modelId,
+      output: result.output, status: result.status, errorMsg: result.errorMsg, durationMs: result.durationMs,
+    };
+    results.push(subResult);
+
+    await prisma.taskLog.create({
+      data: {
+        projectId: req.projectId, roleId: role.id, providerId: provider.id,
+        input: enrichedInput, output: result.output || null,
+        status: result.status, errorMsg: result.errorMsg || null, durationMs: result.durationMs,
+      },
+    });
+
+    emit("task_done", {
+      index: i, role: task.role, provider: provider.displayName, model: provider.modelId,
+      status: result.status, durationMs: result.durationMs, outputLength: result.output.length, output: result.output,
+    });
+
+    if (result.status === "success" && result.output) {
+      previousContext += `\n### ${role.name} (${provider.displayName}):\n${result.output}\n`;
+    }
+  }
+
+  const allSuccess = results.every((r) => r.status === "success");
+  const allError = results.every((r) => r.status === "error");
+  const status = allSuccess ? "success" : allError ? "error" : "partial";
+
+  emit("done", { sessionId, status, totalDurationMs: Date.now() - startTime, taskCount: results.length });
+}
+

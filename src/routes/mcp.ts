@@ -11,7 +11,7 @@
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { prisma } from "../db";
-import { runAgent } from "../services/orchestrator";
+import { runAgent, runAgentStream, StreamEvent } from "../services/orchestrator";
 
 const router = Router();
 
@@ -51,6 +51,32 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "division_stream",
+    description:
+      "Execute AI agent orchestration with streaming. Returns real-time progress updates as the Leader decomposes tasks and each agent executes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: {
+          type: "string",
+          description: "The task or question to process",
+        },
+        projectId: {
+          type: "string",
+          description: "Project ID (default: demo-project-001)",
+          default: "demo-project-001",
+        },
+        overrides: {
+          type: "object",
+          additionalProperties: { type: "string" },
+          description:
+            "Override AI for roles. Keys: coding/search/planning/writing/review. Values: model names (e.g. claude-opus-4.6, gemini-3-pro, gpt-5.2)",
+        },
+      },
+      required: ["input"],
     },
   },
   {
@@ -141,6 +167,60 @@ async function handleListModels() {
   return [{ type: "text", text: lines.join("\n") }];
 }
 
+async function handleDivisionStream(args: Record<string, unknown>) {
+  const input = args.input as string;
+  const projectId = (args.projectId as string) || "demo-project-001";
+  const overrides = args.overrides as Record<string, string> | undefined;
+
+  const request: { projectId: string; input: string; overrides?: Record<string, string> } = {
+    projectId,
+    input,
+  };
+  if (overrides && Object.keys(overrides).length > 0) {
+    request.overrides = overrides;
+  }
+
+  // Collect stream events and build a formatted output
+  const lines: string[] = [];
+  let sessionId = "";
+
+  await runAgentStream(request, (event: StreamEvent) => {
+    switch (event.type) {
+      case "session_start":
+        sessionId = event.sessionId;
+        lines.push(`## Division Agent Stream`);
+        lines.push(`**Session**: ${event.sessionId}`);
+        lines.push(`**Leader**: ${event.leader}\n`);
+        break;
+      case "leader_done":
+        lines.push(`### Leader Decomposition (${event.taskCount} tasks)`);
+        for (const t of event.tasks) {
+          lines.push(`- **${t.role}**: ${t.reason}`);
+        }
+        lines.push("");
+        break;
+      case "task_start":
+        lines.push(`### Step ${event.index + 1}/${event.total}: ${event.role}`);
+        lines.push(`**Model**: ${event.provider} (${event.model})`);
+        break;
+      case "task_done":
+        lines.push(`**Status**: ${event.status} (${event.durationMs}ms)`);
+        lines.push(`**Output**:\n${event.output}\n`);
+        break;
+      case "task_error":
+        lines.push(`**Error**: ${event.error}\n`);
+        break;
+      case "session_done":
+        lines.push(`---`);
+        lines.push(`**Overall Status**: ${event.status} (${event.totalDurationMs}ms, ${event.taskCount} tasks)`);
+        break;
+      // heartbeat, leader_chunk, task_chunk are not included in final text output
+    }
+  });
+
+  return [{ type: "text", text: lines.join("\n") }];
+}
+
 async function handleHealth() {
   return [
     {
@@ -222,6 +302,9 @@ async function handleJsonRpc(
         switch (toolName) {
           case "division_run":
             content = await handleDivisionRun(args);
+            break;
+          case "division_stream":
+            content = await handleDivisionStream(args);
             break;
           case "division_list_models":
             content = await handleListModels();

@@ -17,6 +17,8 @@ export interface SubTask {
   role: string;
   input: string;
   reason: string;
+  /** Zero-based indices of tasks that must complete before this one starts */
+  dependsOn?: number[];
 }
 
 export interface SubTaskResult extends SubTask {
@@ -58,16 +60,18 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 - review: レビュー・品質確認（GPT担当）
 
 ルール:
-1. タスクは実行順序で並べてください（前のタスクの結果が後のタスクに必要な場合）
-2. 不要なロールは使わなくてOKです
-3. 各タスクのinputは、そのロールのAIに直接渡す具体的な指示にしてください
-4. 必ず以下のJSON形式のみで回答してください。説明文は不要です
+1. 各タスクには0始まりのインデックスが暗黙的に付与されます（最初のタスクが0、次が1...）
+2. 他のタスクの結果が必要な場合は "dependsOn" で依存先のインデックスを指定してください
+3. dependsOnが空または省略されたタスクは他のタスクと並列実行されます
+4. 不要なロールは使わなくてOKです
+5. 各タスクのinputは、そのロールのAIに直接渡す具体的な指示にしてください
+6. 必ず以下のJSON形式のみで回答してください。説明文は不要です
 
 \`\`\`json
 {
   "tasks": [
     { "role": "search", "input": "具体的な検索指示", "reason": "なぜこのタスクが必要か" },
-    { "role": "planning", "input": "具体的な企画指示", "reason": "なぜこのタスクが必要か" }
+    { "role": "planning", "input": "具体的な企画指示", "reason": "なぜこのタスクが必要か", "dependsOn": [0] }
   ]
 }
 \`\`\``;
@@ -119,6 +123,7 @@ function parseLeaderResponse(output: string): SubTask[] {
       role: String(t.role || ""),
       input: String(t.input || ""),
       reason: String(t.reason || ""),
+      dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn.filter((v: unknown) => typeof v === "number") as number[] : undefined,
     }));
   } catch (err) {
     throw new Error(
@@ -262,17 +267,22 @@ export async function runAgent(
     console.log(`  ${i + 1}. [${t.role}] ${t.input.substring(0, 60)}...`)
   );
 
-  // 4. Execute each sub-task sequentially (passing previous context)
-  const results: SubTaskResult[] = [];
-  let previousContext = "";
+  // 4. Execute sub-tasks with dependency-aware parallel execution
+  const results: SubTaskResult[] = new Array(subTasks.length);
+  const taskOutputs: string[] = new Array(subTasks.length).fill("");
+  const taskRoleNames: string[] = new Array(subTasks.length).fill("");
+  const taskProviderNames: string[] = new Array(subTasks.length).fill("");
+  const completed = new Set<number>();
 
-  for (const task of subTasks) {
+  async function executeSubTaskNonStream(i: number): Promise<void> {
+    const task = subTasks[i];
+
     // Find role
     const role = await prisma.role.findUnique({
       where: { slug: task.role },
     });
     if (!role) {
-      results.push({
+      results[i] = {
         ...task,
         provider: "unknown",
         model: "unknown",
@@ -280,9 +290,10 @@ export async function runAgent(
         status: "error",
         errorMsg: `Role not found: ${task.role}`,
         durationMs: 0,
-      });
-      continue;
+      };
+      return;
     }
+    taskRoleNames[i] = role.name;
 
     // Find assignment (check overrides first, then DB)
     let provider: {
@@ -317,7 +328,7 @@ export async function runAgent(
     }
 
     if (!provider) {
-      results.push({
+      results[i] = {
         ...task,
         provider: "unassigned",
         model: "unassigned",
@@ -325,14 +336,24 @@ export async function runAgent(
         status: "error",
         errorMsg: `No provider assigned to role "${task.role}"`,
         durationMs: 0,
-      });
-      continue;
+      };
+      return;
     }
+    taskProviderNames[i] = provider.displayName;
 
-    // Build input with context from previous tasks
+    // Build input with context from dependency tasks
     let enrichedInput = task.input;
-    if (previousContext) {
-      enrichedInput = `## これまでの他のエージェントの作業結果:\n${previousContext}\n\n## あなたへの指示:\n${task.input}`;
+    const deps = task.dependsOn || [];
+    if (deps.length > 0) {
+      const contextParts: string[] = [];
+      for (const depIdx of deps) {
+        if (taskOutputs[depIdx]) {
+          contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
+        }
+      }
+      if (contextParts.length > 0) {
+        enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
+      }
     }
 
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys);
@@ -348,7 +369,7 @@ export async function runAgent(
       role: { slug: role.slug, name: role.name },
     });
 
-    const subResult: SubTaskResult = {
+    results[i] = {
       ...task,
       provider: provider.displayName,
       model: provider.modelId,
@@ -357,8 +378,7 @@ export async function runAgent(
       errorMsg: result.errorMsg,
       durationMs: result.durationMs,
     };
-
-    results.push(subResult);
+    taskOutputs[i] = result.output;
 
     // Log to DB
     await prisma.taskLog.create({
@@ -373,21 +393,46 @@ export async function runAgent(
         durationMs: result.durationMs,
       },
     });
+  }
 
-    // Add to context for next task
-    if (result.status === "success" && result.output) {
-      previousContext += `\n### ${role.name} (${provider.displayName}):\n${result.output}\n`;
+  // Dependency-aware parallel scheduler
+  const remaining = new Set(subTasks.map((_, idx) => idx));
+
+  while (remaining.size > 0) {
+    const ready: number[] = [];
+    for (const idx of remaining) {
+      const deps = subTasks[idx].dependsOn || [];
+      if (deps.every((d) => completed.has(d))) {
+        ready.push(idx);
+      }
+    }
+
+    if (ready.length === 0) {
+      for (const idx of remaining) {
+        ready.push(idx);
+      }
+    }
+
+    for (const idx of ready) {
+      remaining.delete(idx);
+    }
+
+    await Promise.all(ready.map((idx) => executeSubTaskNonStream(idx)));
+
+    for (const idx of ready) {
+      completed.add(idx);
     }
   }
 
   // 5. Determine overall status
-  const allSuccess = results.every((r) => r.status === "success");
-  const allError = results.every((r) => r.status === "error");
+  const filledResults = results.filter(Boolean);
+  const allSuccess = filledResults.every((r) => r.status === "success");
+  const allError = filledResults.every((r) => r.status === "error");
   const status = allSuccess ? "success" : allError ? "error" : "partial";
 
   const totalDurationMs = Date.now() - startTime;
   console.log(
-    `[Agent] Session complete: ${status} (${totalDurationMs}ms, ${results.length} tasks)`
+    `[Agent] Session complete: ${status} (${totalDurationMs}ms, ${filledResults.length} tasks)`
   );
 
   return {
@@ -395,7 +440,7 @@ export async function runAgent(
     input: req.input,
     leaderProvider: leaderAssignment.provider.displayName,
     leaderModel: leaderAssignment.provider.modelId,
-    tasks: results,
+    tasks: filledResults,
     totalDurationMs,
     status,
   };
@@ -425,7 +470,7 @@ export interface StreamEventLeaderDone {
   type: "leader_done";
   id: string;
   taskCount: number;
-  tasks: Array<{ role: string; input: string; reason: string }>;
+  tasks: Array<{ role: string; input: string; reason: string; dependsOn?: number[] }>;
   rawOutput: string;
 }
 export interface StreamEventLeaderError {
@@ -489,6 +534,18 @@ export interface StreamEventHeartbeat {
   id: string;
   timestamp: number;
 }
+export interface StreamEventWaveStart {
+  type: "wave_start";
+  id: string;
+  wave: number;
+  taskIndices: number[];
+}
+export interface StreamEventWaveDone {
+  type: "wave_done";
+  id: string;
+  wave: number;
+  taskIndices: number[];
+}
 
 export type StreamEvent =
   | StreamEventSessionStart
@@ -501,7 +558,9 @@ export type StreamEvent =
   | StreamEventTaskDone
   | StreamEventTaskError
   | StreamEventSessionDone
-  | StreamEventHeartbeat;
+  | StreamEventHeartbeat
+  | StreamEventWaveStart
+  | StreamEventWaveDone;
 
 /**
  * Streaming orchestrator: run the full agent pipeline, emitting SSE events via the callback.
@@ -636,12 +695,13 @@ async function runAgentStreamCore(
     type: "leader_done",
     id: nextId(),
     taskCount: subTasks.length,
-    tasks: subTasks.map((t) => ({ role: t.role, input: t.input, reason: t.reason })),
+    tasks: subTasks.map((t) => ({ role: t.role, input: t.input, reason: t.reason, dependsOn: t.dependsOn })),
     rawOutput: leaderResult.output,
   });
 
-  // 5. Execute each sub-task sequentially (streaming)
-  let previousContext = "";
+  // 5. Execute sub-tasks with dependency-aware parallel execution
+  //    Tasks with no dependencies (or dependsOn: []) run concurrently.
+  //    Tasks that depend on others wait until all their dependencies complete.
   const taskResults: Array<{
     role: string;
     provider: string;
@@ -649,9 +709,16 @@ async function runAgentStreamCore(
     output: string;
     status: string;
     durationMs: number;
-  }> = [];
+  }> = new Array(subTasks.length);
 
-  for (let i = 0; i < subTasks.length; i++) {
+  // Track completion state per task
+  const taskOutputs: string[] = new Array(subTasks.length).fill("");
+  const taskRoleNames: string[] = new Array(subTasks.length).fill("");
+  const taskProviderNames: string[] = new Array(subTasks.length).fill("");
+  const completed = new Set<number>();
+
+  /** Execute a single sub-task at the given index */
+  async function executeSubTask(i: number): Promise<void> {
     const task = subTasks[i];
 
     // Find role
@@ -660,16 +727,17 @@ async function runAgentStreamCore(
     });
     if (!role) {
       emit({ type: "task_error", id: nextId(), index: i, role: task.role, error: `Role not found: ${task.role}` });
-      taskResults.push({
+      taskResults[i] = {
         role: task.role,
         provider: "unknown",
         model: "unknown",
         output: "",
         status: "error",
         durationMs: 0,
-      });
-      continue;
+      };
+      return;
     }
+    taskRoleNames[i] = role.name;
 
     // Find provider (check overrides first, then DB)
     let provider: {
@@ -711,21 +779,31 @@ async function runAgentStreamCore(
         role: task.role,
         error: `No provider assigned to role "${task.role}"`,
       });
-      taskResults.push({
+      taskResults[i] = {
         role: task.role,
         provider: "unassigned",
         model: "unassigned",
         output: "",
         status: "error",
         durationMs: 0,
-      });
-      continue;
+      };
+      return;
     }
+    taskProviderNames[i] = provider.displayName;
 
-    // Build enriched input
+    // Build enriched input with context from dependency tasks
     let enrichedInput = task.input;
-    if (previousContext) {
-      enrichedInput = `## これまでの他のエージェントの作業結果:\n${previousContext}\n\n## あなたへの指示:\n${task.input}`;
+    const deps = task.dependsOn || [];
+    if (deps.length > 0) {
+      const contextParts: string[] = [];
+      for (const depIdx of deps) {
+        if (taskOutputs[depIdx]) {
+          contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
+        }
+      }
+      if (contextParts.length > 0) {
+        enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
+      }
     }
 
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys);
@@ -773,14 +851,15 @@ async function runAgentStreamCore(
       });
     }
 
-    taskResults.push({
+    taskResults[i] = {
       role: task.role,
       provider: provider.displayName,
       model: provider.modelId,
       output: result.output,
       status: result.status,
       durationMs: result.durationMs,
-    });
+    };
+    taskOutputs[i] = result.output;
 
     // Log to DB
     await prisma.taskLog.create({
@@ -795,16 +874,55 @@ async function runAgentStreamCore(
         durationMs: result.durationMs,
       },
     });
+  }
 
-    // Add to context for next task
-    if (result.status === "success" && result.output) {
-      previousContext += `\n### ${role.name} (${provider.displayName}):\n${result.output}\n`;
+  // --- Dependency-aware parallel scheduler ---
+  // Build waves: each wave contains tasks whose dependencies are all in prior waves.
+
+  const remaining = new Set(subTasks.map((_, idx) => idx));
+  let waveNum = 0;
+
+  while (remaining.size > 0) {
+    // Find tasks whose dependencies are all satisfied
+    const ready: number[] = [];
+    for (const idx of remaining) {
+      const deps = subTasks[idx].dependsOn || [];
+      if (deps.every((d) => completed.has(d))) {
+        ready.push(idx);
+      }
     }
+
+    if (ready.length === 0) {
+      // Circular dependency or invalid dependsOn — force execute all remaining
+      for (const idx of remaining) {
+        ready.push(idx);
+      }
+    }
+
+    // Remove ready tasks from remaining
+    for (const idx of ready) {
+      remaining.delete(idx);
+    }
+
+    // Emit wave start (indicates which tasks are running in parallel)
+    emit({ type: "wave_start", id: nextId(), wave: waveNum, taskIndices: ready });
+
+    // Execute this wave concurrently
+    await Promise.all(ready.map((idx) => executeSubTask(idx)));
+
+    // Mark as completed
+    for (const idx of ready) {
+      completed.add(idx);
+    }
+
+    emit({ type: "wave_done", id: nextId(), wave: waveNum, taskIndices: ready });
+    waveNum++;
   }
 
   // 6. Determine overall status & emit session_done with full results
-  const allSuccess = taskResults.every((r) => r.status === "success");
-  const allError = taskResults.every((r) => r.status === "error");
+  const filledResults = taskResults.filter(Boolean);
+  const allSuccess = filledResults.every((r) => r.status === "success");
+  const allError = filledResults.every((r) => r.status === "error");
   const status = allSuccess ? "success" : allError ? "error" : "partial";
   const totalDurationMs = Date.now() - startTime;
 
@@ -815,7 +933,7 @@ async function runAgentStreamCore(
     status,
     totalDurationMs,
     taskCount: subTasks.length,
-    results: taskResults,
+    results: filledResults,
   });
 }
 

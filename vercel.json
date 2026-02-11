@@ -21,8 +21,7 @@
     "routes": [
         {
             "src": "/api/agent/stream",
-            "dest": "api/stream.ts",
-            "methods": ["POST"]
+            "dest": "api/stream.ts"
         },
         {
             "src": "/(.*)",

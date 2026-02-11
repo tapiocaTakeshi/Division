@@ -114,6 +114,10 @@ agentRouter.post("/stream", asyncHandler(async (req: Request, res: Response) => 
       // SSE with event ID for reconnection
       res.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     }
+    // Flush the response buffer to prevent Vercel from buffering SSE events
+    if (typeof (res as unknown as { flush?: () => void }).flush === "function") {
+      (res as unknown as { flush: () => void }).flush();
+    }
   };
 
   try {

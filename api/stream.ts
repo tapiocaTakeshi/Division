@@ -1,4 +1,3 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { z } from "zod";
 import { runAgentStream } from "../src/services/orchestrator";
 
@@ -10,46 +9,63 @@ const schema = z.object({
 });
 
 /**
- * Vercel-native SSE streaming handler (bypasses Express).
+ * Vercel-native SSE streaming handler using Web Standard API.
  *
- * Express + @vercel/node buffers the entire response before sending it,
- * which breaks Server-Sent Events. This handler writes directly to the
- * Node.js ServerResponse via res.write(), which Vercel's streaming bridge
- * can flush incrementally.
+ * Express + @vercel/node buffers the entire response, breaking SSE.
+ * This handler returns a Web Standard Response with ReadableStream,
+ * which Vercel natively supports for incremental streaming.
  */
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Method not allowed" });
-    return;
+export default async function handler(request: Request): Promise<Response> {
+  if (request.method !== "POST") {
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
 
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
-    return;
-  }
-
-  // SSE headers
-  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("Content-Encoding", "none");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.status(200);
-
-  // Send initial SSE comment to start the stream immediately
-  res.write(":ok\n\n");
-
-  const emit = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
-
+  let body: unknown;
   try {
-    await runAgentStream(parsed.data, emit);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    emit("error", { message });
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  res.end();
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    return Response.json(
+      { error: "Validation failed", details: parsed.error.issues },
+      { status: 400 },
+    );
+  }
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      // Initial SSE comment to confirm connection
+      controller.enqueue(encoder.encode(":ok\n\n"));
+
+      const emit = (event: string, data: unknown) => {
+        controller.enqueue(
+          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+        );
+      };
+
+      try {
+        await runAgentStream(parsed.data, emit);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        emit("error", { message });
+      }
+
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

@@ -1,5 +1,4 @@
 import { Router, Request, Response } from "express";
-import { PassThrough } from "stream";
 import { z } from "zod";
 import { runAgent, runAgentStream } from "../services/orchestrator";
 import { asyncHandler } from "../middleware/async-handler";
@@ -52,32 +51,21 @@ agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
  *   done         -> all tasks complete
  *   error        -> fatal error
  */
-agentRouter.post("/stream", async (req: Request, res: Response) => {
+agentRouter.post("/stream", asyncHandler(async (req: Request, res: Response) => {
   const parsed = agentRunSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
     return;
   }
 
-  // Use PassThrough stream piped to response for Vercel streaming compatibility.
-  // Vercel's @vercel/node bridge detects piped streams and enables streaming mode.
-  const passthrough = new PassThrough();
-
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache, no-transform",
-    "Connection": "keep-alive",
-    "Content-Encoding": "none",
-    "X-Accel-Buffering": "no",
-  });
-
-  passthrough.pipe(res);
-
-  // Send initial comment to force Vercel's bridge into streaming mode
-  passthrough.write(":ok\n\n");
+  // Vercel serverless + Express buffers res.write(), breaking SSE.
+  // Collect events and return as JSON array (works on all platforms).
+  // For true SSE streaming, use the native Vercel handler at api/stream.ts.
+  const events: Array<{ event: string; data: unknown; timestamp: number }> = [];
+  const startTime = Date.now();
 
   const emit = (event: string, data: unknown) => {
-    passthrough.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    events.push({ event, data, timestamp: Date.now() - startTime });
   };
 
   try {
@@ -87,5 +75,5 @@ agentRouter.post("/stream", async (req: Request, res: Response) => {
     emit("error", { message });
   }
 
-  passthrough.end();
-});
+  res.json({ events, totalDurationMs: Date.now() - startTime });
+}));

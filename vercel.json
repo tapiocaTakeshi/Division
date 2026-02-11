@@ -3,15 +3,27 @@
     "functions": {
         "api/index.ts": {
             "maxDuration": 300
+        },
+        "api/stream.ts": {
+            "maxDuration": 300
         }
     },
     "builds": [
         {
             "src": "api/index.ts",
             "use": "@vercel/node"
+        },
+        {
+            "src": "api/stream.ts",
+            "use": "@vercel/node"
         }
     ],
     "routes": [
+        {
+            "src": "/api/agent/stream",
+            "dest": "api/stream.ts",
+            "methods": ["POST"]
+        },
         {
             "src": "/(.*)",
             "dest": "api/index.ts"

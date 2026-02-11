@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { PassThrough } from "stream";
 import { z } from "zod";
 import { runAgent, runAgentStream } from "../services/orchestrator";
 import { asyncHandler } from "../middleware/async-handler";
@@ -58,21 +59,25 @@ agentRouter.post("/stream", async (req: Request, res: Response) => {
     return;
   }
 
-  // SSE headers — disable all buffering for Vercel / nginx / proxies
-  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("Content-Encoding", "none");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.status(200);
-  res.flushHeaders();
+  // Use PassThrough stream piped to response for Vercel streaming compatibility.
+  // Vercel's @vercel/node bridge detects piped streams and enables streaming mode.
+  const passthrough = new PassThrough();
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "Content-Encoding": "none",
+    "X-Accel-Buffering": "no",
+  });
+
+  passthrough.pipe(res);
+
+  // Send initial comment to force Vercel's bridge into streaming mode
+  passthrough.write(":ok\n\n");
 
   const emit = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    // Force flush for Vercel serverless / buffered proxies
-    if (typeof (res as unknown as { flush?: () => void }).flush === "function") {
-      (res as unknown as { flush: () => void }).flush();
-    }
+    passthrough.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
   try {
@@ -82,5 +87,5 @@ agentRouter.post("/stream", async (req: Request, res: Response) => {
     emit("error", { message });
   }
 
-  res.end();
+  passthrough.end();
 });

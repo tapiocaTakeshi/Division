@@ -174,10 +174,18 @@ function resolveApiKey(
 
 /**
  * Main orchestrator: run the full agent pipeline
+ *
+ * @param onLog  Optional callback invoked with real-time log messages
+ *               during orchestration. Useful for streaming progress to clients.
  */
 export async function runAgent(
-  req: OrchestratorRequest
+  req: OrchestratorRequest,
+  onLog?: (message: string) => void
 ): Promise<OrchestratorResult> {
+  const log = (msg: string) => {
+    console.log(msg);
+    onLog?.(msg);
+  };
   const startTime = Date.now();
   const sessionId = crypto.randomUUID();
 
@@ -207,11 +215,9 @@ export async function runAgent(
   );
 
   // 2. Ask Leader to decompose the task
-  console.log(`\n[Agent] Session ${sessionId}`);
-  console.log(`[Agent] Input: ${req.input}`);
-  console.log(
-    `[Agent] Leader: ${leaderAssignment.provider.displayName} (${leaderAssignment.provider.modelId})`
-  );
+  log(`[Agent] Session ${sessionId}`);
+  log(`[Agent] Input: ${req.input}`);
+  log(`[Agent] Leader: ${leaderAssignment.provider.displayName} (${leaderAssignment.provider.modelId})`);
 
   const leaderResult = await executeTask({
     provider: leaderAssignment.provider,
@@ -262,9 +268,9 @@ export async function runAgent(
     };
   }
 
-  console.log(`[Agent] Leader decomposed into ${subTasks.length} tasks:`);
+  log(`[Agent] Leader decomposed into ${subTasks.length} tasks:`);
   subTasks.forEach((t, i) =>
-    console.log(`  ${i + 1}. [${t.role}] ${t.input.substring(0, 60)}...`)
+    log(`  ${i + 1}. [${t.role}] ${t.input.substring(0, 60)}...`)
   );
 
   // 4. Execute sub-tasks with dependency-aware parallel execution
@@ -282,6 +288,7 @@ export async function runAgent(
       where: { slug: task.role },
     });
     if (!role) {
+      log(`[Agent] Error: Role not found: ${task.role}`);
       results[i] = {
         ...task,
         provider: "unknown",
@@ -328,6 +335,7 @@ export async function runAgent(
     }
 
     if (!provider) {
+      log(`[Agent] Error: No provider assigned to role "${task.role}"`);
       results[i] = {
         ...task,
         provider: "unassigned",
@@ -358,9 +366,7 @@ export async function runAgent(
 
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys);
 
-    console.log(
-      `[Agent] Executing: [${task.role}] → ${provider.displayName}`
-    );
+    log(`[Agent] Executing: [${task.role}] → ${provider.displayName}`);
 
     const result = await executeTask({
       provider,
@@ -368,6 +374,12 @@ export async function runAgent(
       input: enrichedInput,
       role: { slug: role.slug, name: role.name },
     });
+
+    if (result.status === "success") {
+      log(`[Agent] Done: [${task.role}] → ${provider.displayName} (${result.durationMs}ms)`);
+    } else {
+      log(`[Agent] Failed: [${task.role}] → ${provider.displayName}: ${result.errorMsg || "unknown error"}`);
+    }
 
     results[i] = {
       ...task,
@@ -431,9 +443,7 @@ export async function runAgent(
   const status = allSuccess ? "success" : allError ? "error" : "partial";
 
   const totalDurationMs = Date.now() - startTime;
-  console.log(
-    `[Agent] Session complete: ${status} (${totalDurationMs}ms, ${filledResults.length} tasks)`
-  );
+  log(`[Agent] Session complete: ${status} (${totalDurationMs}ms, ${filledResults.length} tasks)`);
 
   return {
     sessionId,

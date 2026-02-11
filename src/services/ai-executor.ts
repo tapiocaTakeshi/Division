@@ -30,6 +30,31 @@ export interface ExecutionResult {
   errorMsg?: string;
 }
 
+// --- API Logging Helpers ---
+
+function maskApiKey(key: string): string {
+  if (key.length <= 8) return "***";
+  return key.slice(0, 4) + "..." + key.slice(-4);
+}
+
+function maskHeaders(headers: Record<string, string>): Record<string, string> {
+  const masked: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    const lower = k.toLowerCase();
+    if (lower === "authorization" || lower === "x-api-key" || lower === "x-goog-api-key") {
+      masked[k] = maskApiKey(v);
+    } else {
+      masked[k] = v;
+    }
+  }
+  return masked;
+}
+
+function truncate(text: string, maxLen = 200): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen) + `... (${text.length} chars)`;
+}
+
 /** Maps apiType to the corresponding environment variable name */
 const ENV_KEY_MAP: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",
@@ -263,6 +288,14 @@ export async function executeTaskStream(
 
   try {
     const fullUrl = `${req.provider.apiBaseUrl}${streamUrl}`;
+
+    console.log(`\n[API] ──── Stream Request ────`);
+    console.log(`[API]  POST ${fullUrl}`);
+    console.log(`[API]  Provider: ${req.provider.name} (${req.provider.modelId})`);
+    console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
+    console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
+    console.log(`[API]  Body: ${truncate(JSON.stringify(streamBody), 300)}`);
+
     const response = await fetch(fullUrl, {
       method: "POST",
       headers: requestSpec.headers,
@@ -271,18 +304,27 @@ export async function executeTaskStream(
 
     if (!response.ok) {
       const errorText = await response.text();
+      const durationMs = Date.now() - start;
+      console.log(`[API] ──── Stream Response (ERROR) ────`);
+      console.log(`[API]  Status: ${response.status} ${response.statusText}`);
+      console.log(`[API]  Duration: ${durationMs}ms`);
+      console.log(`[API]  Error: ${truncate(errorText, 500)}`);
       return {
         output: "",
-        durationMs: Date.now() - start,
+        durationMs,
         status: "error",
         errorMsg: `API error ${response.status}: ${errorText}`,
       };
     }
 
+    console.log(`[API]  Stream connected: ${response.status}`);
+
     if (!response.body) {
+      const durationMs = Date.now() - start;
+      console.log(`[API]  Stream error: No response body`);
       return {
         output: "",
-        durationMs: Date.now() - start,
+        durationMs,
         status: "error",
         errorMsg: "No response body for streaming",
       };
@@ -290,6 +332,7 @@ export async function executeTaskStream(
 
     // Read SSE stream
     let accumulated = "";
+    let chunkCount = 0;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -310,20 +353,31 @@ export async function executeTaskStream(
         const text = parseStreamChunk(req.provider.apiType, data);
         if (text) {
           accumulated += text;
+          chunkCount++;
           onChunk(text);
         }
       }
     }
 
+    const durationMs = Date.now() - start;
+    console.log(`[API] ──── Stream Complete ────`);
+    console.log(`[API]  Duration: ${durationMs}ms`);
+    console.log(`[API]  Chunks: ${chunkCount}`);
+    console.log(`[API]  Output: ${truncate(accumulated, 300)}`);
+
     return {
       output: accumulated,
-      durationMs: Date.now() - start,
+      durationMs,
       status: "success",
     };
   } catch (err: unknown) {
+    const durationMs = Date.now() - start;
+    console.log(`[API] ──── Stream (EXCEPTION) ────`);
+    console.log(`[API]  Duration: ${durationMs}ms`);
+    console.log(`[API]  Error: ${err instanceof Error ? err.message : String(err)}`);
     return {
       output: "",
-      durationMs: Date.now() - start,
+      durationMs,
       status: "error",
       errorMsg: err instanceof Error ? err.message : String(err),
     };
@@ -379,17 +433,31 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
 
   try {
     const fullUrl = `${req.provider.apiBaseUrl}${requestSpec.url}`;
+
+    console.log(`\n[API] ──── Request ────`);
+    console.log(`[API]  POST ${fullUrl}`);
+    console.log(`[API]  Provider: ${req.provider.name} (${req.provider.modelId})`);
+    console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
+    console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
+    console.log(`[API]  Body: ${truncate(JSON.stringify(requestSpec.body), 300)}`);
+
     const response = await fetch(fullUrl, {
       method: "POST",
       headers: requestSpec.headers,
       body: JSON.stringify(requestSpec.body),
     });
 
+    const durationMs = Date.now() - start;
+
     if (!response.ok) {
       const errorText = await response.text();
+      console.log(`[API] ──── Response (ERROR) ────`);
+      console.log(`[API]  Status: ${response.status} ${response.statusText}`);
+      console.log(`[API]  Duration: ${durationMs}ms`);
+      console.log(`[API]  Error: ${truncate(errorText, 500)}`);
       return {
         output: "",
-        durationMs: Date.now() - start,
+        durationMs,
         status: "error",
         errorMsg: `API error ${response.status}: ${errorText}`,
       };
@@ -398,15 +466,24 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     const data = await response.json();
     const output = parseResponse(req.provider.apiType, data);
 
+    console.log(`[API] ──── Response (OK) ────`);
+    console.log(`[API]  Status: ${response.status}`);
+    console.log(`[API]  Duration: ${durationMs}ms`);
+    console.log(`[API]  Output: ${truncate(output, 300)}`);
+
     return {
       output,
-      durationMs: Date.now() - start,
+      durationMs,
       status: "success",
     };
   } catch (err: unknown) {
+    const durationMs = Date.now() - start;
+    console.log(`[API] ──── Response (EXCEPTION) ────`);
+    console.log(`[API]  Duration: ${durationMs}ms`);
+    console.log(`[API]  Error: ${err instanceof Error ? err.message : String(err)}`);
     return {
       output: "",
-      durationMs: Date.now() - start,
+      durationMs,
       status: "error",
       errorMsg: err instanceof Error ? err.message : String(err),
     };

@@ -59,13 +59,12 @@ agentRouter.post("/stream", async (req: Request, res: Response) => {
   }
 
   // SSE headers — disable all buffering for Vercel / nginx / proxies
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no",
-    "Transfer-Encoding": "chunked",
-  });
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Content-Encoding", "none");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.status(200);
   res.flushHeaders();
 
   const emit = (event: string, data: unknown) => {

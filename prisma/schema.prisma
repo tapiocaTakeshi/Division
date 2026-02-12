@@ -64,6 +64,26 @@ model Project {
   updatedAt   DateTime @updatedAt
 }
 
+/// AI-generated task (created by Leader AI decomposition)
+model Task {
+  id          String   @id @default(uuid())
+  projectId   String
+  sessionId   String   // Groups tasks created in the same request
+  role        String   // Role slug (e.g. "coding", "search")
+  title       String
+  description String
+  reason      String?  // Why this task is needed
+  dependsOn   String?  // JSON array of task indices, e.g. "[0,1]"
+  orderIndex  Int      // Order within the session (0-based)
+  status      String   @default("pending") // "pending" | "in_progress" | "completed"
+  output      String?  // Result after execution
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([sessionId])
+}
+
 /// Execution log for tasks sent to AI providers
 model TaskLog {
   id         String   @id @default(uuid())

@@ -8,7 +8,7 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "postinstall": "prisma generate",
-    "vercel-build": "prisma generate && prisma db push && ts-node prisma/seed.ts",
+    "vercel-build": "DATABASE_URL=file:./dev.db prisma generate && DATABASE_URL=file:./dev.db prisma db push && DATABASE_URL=file:./dev.db ts-node prisma/seed.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",

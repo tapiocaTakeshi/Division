@@ -1,15 +1,12 @@
 {
     "version": 2,
-    "builds": [
-        {
-            "src": "api/index.ts",
-            "use": "@vercel/node"
+    "functions": {
+        "api/index.ts": {
+            "includeFiles": "prisma/dev.db",
+            "maxDuration": 60
         }
-    ],
-    "routes": [
-        {
-            "src": "/(.*)",
-            "dest": "api/index.ts"
-        }
+    },
+    "rewrites": [
+        { "source": "/(.*)", "destination": "/api" }
     ]
 }

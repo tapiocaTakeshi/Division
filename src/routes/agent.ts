@@ -25,10 +25,9 @@ const agentStreamSchema = agentRunSchema.extend({
  * automatically dispatch each to the assigned AI provider, and return
  * the aggregated results.
  *
- * Response format: NDJSON (newline-delimited JSON) stream
- *   - Log lines:  { "type": "log", "message": "..." }
- *   - Final line: { "type": "result", "data": { ...OrchestratorResult } }
- *   - Error line: { "type": "error", "error": "...", "message": "..." }
+ * Response format: JSON
+ *   - Success: { "type": "result", "data": { ...OrchestratorResult } }
+ *   - Error:   { "type": "error", "error": "...", "message": "..." }
  */
 agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
   const parsed = agentRunSchema.safeParse(req.body);
@@ -39,35 +38,12 @@ agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
-  // Stream NDJSON for real-time log output
-  res.writeHead(200, {
-    "Content-Type": "application/x-ndjson",
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-
-  let closed = false;
-  req.on("close", () => { closed = true; });
-
-  const writeLine = (obj: Record<string, unknown>) => {
-    if (!closed) {
-      res.write(JSON.stringify(obj) + "\n");
-    }
-  };
-
   try {
-    const result = await runAgent(parsed.data, (message) => {
-      writeLine({ type: "log", message });
-    });
-    writeLine({ type: "result", data: result });
+    const result = await runAgent(parsed.data);
+    res.json({ type: "result", data: result });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    writeLine({ type: "error", error: "Agent execution failed", message });
-  } finally {
-    if (!closed) {
-      res.end();
-    }
+    res.status(500).json({ type: "error", error: "Agent execution failed", message });
   }
 }));
 

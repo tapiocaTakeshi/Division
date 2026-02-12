@@ -8,6 +8,7 @@ import { agentRouter } from "./routes/agent";
 import { generateRouter } from "./routes/generate";
 import providersListRouter from "./routes/providers-list";
 import mcpRouter from "./routes/mcp";
+import { sseRouter } from "./routes/sse";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,6 +29,7 @@ app.use("/api/tasks", taskRouter);
 app.use("/api/agent", agentRouter);
 app.use("/api/generate", generateRouter);
 app.use("/api/models", providersListRouter);
+app.use("/api/sse", sseRouter);
 app.use("/mcp", mcpRouter);
 
 // Error handler

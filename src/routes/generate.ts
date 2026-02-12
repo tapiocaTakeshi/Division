@@ -155,6 +155,10 @@ generateRouter.post(
     const sendEvent = (event: string, data: unknown) => {
       if (closed) return;
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      // Flush the response buffer to prevent Vercel from buffering SSE events
+      if (typeof (res as unknown as { flush?: () => void }).flush === "function") {
+        (res as unknown as { flush: () => void }).flush();
+      }
     };
 
     sendEvent("start", {

@@ -9,6 +9,7 @@
 export interface ExecutionRequest {
   provider: {
     name: string;
+    displayName: string;
     apiBaseUrl: string;
     apiType: string;
     modelId: string;
@@ -82,6 +83,8 @@ const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
   cohere: "/v2/chat",
   moonshot: "/v1/chat/completions",
 };
+
+import { logger } from "../utils/logger";
 
 /**
  * Build the request body for each API type
@@ -402,6 +405,7 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   );
 
   if (!requestSpec) {
+    logger.error(`[AI Executor] Unsupported API type: ${req.provider.apiType}`, { provider: req.provider.name });
     return {
       output: "",
       durationMs: Date.now() - start,
@@ -447,10 +451,9 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
       body: JSON.stringify(requestSpec.body),
     });
 
-    const durationMs = Date.now() - start;
-
     if (!response.ok) {
       const errorText = await response.text();
+      const durationMs = Date.now() - start;
       console.log(`[API] ──── Response (ERROR) ────`);
       console.log(`[API]  Status: ${response.status} ${response.statusText}`);
       console.log(`[API]  Duration: ${durationMs}ms`);
@@ -465,6 +468,13 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
 
     const data = await response.json();
     const output = parseResponse(req.provider.apiType, data);
+    const durationMs = Date.now() - start;
+
+    logger.info(`[AI Executor] Success: ${req.provider.displayName} (${durationMs}ms)`, {
+      role: req.role.slug,
+      provider: req.provider.name,
+      durationMs,
+    });
 
     console.log(`[API] ──── Response (OK) ────`);
     console.log(`[API]  Status: ${response.status}`);
@@ -478,14 +488,20 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     };
   } catch (err: unknown) {
     const durationMs = Date.now() - start;
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    logger.error(`[AI Executor] Error: ${req.provider.displayName} (${durationMs}ms)`, {
+      role: req.role.slug,
+      provider: req.provider.name,
+      error: errorMsg,
+    });
     console.log(`[API] ──── Response (EXCEPTION) ────`);
     console.log(`[API]  Duration: ${durationMs}ms`);
-    console.log(`[API]  Error: ${err instanceof Error ? err.message : String(err)}`);
+    console.log(`[API]  Error: ${errorMsg}`);
     return {
       output: "",
       durationMs,
       status: "error",
-      errorMsg: err instanceof Error ? err.message : String(err),
+      errorMsg,
     };
   }
 }

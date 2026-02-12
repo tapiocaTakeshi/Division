@@ -10,6 +10,7 @@
 
 import { prisma } from "../db";
 import { executeTask, executeTaskStream } from "./ai-executor";
+import { logger } from "../utils/logger";
 
 // --- Types ---
 
@@ -44,6 +45,8 @@ export interface OrchestratorResult {
   leaderProvider: string;
   leaderModel: string;
   tasks: SubTaskResult[];
+  finalOutput?: string;
+  finalCode?: string;
   totalDurationMs: number;
   status: "success" | "partial" | "error";
 }
@@ -218,6 +221,7 @@ export async function runAgent(
   log(`[Agent] Session ${sessionId}`);
   log(`[Agent] Input: ${req.input}`);
   log(`[Agent] Leader: ${leaderAssignment.provider.displayName} (${leaderAssignment.provider.modelId})`);
+  logger.info(`[Agent] Starting session`, { sessionId, projectId: req.projectId });
 
   const leaderResult = await executeTask({
     provider: leaderAssignment.provider,
@@ -269,6 +273,7 @@ export async function runAgent(
   }
 
   log(`[Agent] Leader decomposed into ${subTasks.length} tasks:`);
+  logger.info(`[Agent] Leader decomposed into ${subTasks.length} tasks`);
   subTasks.forEach((t, i) =>
     log(`  ${i + 1}. [${t.role}] ${t.input.substring(0, 60)}...`)
   );
@@ -367,6 +372,9 @@ export async function runAgent(
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys);
 
     log(`[Agent] Executing: [${task.role}] → ${provider.displayName}`);
+    logger.info(
+      `[Agent] Executing: [${task.role}] → ${provider.displayName}`
+    );
 
     const result = await executeTask({
       provider,
@@ -444,6 +452,14 @@ export async function runAgent(
 
   const totalDurationMs = Date.now() - startTime;
   log(`[Agent] Session complete: ${status} (${totalDurationMs}ms, ${filledResults.length} tasks)`);
+  logger.info(
+    `[Agent] Session complete: ${status} (${totalDurationMs}ms, ${filledResults.length} tasks)`,
+    { sessionId, status, totalDurationMs }
+  );
+
+  const finalOutput = results.length > 0 ? results[results.length - 1].output : undefined;
+  const codingTask = [...results].reverse().find(r => r.role === 'coding');
+  const finalCode = codingTask ? codingTask.output : undefined;
 
   return {
     sessionId,
@@ -451,6 +467,8 @@ export async function runAgent(
     leaderProvider: leaderAssignment.provider.displayName,
     leaderModel: leaderAssignment.provider.modelId,
     tasks: filledResults,
+    finalOutput,
+    finalCode,
     totalDurationMs,
     status,
   };
@@ -946,4 +964,3 @@ async function runAgentStreamCore(
     results: filledResults,
   });
 }
-

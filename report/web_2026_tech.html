@@ -1,0 +1,927 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>2026 Web技術の最前線 | WebGPU・WASM・AI・Edge</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=JetBrains+Mono:wght@100..800&family=Space+Grotesk:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --primary: oklch(70% 0.3 280);
+        --secondary: oklch(75% 0.25 200);
+        --accent: oklch(80% 0.2 150);
+        --bg-dark: #0a0e1a;
+        --bg-card: rgba(20, 25, 40, 0.7);
+        --text-primary: #f0f4f8;
+        --text-secondary: #9ca3af;
+        --border: rgba(255, 255, 255, 0.08);
+        --glow: 0 0 40px;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        background: var(--bg-dark);
+        color: var(--text-primary);
+        font-family: "Inter", sans-serif;
+        line-height: 1.7;
+        overflow-x: hidden;
+        background-image:
+          radial-gradient(
+            circle at 20% 20%,
+            oklch(30% 0.15 280 / 0.15) 0%,
+            transparent 50%
+          ),
+          radial-gradient(
+            circle at 80% 80%,
+            oklch(30% 0.15 200 / 0.15) 0%,
+            transparent 50%
+          );
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 0 60px;
+      }
+
+      /* Navigation */
+      nav {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: rgba(10, 14, 26, 0.95);
+        backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--border);
+        z-index: 1000;
+        padding: 20px 0;
+      }
+
+      nav .container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .logo {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        font-weight: 700;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 40px;
+        list-style: none;
+      }
+
+      .nav-links a {
+        color: var(--text-secondary);
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        transition: color 0.3s;
+        position: relative;
+      }
+
+      .nav-links a:hover {
+        color: var(--primary);
+      }
+
+      .nav-links a::after {
+        content: "";
+        position: absolute;
+        bottom: -5px;
+        left: 0;
+        width: 0;
+        height: 2px;
+        background: var(--primary);
+        transition: width 0.3s;
+      }
+
+      .nav-links a:hover::after {
+        width: 100%;
+      }
+
+      /* Hero */
+      .hero {
+        padding: 180px 0 120px;
+        text-align: center;
+        position: relative;
+      }
+
+      .hero h1 {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: clamp(3rem, 8vw, 7rem);
+        font-weight: 700;
+        line-height: 1;
+        margin-bottom: 30px;
+        background: linear-gradient(to bottom, #fff 40%, var(--text-secondary));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .hero p {
+        font-size: 1.5rem;
+        color: var(--text-secondary);
+        max-width: 800px;
+        margin: 0 auto 50px;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 10px 20px;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 100px;
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 30px;
+      }
+
+      /* Section Styling */
+      section {
+        padding: 120px 0;
+        position: relative;
+      }
+
+      .section-header {
+        text-align: center;
+        margin-bottom: 80px;
+      }
+
+      .section-label {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        color: var(--primary);
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        margin-bottom: 20px;
+      }
+
+      .section-title {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: clamp(2.5rem, 5vw, 4rem);
+        font-weight: 700;
+        margin-bottom: 20px;
+      }
+
+      .section-subtitle {
+        font-size: 1.25rem;
+        color: var(--text-secondary);
+        max-width: 700px;
+        margin: 0 auto;
+      }
+
+      /* Tech Cards */
+      .tech-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: 40px;
+        margin: 60px 0;
+      }
+
+      .tech-card {
+        background: var(--bg-card);
+        backdrop-filter: blur(20px);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        padding: 50px;
+        transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .tech-card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, var(--primary), var(--secondary));
+        transform: scaleX(0);
+        transform-origin: left;
+        transition: transform 0.4s;
+      }
+
+      .tech-card:hover::before {
+        transform: scaleX(1);
+      }
+
+      .tech-card:hover {
+        transform: translateY(-10px);
+        border-color: var(--primary);
+        box-shadow: var(--glow) var(--primary);
+      }
+
+      .tech-icon {
+        width: 70px;
+        height: 70px;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 32px;
+        margin-bottom: 30px;
+      }
+
+      .tech-card h3 {
+        font-size: 2rem;
+        margin-bottom: 15px;
+        font-family: "Space Grotesk", sans-serif;
+      }
+
+      .tech-card p {
+        color: var(--text-secondary);
+        margin-bottom: 20px;
+        line-height: 1.8;
+      }
+
+      .tech-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+        margin-top: 30px;
+        padding-top: 30px;
+        border-top: 1px solid var(--border);
+      }
+
+      .stat {
+        text-align: center;
+      }
+
+      .stat-value {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--primary);
+        margin-bottom: 5px;
+      }
+
+      .stat-label {
+        font-size: 12px;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+      }
+
+      /* Code Block */
+      .code-demo {
+        background: rgba(0, 0, 0, 0.4);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 40px;
+        margin: 40px 0;
+        position: relative;
+      }
+
+      .code-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+
+      .code-lang {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        color: var(--accent);
+        text-transform: uppercase;
+      }
+
+      pre {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 14px;
+        line-height: 1.8;
+        overflow-x: auto;
+        color: #e5e7eb;
+      }
+
+      .code-line {
+        display: block;
+      }
+      .keyword {
+        color: var(--primary);
+      }
+      .string {
+        color: var(--accent);
+      }
+      .comment {
+        color: var(--text-secondary);
+        font-style: italic;
+      }
+
+      /* Feature Comparison */
+      .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 60px 0;
+        background: var(--bg-card);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+
+      .comparison-table th,
+      .comparison-table td {
+        padding: 25px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .comparison-table th {
+        background: rgba(0, 0, 0, 0.3);
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+        color: var(--primary);
+      }
+
+      .comparison-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      .comparison-table tr:hover {
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      /* Timeline */
+      .timeline {
+        position: relative;
+        padding: 60px 0;
+      }
+
+      .timeline::before {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: linear-gradient(
+          to bottom,
+          var(--primary),
+          var(--secondary)
+        );
+        transform: translateX(-50%);
+      }
+
+      .timeline-item {
+        display: flex;
+        margin-bottom: 80px;
+        position: relative;
+      }
+
+      .timeline-item:nth-child(odd) {
+        flex-direction: row-reverse;
+      }
+
+      .timeline-content {
+        width: 45%;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 40px;
+      }
+
+      .timeline-year {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 3rem;
+        font-weight: 700;
+        color: var(--primary);
+        margin-bottom: 15px;
+      }
+
+      .timeline-dot {
+        position: absolute;
+        left: 50%;
+        top: 30px;
+        transform: translateX(-50%);
+        width: 20px;
+        height: 20px;
+        background: var(--primary);
+        border-radius: 50%;
+        box-shadow: 0 0 30px var(--primary);
+      }
+
+      /* CTA Section */
+      .cta {
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        border-radius: 32px;
+        padding: 80px;
+        text-align: center;
+        margin: 80px 0;
+      }
+
+      .cta h2 {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 3rem;
+        margin-bottom: 20px;
+      }
+
+      .cta p {
+        font-size: 1.25rem;
+        margin-bottom: 40px;
+        opacity: 0.9;
+      }
+
+      .btn {
+        display: inline-block;
+        padding: 18px 40px;
+        background: rgba(255, 255, 255, 0.2);
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 100px;
+        color: #fff;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 16px;
+        transition: all 0.3s;
+        backdrop-filter: blur(10px);
+      }
+
+      .btn:hover {
+        background: rgba(255, 255, 255, 0.3);
+        transform: translateY(-3px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      }
+
+      /* Footer */
+      footer {
+        padding: 60px 0;
+        text-align: center;
+        border-top: 1px solid var(--border);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+
+      @media (max-width: 1024px) {
+        .timeline::before {
+          left: 30px;
+        }
+        .timeline-item {
+          flex-direction: column !important;
+        }
+        .timeline-content {
+          width: 100%;
+          margin-left: 60px;
+        }
+        .timeline-dot {
+          left: 30px;
+        }
+        .tech-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* Scroll Animations */
+      .fade-in {
+        opacity: 0;
+        transform: translateY(30px);
+        transition: all 0.8s ease-out;
+      }
+
+      .fade-in.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <div class="container">
+        <div class="logo">WEB 2026</div>
+        <ul class="nav-links">
+          <li><a href="#webgpu">WebGPU</a></li>
+          <li><a href="#wasm">WebAssembly</a></li>
+          <li><a href="#ai">AI統合</a></li>
+          <li><a href="#edge">Edge</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="container">
+      <!-- Hero -->
+      <section class="hero">
+        <span class="badge">2026 Technology Forecast</span>
+        <h1>次世代Web<br />プラットフォーム</h1>
+        <p>
+          WebGPU、WebAssembly、AI統合、エッジコンピューティング。<br />ブラウザが真のアプリケーションプラットフォームへと進化する。
+        </p>
+      </section>
+
+      <!-- WebGPU Section -->
+      <section id="webgpu">
+        <div class="section-header fade-in">
+          <div class="section-label">01 // Graphics Revolution</div>
+          <h2 class="section-title">WebGPU</h2>
+          <p class="section-subtitle">
+            ブラウザで実現する、ネイティブ級のグラフィックス性能。GPUコンピューティングの民主化。
+          </p>
+        </div>
+
+        <div class="tech-grid">
+          <div class="tech-card fade-in">
+            <div class="tech-icon">🎮</div>
+            <h3>ゲーム & 3D</h3>
+            <p>
+              WebGPUは、Metal、Vulkan、DirectX
+              12といった最新のグラフィックスAPIを抽象化し、ブラウザ上でネイティブアプリに匹敵する3Dレンダリングを実現します。
+            </p>
+            <p>
+              <strong>主要ユースケース:</strong>
+              リアルタイム3Dゲーム、CADアプリケーション、建築ビジュアライゼーション、メタバース体験。
+            </p>
+            <div class="tech-stats">
+              <div class="stat">
+                <div class="stat-value">10x</div>
+                <div class="stat-label">Performance Gain</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value">95%</div>
+                <div class="stat-label">Browser Support</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tech-card fade-in">
+            <div class="tech-icon">⚡</div>
+            <h3>GPUコンピューティング</h3>
+            <p>
+              グラフィックスだけでなく、汎用計算（GPGPU）にも対応。機械学習の推論、物理シミュレーション、暗号処理など、計算集約的なタスクをブラウザで高速実行。
+            </p>
+            <p>
+              <strong>技術的優位性:</strong> Compute
+              Shaders、並列処理、メモリ効率の最適化により、従来のWebGLを大きく凌駕。
+            </p>
+            <div class="tech-stats">
+              <div class="stat">
+                <div class="stat-value">100x</div>
+                <div class="stat-label">vs JavaScript</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value">2024</div>
+                <div class="stat-label">Stable Release</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="code-demo fade-in">
+          <div class="code-header">
+            <span class="code-lang">WebGPU Compute Shader Example</span>
+          </div>
+          <pre><code><span class="code-line"><span class="keyword">const</span> adapter = <span class="keyword">await</span> navigator.gpu.requestAdapter();</span>
+<span class="code-line"><span class="keyword">const</span> device = <span class="keyword">await</span> adapter.requestDevice();</span>
+<span class="code-line"></span>
+<span class="code-line"><span class="comment">// Compute Shaderの定義</span></span>
+<span class="code-line"><span class="keyword">const</span> shaderModule = device.createShaderModule({</span>
+<span class="code-line">  code: <span class="string">`</span></span>
+<span class="code-line"><span class="string">    @group(0) @binding(0) var&lt;storage, read_write&gt; data: array&lt;f32&gt;;</span></span>
+<span class="code-line"><span class="string">    @compute @workgroup_size(64)</span></span>
+<span class="code-line"><span class="string">    fn main(@builtin(global_invocation_id) id: vec3&lt;u32&gt;) {</span></span>
+<span class="code-line"><span class="string">      data[id.x] = data[id.x] * 2.0; // 並列処理で全要素を2倍に</span></span>
+<span class="code-line"><span class="string">    }`</span></span>
+<span class="code-line">});</span></code></pre>
+        </div>
+      </section>
+
+      <!-- WebAssembly Section -->
+      <section id="wasm">
+        <div class="section-header fade-in">
+          <div class="section-label">02 // Universal Runtime</div>
+          <h2 class="section-title">WebAssembly</h2>
+          <p class="section-subtitle">
+            あらゆる言語をブラウザで実行。C++、Rust、Goがネイティブ速度で動作する新時代。
+          </p>
+        </div>
+
+        <div class="tech-grid">
+          <div class="tech-card fade-in">
+            <div class="tech-icon">🦀</div>
+            <h3>マルチ言語サポート</h3>
+            <p>
+              2026年、WebAssemblyは40以上の言語をサポート。Rust、C++、Go、Kotlin、Swiftなど、既存のコードベースをそのままブラウザに移植可能に。
+            </p>
+            <p>
+              <strong>主要フレームワーク:</strong>
+              Emscripten（C/C++）、wasm-pack（Rust）、TinyGo（Go）、AssemblyScript（TypeScript-like）。
+            </p>
+            <div class="tech-stats">
+              <div class="stat">
+                <div class="stat-value">40+</div>
+                <div class="stat-label">Languages</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value">98%</div>
+                <div class="stat-label">Browser Support</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tech-card fade-in">
+            <div class="tech-icon">🚀</div>
+            <h3>WASI & Component Model</h3>
+            <p>
+              WASI（WebAssembly System
+              Interface）により、ブラウザ外でも実行可能に。サーバーサイド、IoT、エッジデバイスで同一のバイナリが動作。
+            </p>
+            <p>
+              <strong>Component Model:</strong>
+              異なる言語で書かれたモジュールを組み合わせ、単一のアプリケーションとして統合する革新的アーキテクチャ。
+            </p>
+            <div class="tech-stats">
+              <div class="stat">
+                <div class="stat-value">2x</div>
+                <div class="stat-label">Faster than JS</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value">50%</div>
+                <div class="stat-label">Smaller Binary</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <table class="comparison-table fade-in">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>JavaScript</th>
+              <th>WebAssembly</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>実行速度</td>
+              <td>JITコンパイル（可変）</td>
+              <td>ネイティブ速度（一定）</td>
+            </tr>
+            <tr>
+              <td>バイナリサイズ</td>
+              <td>大きい（テキスト）</td>
+              <td>小さい（バイナリ）</td>
+            </tr>
+            <tr>
+              <td>言語サポート</td>
+              <td>JavaScript/TypeScript</td>
+              <td>40+ 言語</td>
+            </tr>
+            <tr>
+              <td>メモリ安全性</td>
+              <td>自動（GC）</td>
+              <td>手動 or Rust安全性</td>
+            </tr>
+            <tr>
+              <td>ユースケース</td>
+              <td>UI、ビジネスロジック</td>
+              <td>計算、暗号、ゲームエンジン</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- AI Integration Section -->
+      <section id="ai">
+        <div class="section-header fade-in">
+          <div class="section-label">03 // Intelligence Everywhere</div>
+          <h2 class="section-title">ブラウザAI統合</h2>
+          <p class="section-subtitle">
+            クラウドに依存しない、プライバシー保護されたオンデバイスAI。ブラウザが知的エージェントに。
+          </p>
+        </div>
+
+        <div class="tech-grid">
+          <div class="tech-card fade-in">
+            <div class="tech-icon">🧠</div>
+            <h3>WebNN & TensorFlow.js</h3>
+            <p>
+              WebNN（Web Neural Network
+              API）は、ブラウザでニューラルネットワークの推論を高速実行するための標準API。TensorFlow.js、ONNX
+              Runtimeと統合し、既存のモデルをそのまま利用可能。
+            </p>
+            <p>
+              <strong>実用例:</strong>
+              リアルタイム画像認識、音声処理、自然言語理解、レコメンデーションエンジン。
+            </p>
+            <div class="tech-stats">
+              <div class="stat">
+                <div class="stat-value">20x</div>
+                <div class="stat-label">GPU Acceleration</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value">0ms</div>
+                <div class="stat-label">Network Latency</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tech-card fade-in">
+            <div class="tech-icon">🔒</div>
+            <h3>プライバシー第一のAI</h3>
+            <p>
+              データをクラウドに送信せず、デバイス上で完結するAI処理。GDPR、CCPAなどの規制に完全準拠し、ユーザーのプライバシーを最大限保護。
+            </p>
+            <p>
+              <strong>技術スタック:</strong> Federated
+              Learning（連合学習）、Differential
+              Privacy（差分プライバシー）、秘密分散技術との統合。
+            </p>
+            <div class="tech-stats">
+              <div class="stat">
+                <div class="stat-value">100%</div>
+                <div class="stat-label">Data Privacy</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value">5GB</div>
+                <div class="stat-label">Model Size (Max)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="code-demo fade-in">
+          <div class="code-header">
+            <span class="code-lang">TensorFlow.js - Image Classification</span>
+          </div>
+          <pre><code><span class="code-line"><span class="keyword">import</span> * <span class="keyword">as</span> tf <span class="keyword">from</span> <span class="string">'@tensorflow/tfjs'</span>;</span>
+<span class="code-line"><span class="keyword">import</span> * <span class="keyword">as</span> mobilenet <span class="keyword">from</span> <span class="string">'@tensorflow-models/mobilenet'</span>;</span>
+<span class="code-line"></span>
+<span class="code-line"><span class="comment">// モデルのロード（ブラウザ上で完結）</span></span>
+<span class="code-line"><span class="keyword">const</span> model = <span class="keyword">await</span> mobilenet.load();</span>
+<span class="code-line"></span>
+<span class="code-line"><span class="comment">// 画像の分類（GPUアクセラレーション）</span></span>
+<span class="code-line"><span class="keyword">const</span> img = document.getElementById(<span class="string">'photo'</span>);</span>
+<span class="code-line"><span class="keyword">const</span> predictions = <span class="keyword">await</span> model.classify(img);</span>
+<span class="code-line"></span>
+<span class="code-line">console.log(<span class="string">'Predictions:'</span>, predictions);</span>
+<span class="code-line"><span class="comment">// [{className: "golden retriever", probability: 0.89}, ...]</span></span></code></pre>
+        </div>
+      </section>
+
+      <!-- Edge Computing Section -->
+      <section id="edge">
+        <div class="section-header fade-in">
+          <div class="section-label">04 // Distributed Future</div>
+          <h2 class="section-title">エッジコンピューティング</h2>
+          <p class="section-subtitle">
+            CDNがコンピューティングプラットフォームへ。世界中のエッジで実行される、超低レイテンシアプリケーション。
+          </p>
+        </div>
+
+        <div class="tech-grid">
+          <div class="tech-card fade-in">
+            <div class="tech-icon">🌐</div>
+            <h3>Cloudflare Workers & Deno Deploy</h3>
+            <p>
+              エッジランタイムは、世界300以上のロケーションでコードを実行。ユーザーに最も近い場所で処理することで、レイテンシを10ms以下に削減。
+            </p>
+            <p>
+              <strong>主要プラットフォーム:</strong> Cloudflare Workers、Vercel
+              Edge Functions、Deno Deploy、Fastly Compute@Edge。
+            </p>
+            <div class="tech-stats">
+              <div class="stat">
+                <div class="stat-value">&lt;10ms</div>
+                <div class="stat-label">Latency</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value">300+</div>
+                <div class="stat-label">Edge Locations</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tech-card fade-in">
+            <div class="tech-icon">⚙️</div>
+            <h3>Edge + WASM + AI</h3>
+            <p>
+              エッジでWebAssemblyとAIを組み合わせることで、サーバーレスかつインテリジェントなアプリケーションを構築。パーソナライゼーション、不正検知、コンテンツ最適化をリアルタイムで実行。
+            </p>
+            <p>
+              <strong>ビジネス価値:</strong>
+              インフラコスト削減、グローバルスケール、ゼロコールドスタート。
+            </p>
+            <div class="tech-stats">
+              <div class="stat">
+                <div class="stat-value">0ms</div>
+                <div class="stat-label">Cold Start</div>
+              </div>
+              <div class="stat">
+                <div class="stat-value">70%</div>
+                <div class="stat-label">Cost Reduction</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline fade-in">
+          <div class="timeline-item">
+            <div class="timeline-content">
+              <div class="timeline-year">2024</div>
+              <h3>WebGPU安定版リリース</h3>
+              <p>
+                Chrome、Safari、Firefoxで正式サポート開始。ゲームエンジンやCADツールのブラウザ移行が加速。
+              </p>
+            </div>
+            <div class="timeline-dot"></div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-content">
+              <div class="timeline-year">2025</div>
+              <h3>WASI 2.0 & Component Model</h3>
+              <p>
+                WebAssemblyがブラウザ外でも標準化。サーバーレス、IoT、組み込みシステムでの採用が本格化。
+              </p>
+            </div>
+            <div class="timeline-dot"></div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-content">
+              <div class="timeline-year">2026</div>
+              <h3>ブラウザAIの民主化</h3>
+              <p>
+                WebNN標準化完了。全主要ブラウザでオンデバイスAI推論が可能に。プライバシー保護AIアプリの爆発的普及。
+              </p>
+            </div>
+            <div class="timeline-dot"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA -->
+      <div class="cta fade-in">
+        <h2>未来は、もう始まっている。</h2>
+        <p>WebGPU、WebAssembly、AI、Edgeの融合が、次世代のWebを創造する。</p>
+        <a href="#" class="btn">技術ドキュメントを見る →</a>
+      </div>
+    </div>
+
+    <footer>
+      <p>GENERATED VIA DIVISION API // 2026 WEB TECHNOLOGY FORECAST</p>
+      <p>
+        RESEARCH: COMPREHENSIVE ANALYSIS | DESIGN: MODERN GLASSMORPHISM | CODE:
+        CLAUDE 4.5 SONNET
+      </p>
+    </footer>
+
+    <script>
+      // Scroll Animation Observer
+      const observerOptions = {
+        threshold: 0.1,
+        rootMargin: "0px 0px -100px 0px",
+      };
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("visible");
+            observer.unobserve(entry.target);
+          }
+        });
+      }, observerOptions);
+
+      document.querySelectorAll(".fade-in").forEach((el) => {
+        observer.observe(el);
+      });
+
+      // Smooth Scroll
+      document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
+        anchor.addEventListener("click", function (e) {
+          e.preventDefault();
+          const target = document.querySelector(this.getAttribute("href"));
+          if (target) {
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        });
+      });
+
+      // Parallax Effect on Hero
+      window.addEventListener("scroll", () => {
+        const scrolled = window.pageYOffset;
+        const hero = document.querySelector(".hero");
+        if (hero && scrolled < window.innerHeight) {
+          hero.style.transform = `translateY(${scrolled * 0.5}px)`;
+          hero.style.opacity = 1 - scrolled / window.innerHeight;
+        }
+      });
+    </script>
+  </body>
+</html>

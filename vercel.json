@@ -1,12 +1,15 @@
 {
     "version": 2,
     "functions": {
-        "api/index.ts": {
+        "api/**/*.ts": {
             "includeFiles": "prisma/dev.db",
-            "maxDuration": 60
+            "maxDuration": 300
         }
     },
     "rewrites": [
-        { "source": "/(.*)", "destination": "/api" }
+        {
+            "source": "/(.*)",
+            "destination": "/api"
+        }
     ]
 }

@@ -1,12 +1,28 @@
 {
     "version": 2,
+    "functions": {
+        "api/index.ts": {
+            "maxDuration": 300
+        },
+        "api/sse.ts": {
+            "maxDuration": 300
+        }
+    },
     "builds": [
         {
             "src": "api/index.ts",
             "use": "@vercel/node"
+        },
+        {
+            "src": "api/sse.ts",
+            "use": "@vercel/node"
         }
     ],
     "routes": [
+        {
+            "src": "/api/sse",
+            "dest": "api/sse.ts"
+        },
         {
             "src": "/(.*)",
             "dest": "api/index.ts"

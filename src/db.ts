@@ -7,9 +7,19 @@ function getDatabaseUrl(): string {
   if (process.env.VERCEL) {
     const tmpDb = "/tmp/dev.db";
     if (!fs.existsSync(tmpDb)) {
-      const sourceDb = path.join(__dirname, "../prisma/dev.db");
-      if (fs.existsSync(sourceDb)) {
-        fs.copyFileSync(sourceDb, tmpDb);
+      // Try multiple candidate paths:
+      // - ncc bundles includeFiles relative to function root (__dirname)
+      // - fallback to ../prisma/dev.db for non-bundled layouts
+      const candidates = [
+        path.join(__dirname, "prisma/dev.db"),
+        path.join(__dirname, "../prisma/dev.db"),
+        path.join(process.cwd(), "prisma/dev.db"),
+      ];
+      for (const src of candidates) {
+        if (fs.existsSync(src)) {
+          fs.copyFileSync(src, tmpDb);
+          break;
+        }
       }
     }
     return `file:${tmpDb}`;

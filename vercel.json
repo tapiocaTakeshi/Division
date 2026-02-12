@@ -6,6 +6,9 @@
         },
         "api/stream.ts": {
             "maxDuration": 300
+        },
+        "api/sse.ts": {
+            "maxDuration": 300
         }
     },
     "builds": [
@@ -16,12 +19,20 @@
         {
             "src": "api/stream.ts",
             "use": "@vercel/node"
+        },
+        {
+            "src": "api/sse.ts",
+            "use": "@vercel/node"
         }
     ],
     "routes": [
         {
             "src": "/api/agent/stream",
             "dest": "api/stream.ts"
+        },
+        {
+            "src": "/api/sse",
+            "dest": "api/sse.ts"
         },
         {
             "src": "/(.*)",

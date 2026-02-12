@@ -9,6 +9,7 @@ import { generateRouter } from "./routes/generate";
 import providersListRouter from "./routes/providers-list";
 import mcpRouter from "./routes/mcp";
 import { sseRouter } from "./routes/sse";
+import { taskCreateRouter } from "./routes/task-create";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,6 +27,7 @@ app.use("/api/roles", roleRouter);
 app.use("/api/projects", projectRouter);
 app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", taskRouter);
+app.use("/api/tasks", taskCreateRouter);
 app.use("/api/agent", agentRouter);
 app.use("/api/generate", generateRouter);
 app.use("/api/models", providersListRouter);

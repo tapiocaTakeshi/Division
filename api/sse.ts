@@ -14,6 +14,8 @@ const schema = z.object({
  * Returns a ReadableStream with Server-Sent Events for real-time
  * multi-agent orchestration progress. Bypasses Express to avoid
  * Vercel's @vercel/node response buffering.
+ *
+ * @see https://vercel.com/docs/functions/streaming
  */
 export default async function handler(request: Request): Promise<Response> {
   if (request.method !== "POST") {

@@ -1,12 +1,23 @@
 import fs from "fs";
 import path from "path";
 
-const LOG_DIR = path.join(process.cwd(), "logs");
+// Vercel serverless: /var/task is read-only, use /tmp for logs
+const isVercel = !!process.env.VERCEL;
+const LOG_DIR = isVercel
+  ? "/tmp/logs"
+  : path.join(process.cwd(), "logs");
 const LOG_FILE = path.join(LOG_DIR, "ai.log");
 
-// Ensure log directory exists
-if (!fs.existsSync(LOG_DIR)) {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
+// Ensure log directory exists (silently skip on failure)
+let canWriteFile = false;
+try {
+  if (!fs.existsSync(LOG_DIR)) {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+  }
+  canWriteFile = true;
+} catch {
+  // Filesystem not writable — console-only logging
+  canWriteFile = false;
 }
 
 export enum LogLevel {
@@ -46,11 +57,13 @@ class Logger {
       console.log(formatted);
     }
 
-    // Append to file
-    try {
-      fs.appendFileSync(LOG_FILE, formatted + "\n");
-    } catch (err) {
-      console.error(`Failed to write to log file: ${err}`);
+    // Append to file (only if writable)
+    if (canWriteFile) {
+      try {
+        fs.appendFileSync(LOG_FILE, formatted + "\n");
+      } catch {
+        // Silently ignore file write errors
+      }
     }
   }
 

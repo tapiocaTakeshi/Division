@@ -30,6 +30,24 @@ async function main() {
     description: "Latest & most intelligent Claude — agents & deep reasoning",
   });
 
+  const claudeOpus45 = await upsertProvider({
+    name: "claude-opus-4.5",
+    displayName: "Claude Opus 4.5 (Anthropic)",
+    apiBaseUrl: "https://api.anthropic.com",
+    apiType: "anthropic",
+    modelId: "claude-opus-4-5-20251101",
+    description: "World-class coding, agents & computer use — $5/$25 per 1M tokens",
+  });
+
+  const claudeOpus41 = await upsertProvider({
+    name: "claude-opus-4.1",
+    displayName: "Claude Opus 4.1 (Anthropic)",
+    apiBaseUrl: "https://api.anthropic.com",
+    apiType: "anthropic",
+    modelId: "claude-opus-4-1-20250805",
+    description: "Multi-step reasoning, real-world coding & agentic tasks",
+  });
+
   const claudeSonnet45 = await upsertProvider({
     name: "claude-sonnet-4.5",
     displayName: "Claude Sonnet 4.5 (Anthropic)",
@@ -110,6 +128,15 @@ async function main() {
     apiType: "google",
     modelId: "gemini-2.5-flash",
     description: "Balanced intelligence & latency, controllable thinking",
+  });
+
+  await upsertProvider({
+    name: "gemini-3-deep-think",
+    displayName: "Gemini 3 Deep Think (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "gemini-3-deep-think",
+    description: "Maximum reasoning depth — science, math & physics olympiad level",
   });
 
   const gemini20Flash = await upsertProvider({
@@ -212,6 +239,42 @@ async function main() {
     description: "Major generational leap — deep reasoning & multimodal",
   });
 
+  await upsertProvider({
+    name: "o4-mini",
+    displayName: "o4-mini (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "o4-mini",
+    description: "Fast reasoning — coding, math, visual tasks, 99.5% AIME 2025",
+  });
+
+  await upsertProvider({
+    name: "o3-pro",
+    displayName: "o3 Pro (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "o3-pro",
+    description: "Maximum reasoning compute — hard problems, better consistency",
+  });
+
+  await upsertProvider({
+    name: "gpt-5.2-codex",
+    displayName: "GPT-5.2 Codex (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "gpt-5.2-codex",
+    description: "Agentic coding — context compaction, SWE-Bench Pro 56.4%",
+  });
+
+  await upsertProvider({
+    name: "gpt-5.3-codex",
+    displayName: "GPT-5.3 Codex (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "gpt-5.3-codex",
+    description: "Latest agentic coding model — frontier coding + reasoning, 25% faster",
+  });
+
   // --- Perplexity ---
   const perplexityDeepResearch = await upsertProvider({
     name: "perplexity-deep-research",
@@ -268,6 +331,24 @@ async function main() {
     description: "Flagship — 256K context, real-time X/web search",
   });
 
+  await upsertProvider({
+    name: "grok-4.1-thinking",
+    displayName: "Grok 4.1 Thinking (xAI)",
+    apiBaseUrl: "https://api.x.ai",
+    apiType: "xai",
+    modelId: "grok-4-1-fast-reasoning",
+    description: "Deep reasoning with thinking tokens — #1 LMArena Elo 1483",
+  });
+
+  await upsertProvider({
+    name: "grok-5",
+    displayName: "Grok 5 (xAI)",
+    apiBaseUrl: "https://api.x.ai",
+    apiType: "xai",
+    modelId: "grok-5",
+    description: "Next-gen 6T params — multimodal agentic system, Colossus 2 trained",
+  });
+
   const grok3 = await upsertProvider({
     name: "grok-3",
     displayName: "Grok 3 (xAI)",
@@ -312,6 +393,15 @@ async function main() {
     apiType: "deepseek",
     modelId: "deepseek-r1-0528",
     description: "Updated reasoning model — improved chain-of-thought",
+  });
+
+  await upsertProvider({
+    name: "deepseek-v4",
+    displayName: "DeepSeek V4",
+    apiBaseUrl: "https://api.deepseek.com",
+    apiType: "deepseek",
+    modelId: "deepseek-v4",
+    description: "Hybrid reasoning/non-reasoning — coding dominance, 1M+ context, Engram memory",
   });
 
   await upsertProvider({
@@ -407,6 +497,15 @@ async function main() {
   });
 
   await upsertProvider({
+    name: "qwen3-coder-next",
+    displayName: "Qwen3-Coder-Next (Alibaba)",
+    apiBaseUrl: "https://dashscope-intl.aliyuncs.com",
+    apiType: "qwen",
+    modelId: "qwen3-coder-next",
+    description: "Coding agent — 80B MoE (3B active), 256K context, SWE-Bench 70.6",
+  });
+
+  await upsertProvider({
     name: "qwen-vl",
     displayName: "Qwen-VL (Alibaba)",
     apiBaseUrl: "https://dashscope-intl.aliyuncs.com",
@@ -423,6 +522,33 @@ async function main() {
     apiType: "mistral",
     modelId: "mistral-large-latest",
     description: "Flagship — 128K context, top-tier reasoning & coding",
+  });
+
+  await upsertProvider({
+    name: "mistral-3",
+    displayName: "Mistral 3 (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "mistral-3-large-latest",
+    description: "Latest MoE flagship — Apache 2.0, DeepSeek V3 architecture",
+  });
+
+  await upsertProvider({
+    name: "ministral-8b",
+    displayName: "Ministral 8B (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "ministral-8b-latest",
+    description: "Dense 8B — multilingual, multimodal, vision encoder built-in",
+  });
+
+  await upsertProvider({
+    name: "ministral-14b",
+    displayName: "Ministral 14B (Mistral AI)",
+    apiBaseUrl: "https://api.mistral.ai",
+    apiType: "mistral",
+    modelId: "ministral-14b-latest",
+    description: "Dense 14B — strong cost-to-performance, vision capable",
   });
 
   await upsertProvider({
@@ -640,8 +766,8 @@ async function main() {
     displayName: "DeepSeek",
     apiBaseUrl: "https://api.deepseek.com",
     apiType: "deepseek",
-    modelId: "deepseek-chat",
-    description: "Alias → DeepSeek V3.2",
+    modelId: "deepseek-v4",
+    description: "Alias → DeepSeek V4",
   });
 
   await upsertProvider({
@@ -667,8 +793,8 @@ async function main() {
     displayName: "Mistral (Mistral AI)",
     apiBaseUrl: "https://api.mistral.ai",
     apiType: "mistral",
-    modelId: "mistral-large-latest",
-    description: "Alias → Mistral Large 3",
+    modelId: "mistral-3-large-latest",
+    description: "Alias → Mistral 3",
   });
 
   await upsertProvider({
@@ -708,7 +834,7 @@ async function main() {
     description: "Alias → Gemini 2.5 Pro",
   });
 
-  console.log("Providers seeded (70+ models)");
+  console.log("Providers seeded (85+ models)");
 
   // ===== ROLES =====
   const coding = await prisma.role.upsert({

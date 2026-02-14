@@ -158,11 +158,23 @@ function handleSSEEvent(
       })
       break
 
+    case 'task_thinking_chunk': {
+      const agentId = event.taskId as string
+      const thinkingText = event.text as string
+      const current = useOrchestraStore.getState().session?.agents.find((a) => a.id === agentId)
+      store.updateAgentStatus(agentId, 'running', {
+        thinking: (current?.thinking ?? '') + thinkingText,
+      })
+      break
+    }
+
     case 'task_done':
       store.updateAgentStatus(event.taskId as string, 'success', {
         output: event.output as string,
         durationMs: event.durationMs as number,
         tokenCount: event.tokenCount as number | undefined,
+        thinking: event.thinking as string | undefined,
+        citations: event.citations as string[] | undefined,
       })
       break
 

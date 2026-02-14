@@ -29,6 +29,8 @@ export interface SubTaskResult extends SubTask {
   status: "success" | "error";
   errorMsg?: string;
   durationMs: number;
+  thinking?: string;
+  citations?: string[];
 }
 
 export interface OrchestratorRequest {
@@ -397,6 +399,8 @@ export async function runAgent(
       status: result.status,
       errorMsg: result.errorMsg,
       durationMs: result.durationMs,
+      thinking: result.thinking,
+      citations: result.citations,
     };
     taskOutputs[i] = result.output;
 
@@ -523,6 +527,13 @@ export interface StreamEventTaskChunk {
   role: string;
   text: string;
 }
+export interface StreamEventTaskThinkingChunk {
+  type: "task_thinking_chunk";
+  id: string;
+  index: number;
+  role: string;
+  text: string;
+}
 export interface StreamEventTaskDone {
   type: "task_done";
   id: string;
@@ -533,6 +544,8 @@ export interface StreamEventTaskDone {
   output: string;
   status: string;
   durationMs: number;
+  thinking?: string;
+  citations?: string[];
 }
 export interface StreamEventTaskError {
   type: "task_error";
@@ -555,6 +568,8 @@ export interface StreamEventSessionDone {
     output: string;
     status: string;
     durationMs: number;
+    thinking?: string;
+    citations?: string[];
   }>;
 }
 export interface StreamEventHeartbeat {
@@ -583,6 +598,7 @@ export type StreamEvent =
   | StreamEventLeaderError
   | StreamEventTaskStart
   | StreamEventTaskChunk
+  | StreamEventTaskThinkingChunk
   | StreamEventTaskDone
   | StreamEventTaskError
   | StreamEventSessionDone
@@ -737,6 +753,8 @@ async function runAgentStreamCore(
     output: string;
     status: string;
     durationMs: number;
+    thinking?: string;
+    citations?: string[];
   }> = new Array(subTasks.length);
 
   // Track completion state per task
@@ -854,7 +872,8 @@ async function runAgentStreamCore(
         input: enrichedInput,
         role: { slug: role.slug, name: role.name },
       },
-      (text) => emit({ type: "task_chunk", id: nextId(), index: i, role: task.role, text })
+      (text) => emit({ type: "task_chunk", id: nextId(), index: i, role: task.role, text }),
+      (text) => emit({ type: "task_thinking_chunk", id: nextId(), index: i, role: task.role, text })
     );
 
     if (result.status === "success") {
@@ -868,6 +887,8 @@ async function runAgentStreamCore(
         output: result.output,
         status: "success",
         durationMs: result.durationMs,
+        thinking: result.thinking,
+        citations: result.citations,
       });
     } else {
       emit({
@@ -886,6 +907,8 @@ async function runAgentStreamCore(
       output: result.output,
       status: result.status,
       durationMs: result.durationMs,
+      thinking: result.thinking,
+      citations: result.citations,
     };
     taskOutputs[i] = result.output;
 

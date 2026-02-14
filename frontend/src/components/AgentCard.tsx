@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ROLE_META } from '../stores/orchestraStore'
 import type { AgentNode } from '../types'
 
@@ -11,6 +12,8 @@ interface AgentCardProps {
 export function AgentCard({ agent, onRerun, onChangeProvider, compact }: AgentCardProps) {
   const meta = ROLE_META[agent.role]
   const statusStyles = getStatusStyles(agent.status)
+  const [showThinking, setShowThinking] = useState(false)
+  const [showCitations, setShowCitations] = useState(false)
 
   return (
     <div
@@ -61,6 +64,66 @@ export function AgentCard({ agent, onRerun, onChangeProvider, compact }: AgentCa
             label="Tokens"
             value={agent.tokenCount != null ? formatTokens(agent.tokenCount) : '--'}
           />
+        </div>
+      )}
+
+      {/* Thinking section */}
+      {!compact && agent.thinking && (
+        <div className="mb-3">
+          <button
+            onClick={() => setShowThinking((v) => !v)}
+            className="flex items-center gap-1.5 text-[10px] font-medium text-amber-400/80 hover:text-amber-400 transition-colors mb-1"
+          >
+            <svg
+              className={`w-3 h-3 transition-transform ${showThinking ? 'rotate-90' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            Thinking
+            <span className="text-amber-400/50">
+              ({agent.thinking.length > 1000 ? `${(agent.thinking.length / 1000).toFixed(1)}k` : agent.thinking.length} chars)
+            </span>
+          </button>
+          {showThinking && (
+            <div className="p-2 rounded-lg bg-amber-500/5 border border-amber-500/10 text-[11px] text-amber-200/70 font-mono leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap">
+              {agent.thinking}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Citations section */}
+      {!compact && agent.citations && agent.citations.length > 0 && (
+        <div className="mb-3">
+          <button
+            onClick={() => setShowCitations((v) => !v)}
+            className="flex items-center gap-1.5 text-[10px] font-medium text-blue-400/80 hover:text-blue-400 transition-colors mb-1"
+          >
+            <svg
+              className={`w-3 h-3 transition-transform ${showCitations ? 'rotate-90' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            Sources
+            <span className="text-blue-400/50">({agent.citations.length})</span>
+          </button>
+          {showCitations && (
+            <div className="p-2 rounded-lg bg-blue-500/5 border border-blue-500/10 space-y-1">
+              {agent.citations.map((url, i) => (
+                <a
+                  key={i}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-[10px] text-blue-400/80 hover:text-blue-400 truncate transition-colors"
+                >
+                  [{i + 1}] {url}
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

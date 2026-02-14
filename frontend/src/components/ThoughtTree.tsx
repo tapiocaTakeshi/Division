@@ -130,6 +130,8 @@ function AgentTreeBranch({
         color={meta.color}
         status={agent.status}
         content={agent.output}
+        thinking={agent.thinking}
+        citations={agent.citations}
         durationMs={agent.durationMs}
         tokenCount={agent.tokenCount}
         isExpanded={expandedNodes.has(agent.id)}
@@ -159,6 +161,8 @@ function TreeNode({
   color,
   status,
   content,
+  thinking,
+  citations,
   durationMs,
   tokenCount,
   isExpanded,
@@ -172,6 +176,8 @@ function TreeNode({
   color: string
   status: 'idle' | 'running' | 'success' | 'error'
   content?: string
+  thinking?: string
+  citations?: string[]
   durationMs?: number
   tokenCount?: number
   isExpanded: boolean
@@ -225,6 +231,16 @@ function TreeNode({
 
         {/* Status & stats */}
         <div className="flex items-center gap-2">
+          {thinking && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400/70 font-medium">
+              Thinking
+            </span>
+          )}
+          {citations && citations.length > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400/70 font-medium">
+              {citations.length} sources
+            </span>
+          )}
           {durationMs != null && (
             <span className="text-[10px] text-conductor-muted font-mono">
               {(durationMs / 1000).toFixed(1)}s
@@ -240,12 +256,61 @@ function TreeNode({
       </button>
 
       {/* Expanded content */}
-      {isExpanded && content && (
-        <div
-          className="ml-8 mt-1 mb-2 p-3 rounded-lg bg-white/5 border-l-2 text-xs text-white/70 font-mono leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap"
-          style={{ borderLeftColor: color }}
-        >
-          {content}
+      {isExpanded && (content || thinking || (citations && citations.length > 0)) && (
+        <div className="ml-8 mt-1 mb-2 space-y-2">
+          {/* Thinking block */}
+          {thinking && (
+            <div className="p-3 rounded-lg bg-amber-500/5 border-l-2 border-amber-500/40">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <svg className="w-3.5 h-3.5 text-amber-400/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400/70">Thinking</span>
+                <span className="text-[10px] text-amber-400/40">
+                  ({thinking.length > 1000 ? `${(thinking.length / 1000).toFixed(1)}k` : thinking.length} chars)
+                </span>
+              </div>
+              <div className="text-xs text-amber-200/60 font-mono leading-relaxed max-h-36 overflow-y-auto whitespace-pre-wrap">
+                {thinking}
+              </div>
+            </div>
+          )}
+
+          {/* Main output */}
+          {content && (
+            <div
+              className="p-3 rounded-lg bg-white/5 border-l-2 text-xs text-white/70 font-mono leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap"
+              style={{ borderLeftColor: color }}
+            >
+              {content}
+            </div>
+          )}
+
+          {/* Citations block */}
+          {citations && citations.length > 0 && (
+            <div className="p-3 rounded-lg bg-blue-500/5 border-l-2 border-blue-500/40">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <svg className="w-3.5 h-3.5 text-blue-400/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                </svg>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400/70">Sources</span>
+                <span className="text-[10px] text-blue-400/40">({citations.length})</span>
+              </div>
+              <div className="space-y-1">
+                {citations.map((url, i) => (
+                  <a
+                    key={i}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-[10px] text-blue-400/70 hover:text-blue-400 truncate transition-colors"
+                  >
+                    [{i + 1}] {url}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -29,6 +29,10 @@ export interface ExecutionResult {
   durationMs: number;
   status: "success" | "error";
   errorMsg?: string;
+  /** Extended thinking / reasoning content from the model (e.g. Claude thinking blocks, Gemini thinking) */
+  thinking?: string;
+  /** Search citations returned by search-capable models (e.g. Perplexity) */
+  citations?: string[];
 }
 
 // --- API Logging Helpers ---
@@ -112,6 +116,10 @@ function buildRequestBody(
         max_tokens: maxTokens,
         system: systemPrompt,
         messages: [{ role: "user", content: input }],
+        thinking: {
+          type: "enabled",
+          budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.6), 1024), 10000),
+        },
       },
     };
   }
@@ -128,7 +136,10 @@ function buildRequestBody(
           parts: [{ text: systemPrompt }],
         },
         contents: [{ parts: [{ text: input }] }],
-        generationConfig: { maxOutputTokens: maxTokens },
+        generationConfig: {
+          maxOutputTokens: maxTokens,
+          thinkingConfig: { thinkingBudget: Math.min(Math.floor(maxTokens * 0.6), 8192) },
+        },
       },
     };
   }
@@ -156,31 +167,50 @@ function buildRequestBody(
   return null;
 }
 
+interface ParsedResponse {
+  output: string;
+  thinking?: string;
+  citations?: string[];
+}
+
 /**
- * Parse the response from each API type
+ * Parse the response from each API type, extracting thinking and citations
  */
-function parseResponse(apiType: string, data: unknown): string {
+function parseResponse(apiType: string, data: unknown): ParsedResponse {
   const d = data as Record<string, unknown>;
 
   if (apiType === "anthropic") {
-    const content = d.content as Array<{ type: string; text: string }>;
-    return content?.map((c) => c.text).join("") || JSON.stringify(data);
+    const content = d.content as Array<{ type: string; text?: string; thinking?: string }>;
+    const thinkingParts = content?.filter((c) => c.type === "thinking").map((c) => c.thinking ?? "");
+    const textParts = content?.filter((c) => c.type === "text").map((c) => c.text ?? "");
+    return {
+      output: textParts?.join("") || JSON.stringify(data),
+      thinking: thinkingParts?.length ? thinkingParts.join("") : undefined,
+    };
   }
 
   if (apiType === "google") {
     const candidates = d.candidates as Array<{
-      content: { parts: Array<{ text: string }> };
+      content: { parts: Array<{ text: string; thought?: boolean }> };
     }>;
-    return candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || JSON.stringify(data);
+    const parts = candidates?.[0]?.content?.parts ?? [];
+    const thinkingParts = parts.filter((p) => p.thought === true).map((p) => p.text);
+    const textParts = parts.filter((p) => p.thought !== true).map((p) => p.text);
+    return {
+      output: textParts.join("") || JSON.stringify(data),
+      thinking: thinkingParts.length ? thinkingParts.join("") : undefined,
+    };
   }
 
-  // OpenAI-compatible providers
+  // OpenAI-compatible providers (Perplexity returns citations)
   if (OPENAI_COMPATIBLE_TYPES[apiType]) {
     const choices = d.choices as Array<{ message: { content: string } }>;
-    return choices?.[0]?.message?.content || JSON.stringify(data);
+    const output = choices?.[0]?.message?.content || JSON.stringify(data);
+    const citations = d.citations as string[] | undefined;
+    return { output, citations: citations?.length ? citations : undefined };
   }
 
-  return JSON.stringify(data);
+  return { output: JSON.stringify(data) };
 }
 
 /**
@@ -201,43 +231,63 @@ function enableStreaming(
   return { url, body: { ...(body as Record<string, unknown>), stream: true } };
 }
 
+interface StreamChunkResult {
+  text: string | null;
+  thinking: string | null;
+  citations: string[] | null;
+}
+
 /**
- * Parse a single SSE chunk and extract the text delta.
- * Returns the text fragment, or null if the chunk is not a content event.
+ * Parse a single SSE chunk and extract the text delta, thinking delta, and citations.
  */
-function parseStreamChunk(apiType: string, data: string): string | null {
+function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
   try {
     const parsed = JSON.parse(data);
 
     if (apiType === "anthropic") {
-      // Anthropic: content_block_delta with delta.text
-      if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-        return parsed.delta.text;
+      // Anthropic: content_block_delta with delta.text or thinking delta
+      if (parsed.type === "content_block_delta") {
+        if (parsed.delta?.type === "thinking_delta" && parsed.delta?.thinking) {
+          return { text: null, thinking: parsed.delta.thinking, citations: null };
+        }
+        if (parsed.delta?.text) {
+          return { text: parsed.delta.text, thinking: null, citations: null };
+        }
       }
-      return null;
+      return { text: null, thinking: null, citations: null };
     }
 
     if (apiType === "google") {
-      // Google: candidates[0].content.parts[0].text
-      const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-      return text || null;
+      // Google: candidates[0].content.parts[0].text (with optional thought flag)
+      const part = parsed.candidates?.[0]?.content?.parts?.[0];
+      if (part?.thought === true) {
+        return { text: null, thinking: part.text || null, citations: null };
+      }
+      return { text: part?.text || null, thinking: null, citations: null };
     }
 
-    // OpenAI-compatible: choices[0].delta.content
+    // OpenAI-compatible: choices[0].delta.content + citations
     const content = parsed.choices?.[0]?.delta?.content;
-    return content || null;
+    const citations = parsed.citations as string[] | undefined;
+    return {
+      text: content || null,
+      thinking: null,
+      citations: citations?.length ? citations : null,
+    };
   } catch {
-    return null;
+    return { text: null, thinking: null, citations: null };
   }
 }
 
 /**
  * Execute a task with streaming, calling onChunk for each text fragment.
+ * Optionally calls onThinkingChunk for thinking/reasoning fragments.
  * Returns the full accumulated output when complete.
  */
 export async function executeTaskStream(
   req: ExecutionRequest,
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  onThinkingChunk?: (text: string) => void
 ): Promise<ExecutionResult> {
   const start = Date.now();
 
@@ -335,6 +385,8 @@ export async function executeTaskStream(
 
     // Read SSE stream
     let accumulated = "";
+    let accumulatedThinking = "";
+    let lastCitations: string[] | null = null;
     let chunkCount = 0;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -353,11 +405,18 @@ export async function executeTaskStream(
         const data = line.slice(6).trim();
         if (data === "[DONE]") continue;
 
-        const text = parseStreamChunk(req.provider.apiType, data);
-        if (text) {
-          accumulated += text;
+        const chunk = parseStreamChunk(req.provider.apiType, data);
+        if (chunk.text) {
+          accumulated += chunk.text;
           chunkCount++;
-          onChunk(text);
+          onChunk(chunk.text);
+        }
+        if (chunk.thinking) {
+          accumulatedThinking += chunk.thinking;
+          onThinkingChunk?.(chunk.thinking);
+        }
+        if (chunk.citations) {
+          lastCitations = chunk.citations;
         }
       }
     }
@@ -367,11 +426,19 @@ export async function executeTaskStream(
     console.log(`[API]  Duration: ${durationMs}ms`);
     console.log(`[API]  Chunks: ${chunkCount}`);
     console.log(`[API]  Output: ${truncate(accumulated, 300)}`);
+    if (accumulatedThinking) {
+      console.log(`[API]  Thinking: ${truncate(accumulatedThinking, 200)}`);
+    }
+    if (lastCitations) {
+      console.log(`[API]  Citations: ${lastCitations.length} sources`);
+    }
 
     return {
       output: accumulated,
       durationMs,
       status: "success",
+      thinking: accumulatedThinking || undefined,
+      citations: lastCitations ?? undefined,
     };
   } catch (err: unknown) {
     const durationMs = Date.now() - start;
@@ -467,7 +534,7 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     }
 
     const data = await response.json();
-    const output = parseResponse(req.provider.apiType, data);
+    const parsed = parseResponse(req.provider.apiType, data);
     const durationMs = Date.now() - start;
 
     logger.info(`[AI Executor] Success: ${req.provider.displayName} (${durationMs}ms)`, {
@@ -479,12 +546,20 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     console.log(`[API] ──── Response (OK) ────`);
     console.log(`[API]  Status: ${response.status}`);
     console.log(`[API]  Duration: ${durationMs}ms`);
-    console.log(`[API]  Output: ${truncate(output, 300)}`);
+    console.log(`[API]  Output: ${truncate(parsed.output, 300)}`);
+    if (parsed.thinking) {
+      console.log(`[API]  Thinking: ${truncate(parsed.thinking, 200)}`);
+    }
+    if (parsed.citations) {
+      console.log(`[API]  Citations: ${parsed.citations.length} sources`);
+    }
 
     return {
-      output,
+      output: parsed.output,
       durationMs,
       status: "success",
+      thinking: parsed.thinking,
+      citations: parsed.citations,
     };
   } catch (err: unknown) {
     const durationMs = Date.now() - start;

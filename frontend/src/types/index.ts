@@ -11,6 +11,8 @@ export interface AgentNode {
   modelId: string
   status: AgentStatus
   output?: string
+  thinking?: string
+  citations?: string[]
   durationMs?: number
   tokenCount?: number
   dependsOn: string[]
@@ -86,6 +88,7 @@ export type SSEEventType =
   | 'wave_done'
   | 'task_start'
   | 'task_chunk'
+  | 'task_thinking_chunk'
   | 'task_done'
   | 'task_error'
   | 'session_done'

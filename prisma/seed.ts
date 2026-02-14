@@ -136,7 +136,7 @@ async function main() {
     apiBaseUrl: "https://generativelanguage.googleapis.com",
     apiType: "google",
     modelId: "gemini-3-deep-think",
-    description: "Maximum reasoning depth — science, math & physics olympiad level",
+    description: "Maximum reasoning — ARC-AGI-2 84.6%, Physics/Chemistry Olympiad gold, HLE 48.4%",
   });
 
   const gemini20Flash = await upsertProvider({
@@ -275,6 +275,15 @@ async function main() {
     description: "Latest agentic coding model — frontier coding + reasoning, 25% faster",
   });
 
+  await upsertProvider({
+    name: "gpt-5.3-codex-spark",
+    displayName: "GPT-5.3 Codex Spark (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "gpt-5.3-codex-spark",
+    description: "Real-time coding — 1000+ tok/s, first OpenAI model on Cerebras WSE3",
+  });
+
   // --- Perplexity ---
   const perplexityDeepResearch = await upsertProvider({
     name: "perplexity-deep-research",
@@ -402,6 +411,15 @@ async function main() {
     apiType: "deepseek",
     modelId: "deepseek-v4",
     description: "Hybrid reasoning/non-reasoning — coding dominance, 1M+ context, Engram memory",
+  });
+
+  await upsertProvider({
+    name: "deepseek-v3.2-speciale",
+    displayName: "DeepSeek V3.2-Speciale",
+    apiBaseUrl: "https://api.deepseek.com",
+    apiType: "deepseek",
+    modelId: "deepseek-v3.2-speciale",
+    description: "Competition-grade reasoning — IMO 2025 & ICPC World Finals gold medals",
   });
 
   await upsertProvider({
@@ -834,7 +852,7 @@ async function main() {
     description: "Alias → Gemini 2.5 Pro",
   });
 
-  console.log("Providers seeded (85+ models)");
+  console.log("Providers seeded (87+ models)");
 
   // ===== ROLES =====
   const coding = await prisma.role.upsert({

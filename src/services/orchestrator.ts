@@ -62,6 +62,7 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 
 利用可能なロール:
 - search: ウェブ検索・情報収集（Perplexity担当）
+- deep-research: 徹底的な多角的調査・包括的分析・詳細レポート作成（Perplexity Deep Research担当）
 - planning: 企画・設計・戦略立案（Gemini担当）
 - coding: コード生成・デバッグ（Claude担当）
 - writing: 文章作成・ドキュメント（Claude担当）

@@ -891,7 +891,13 @@ async function main() {
     create: { slug: "leader", name: "Leader", description: "Task decomposition, delegation, and orchestration" },
   });
 
-  console.log("Roles seeded:", [coding, search, planning, writing, review, leader].map((r) => r.slug));
+  const deepResearch = await prisma.role.upsert({
+    where: { slug: "deep-research" },
+    update: {},
+    create: { slug: "deep-research", name: "Deep Research", description: "Exhaustive multi-source research, comprehensive analysis, and detailed reports" },
+  });
+
+  console.log("Roles seeded:", [coding, search, planning, writing, review, leader, deepResearch].map((r) => r.slug));
 
   // ===== DEMO PROJECT =====
   const project = await prisma.project.upsert({
@@ -908,12 +914,13 @@ async function main() {
 
   // ===== ASSIGNMENTS (optimized defaults) =====
   const assignments = [
-    { role: coding, provider: claudeSonnet45, label: "Coding    -> Claude Sonnet 4.5" },
-    { role: search, provider: perplexitySonarPro, label: "Search    -> Perplexity Sonar Pro" },
-    { role: planning, provider: gemini25Pro, label: "Planning  -> Gemini 2.5 Pro" },
-    { role: writing, provider: claudeSonnet45, label: "Writing   -> Claude Sonnet 4.5" },
-    { role: review, provider: gpt41, label: "Review    -> GPT-4.1" },
-    { role: leader, provider: gemini25Flash, label: "Leader    -> Gemini 2.5 Flash" },
+    { role: coding, provider: claudeSonnet45, label: "Coding         -> Claude Sonnet 4.5" },
+    { role: search, provider: perplexitySonarPro, label: "Search         -> Perplexity Sonar Pro" },
+    { role: planning, provider: gemini25Pro, label: "Planning       -> Gemini 2.5 Pro" },
+    { role: writing, provider: claudeSonnet45, label: "Writing        -> Claude Sonnet 4.5" },
+    { role: review, provider: gpt41, label: "Review         -> GPT-4.1" },
+    { role: leader, provider: gemini25Flash, label: "Leader         -> Gemini 2.5 Flash" },
+    { role: deepResearch, provider: perplexityDeepResearch, label: "Deep Research  -> Perplexity Deep Research" },
   ];
 
   for (const a of assignments) {

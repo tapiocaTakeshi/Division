@@ -10,6 +10,7 @@
 
 import { prisma } from "../db";
 import { executeTask, executeTaskStream } from "./ai-executor";
+import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
 
 // --- Types ---
@@ -37,8 +38,10 @@ export interface OrchestratorRequest {
   projectId: string;
   input: string;
   apiKeys?: Record<string, string>;
-  /** Override which provider handles each role, e.g. { coding: "gemini", search: "gpt" } */
+  /** Override provider for specific roles */
   overrides?: Record<string, string>;
+  /** Chat history for context (previous user/assistant messages) */
+  chatHistory?: ChatMessage[];
 }
 
 export interface OrchestratorResult {
@@ -231,6 +234,7 @@ export async function runAgent(
     input: req.input,
     role: { slug: "leader", name: "Leader" },
     systemPrompt: LEADER_SYSTEM_PROMPT,
+    chatHistory: req.chatHistory,
   });
 
   if (leaderResult.status === "error") {
@@ -695,6 +699,7 @@ async function runAgentStreamCore(
       input: req.input,
       role: { slug: "leader", name: "Leader" },
       systemPrompt: LEADER_SYSTEM_PROMPT,
+      chatHistory: req.chatHistory,
     },
     (text) => emit({ type: "leader_chunk", id: nextId(), text })
   );

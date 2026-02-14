@@ -13,6 +13,11 @@ const createTasksSchema = z.object({
   projectId: z.string().min(1),
   input: z.string().min(1),
   apiKeys: z.record(z.string()).optional(),
+  /** Chat history for context */
+  chatHistory: z.array(z.object({
+    role: z.enum(["user", "assistant"]),
+    content: z.string(),
+  })).optional(),
 });
 
 const updateTaskSchema = z.object({
@@ -119,7 +124,7 @@ taskCreateRouter.post(
       return;
     }
 
-    const { projectId, input, apiKeys } = parsed.data;
+    const { projectId, input, apiKeys, chatHistory } = parsed.data;
 
     // Verify project exists
     const project = await prisma.project.findUnique({
@@ -171,6 +176,7 @@ taskCreateRouter.post(
       input,
       role: { slug: "leader", name: "Leader" },
       systemPrompt: TASK_CREATION_PROMPT,
+      chatHistory,
     });
 
     if (leaderResult.status === "error") {

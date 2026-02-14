@@ -11,6 +11,11 @@ const agentRunSchema = z.object({
   apiKeys: z.record(z.string()).optional(),
   /** Override provider for specific roles, e.g. { coding: "gemini", search: "gpt" } */
   overrides: z.record(z.string()).optional(),
+  /** Chat history for context */
+  chatHistory: z.array(z.object({
+    role: z.enum(["user", "assistant"]),
+    content: z.string(),
+  })).optional(),
 });
 
 const agentStreamSchema = agentRunSchema.extend({

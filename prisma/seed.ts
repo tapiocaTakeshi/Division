@@ -26,8 +26,8 @@ async function main() {
     displayName: "Claude Opus 4.6 (Anthropic)",
     apiBaseUrl: "https://api.anthropic.com",
     apiType: "anthropic",
-    modelId: "claude-opus-4-20260205",
-    description: "Latest & most intelligent Claude — agents & deep reasoning",
+    modelId: "claude-opus-4-6",
+    description: "Latest & most intelligent Claude — 1M context, agents & deep reasoning",
   });
 
   const claudeSonnet45 = await upsertProvider({
@@ -44,7 +44,7 @@ async function main() {
     displayName: "Claude Haiku 4.5 (Anthropic)",
     apiBaseUrl: "https://api.anthropic.com",
     apiType: "anthropic",
-    modelId: "claude-haiku-4-5-20251015",
+    modelId: "claude-haiku-4-5-20251001",
     description: "Fastest Claude — near-frontier intelligence, low cost",
   });
 
@@ -112,13 +112,22 @@ async function main() {
     description: "Balanced intelligence & latency, controllable thinking",
   });
 
+  const gemini25FlashLite = await upsertProvider({
+    name: "gemini-2.5-flash-lite",
+    displayName: "Gemini 2.5 Flash Lite (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "gemini-2.5-flash-lite",
+    description: "Cost-efficient — replaces Gemini 2.0 Flash/Flash-Lite",
+  });
+
   const gemini20Flash = await upsertProvider({
     name: "gemini-2.0-flash",
     displayName: "Gemini 2.0 Flash (Google)",
     apiBaseUrl: "https://generativelanguage.googleapis.com",
     apiType: "google",
     modelId: "gemini-2.0-flash",
-    description: "Fast & efficient general purpose",
+    description: "Deprecated — shutdown Mar 2026, migrate to 2.5 Flash Lite",
   });
 
   // --- OpenAI (GPT / o-series) ---
@@ -129,6 +138,33 @@ async function main() {
     apiType: "openai",
     modelId: "gpt-5.2",
     description: "Latest flagship — deep reasoning, configurable thinking",
+  });
+
+  const gpt52Codex = await upsertProvider({
+    name: "gpt-5.2-codex",
+    displayName: "GPT-5.2 Codex (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "gpt-5.2-codex",
+    description: "Agentic coding specialist — SWE-Bench Pro 56.4%, context compaction",
+  });
+
+  const gpt5Mini = await upsertProvider({
+    name: "gpt-5-mini",
+    displayName: "GPT-5 Mini (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "gpt-5-mini",
+    description: "Balanced performance — replaces GPT-4.1 Mini, cost-effective",
+  });
+
+  const gpt5Nano = await upsertProvider({
+    name: "gpt-5-nano",
+    displayName: "GPT-5 Nano (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "gpt-5-nano",
+    description: "Ultra-fast — replaces GPT-4.1 Nano, latency-sensitive tasks",
   });
 
   const gpt51 = await upsertProvider({
@@ -146,7 +182,7 @@ async function main() {
     apiBaseUrl: "https://api.openai.com",
     apiType: "openai",
     modelId: "gpt-4.1",
-    description: "1M context window, improved over GPT-4o",
+    description: "1M context — being retired, migrate to GPT-5.2 (reasoning: none)",
   });
 
   const gpt41Mini = await upsertProvider({
@@ -155,7 +191,7 @@ async function main() {
     apiBaseUrl: "https://api.openai.com",
     apiType: "openai",
     modelId: "gpt-4.1-mini",
-    description: "Balanced performance, cost-effective",
+    description: "Legacy — migrate to GPT-5 Mini",
   });
 
   const gpt41Nano = await upsertProvider({
@@ -164,7 +200,7 @@ async function main() {
     apiBaseUrl: "https://api.openai.com",
     apiType: "openai",
     modelId: "gpt-4.1-nano",
-    description: "Ultra-fast, high-volume, latency-sensitive tasks",
+    description: "Legacy — migrate to GPT-5 Nano",
   });
 
   const gpt4o = await upsertProvider({
@@ -173,7 +209,7 @@ async function main() {
     apiBaseUrl: "https://api.openai.com",
     apiType: "openai",
     modelId: "gpt-4o",
-    description: "Multimodal flagship (legacy)",
+    description: "Retired Feb 2026 — migrate to GPT-5.2",
   });
 
   const gpt4oMini = await upsertProvider({
@@ -182,7 +218,7 @@ async function main() {
     apiBaseUrl: "https://api.openai.com",
     apiType: "openai",
     modelId: "gpt-4o-mini",
-    description: "Fast & affordable (legacy)",
+    description: "Retired Feb 2026 — migrate to GPT-5 Mini",
   });
 
   const o3 = await upsertProvider({
@@ -229,6 +265,15 @@ async function main() {
     apiType: "perplexity",
     modelId: "sonar-pro",
     description: "Advanced search — complex queries with citations",
+  });
+
+  const perplexityReasoning = await upsertProvider({
+    name: "perplexity-reasoning",
+    displayName: "Perplexity Reasoning",
+    apiBaseUrl: "https://api.perplexity.ai",
+    apiType: "perplexity",
+    modelId: "sonar-reasoning",
+    description: "Real-time reasoning with search",
   });
 
   const perplexitySonar = await upsertProvider({
@@ -329,8 +374,8 @@ async function main() {
     displayName: "GPT (OpenAI)",
     apiBaseUrl: "https://api.openai.com",
     apiType: "openai",
-    modelId: "gpt-4.1",
-    description: "Alias → GPT-4.1",
+    modelId: "gpt-5.2",
+    description: "Alias → GPT-5.2",
   });
 
   const grok = await upsertProvider({
@@ -370,7 +415,7 @@ async function main() {
     description: "Alias → Gemini 2.5 Pro",
   });
 
-  console.log("Providers seeded (30+ models)");
+  console.log("Providers seeded (35+ models)");
 
   // ===== ROLES =====
   const coding = await prisma.role.upsert({
@@ -433,10 +478,10 @@ async function main() {
   const assignments = [
     { role: coding, provider: claudeSonnet45, label: "Coding    -> Claude Sonnet 4.5" },
     { role: search, provider: perplexitySonarPro, label: "Search    -> Perplexity Sonar Pro" },
-    { role: planning, provider: gemini25Flash, label: "Planning  -> Gemini 2.5 Flash" },
-    { role: writing, provider: claudeSonnet45, label: "Writing   -> Claude Sonnet 4.5" },
-    { role: review, provider: gpt41, label: "Review    -> GPT-4.1" },
-    { role: leader, provider: gemini25Flash, label: "Leader    -> Gemini 2.5 Flash" },
+    { role: planning, provider: gemini3Pro, label: "Planning  -> Gemini 3 Pro Preview" },
+    { role: writing, provider: claudeOpus46, label: "Writing   -> Claude Opus 4.6" },
+    { role: review, provider: gpt52, label: "Review    -> GPT-5.2" },
+    { role: leader, provider: gemini3Flash, label: "Leader    -> Gemini 3 Flash Preview" },
   ];
 
   for (const a of assignments) {

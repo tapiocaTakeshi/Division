@@ -13,6 +13,9 @@ const AVAILABLE_PROVIDERS = [
   { id: 'sonar-deep-research', name: 'Perplexity Deep Research', provider: 'Perplexity', roles: ['search'] },
   { id: 'grok-4.1-fast', name: 'Grok 4.1 Fast', provider: 'Grok', roles: ['coding', 'writing'] },
   { id: 'deepseek-r1', name: 'DeepSeek R1', provider: 'DeepSeek', roles: ['coding', 'planning'] },
+  { id: 'gpt-image-1', name: 'GPT Image 1', provider: 'GPT', roles: ['image'] },
+  { id: 'dall-e-3', name: 'DALL-E 3', provider: 'GPT', roles: ['image'] },
+  { id: 'imagen-3', name: 'Imagen 3', provider: 'Gemini', roles: ['image'] },
 ]
 
 export function PipelineBuilder() {

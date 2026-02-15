@@ -111,10 +111,11 @@ generateRouter.post(
  * Generate text from a single AI model with SSE streaming.
  *
  * Event types:
- *   start  — Generation started (provider & model info)
- *   chunk  — Text fragment from the AI model
- *   done   — Generation complete (status & duration)
- *   error  — Generation failed
+ *   start    — Generation started (provider & model info)
+ *   chunk    — Text fragment from the AI model
+ *   thinking — Thinking/reasoning fragment from the AI model
+ *   done     — Generation complete (status, duration, thinking, citations)
+ *   error    — Generation failed
  */
 generateRouter.post(
   "/stream",
@@ -176,7 +177,8 @@ generateRouter.post(
           role: { slug: "generate", name: "Generate" },
           systemPrompt,
         },
-        (text) => sendEvent("chunk", { type: "chunk", text })
+        (text) => sendEvent("chunk", { type: "chunk", text }),
+        (text) => sendEvent("thinking", { type: "thinking", text })
       );
 
       if (result.status === "success") {
@@ -184,6 +186,8 @@ generateRouter.post(
           type: "done",
           status: "success",
           durationMs: result.durationMs,
+          ...(result.thinking ? { thinking: result.thinking } : {}),
+          ...(result.citations ? { citations: result.citations } : {}),
         });
       } else {
         sendEvent("error", {

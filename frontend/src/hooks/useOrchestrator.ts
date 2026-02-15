@@ -111,7 +111,7 @@ function handleSSEEvent(
     case 'session_start':
       store.startSession(
         event.sessionId as string,
-        event.projectId as string,
+        (event.projectId as string) ?? '',
         event.input as string
       )
       break
@@ -152,11 +152,28 @@ function handleSSEEvent(
       break
     }
 
+    case 'leader_chunk': {
+      const chunkText = event.text as string
+      const currentLeader = useOrchestraStore.getState().session?.leaderOutput ?? ''
+      store.setLeaderOutput(currentLeader + chunkText)
+      break
+    }
+
     case 'task_start':
       store.updateAgentStatus(event.taskId as string, 'running', {
         provider: event.provider as string,
       })
       break
+
+    case 'task_chunk': {
+      const agentId = event.taskId as string
+      const chunkText = event.text as string
+      const currentAgent = useOrchestraStore.getState().session?.agents.find((a) => a.id === agentId)
+      store.updateAgentStatus(agentId, 'running', {
+        output: (currentAgent?.output ?? '') + chunkText,
+      })
+      break
+    }
 
     case 'task_thinking_chunk': {
       const agentId = event.taskId as string

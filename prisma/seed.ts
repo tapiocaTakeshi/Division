@@ -136,7 +136,7 @@ async function main() {
     apiBaseUrl: "https://generativelanguage.googleapis.com",
     apiType: "google",
     modelId: "gemini-3-deep-think",
-    description: "Maximum reasoning depth — science, math & physics olympiad level",
+    description: "Maximum reasoning — ARC-AGI-2 84.6%, Physics/Chemistry Olympiad gold, HLE 48.4%",
   });
 
   const gemini20Flash = await upsertProvider({
@@ -275,6 +275,15 @@ async function main() {
     description: "Latest agentic coding model — frontier coding + reasoning, 25% faster",
   });
 
+  await upsertProvider({
+    name: "gpt-5.3-codex-spark",
+    displayName: "GPT-5.3 Codex Spark (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "gpt-5.3-codex-spark",
+    description: "Real-time coding — 1000+ tok/s, first OpenAI model on Cerebras WSE3",
+  });
+
   // --- Perplexity ---
   const perplexityDeepResearch = await upsertProvider({
     name: "perplexity-deep-research",
@@ -402,6 +411,15 @@ async function main() {
     apiType: "deepseek",
     modelId: "deepseek-v4",
     description: "Hybrid reasoning/non-reasoning — coding dominance, 1M+ context, Engram memory",
+  });
+
+  await upsertProvider({
+    name: "deepseek-v3.2-speciale",
+    displayName: "DeepSeek V3.2-Speciale",
+    apiBaseUrl: "https://api.deepseek.com",
+    apiType: "deepseek",
+    modelId: "deepseek-v3.2-speciale",
+    description: "Competition-grade reasoning — IMO 2025 & ICPC World Finals gold medals",
   });
 
   await upsertProvider({
@@ -834,7 +852,7 @@ async function main() {
     description: "Alias → Gemini 2.5 Pro",
   });
 
-  console.log("Providers seeded (85+ models)");
+  console.log("Providers seeded (87+ models)");
 
   // ===== ROLES =====
   const coding = await prisma.role.upsert({
@@ -873,7 +891,13 @@ async function main() {
     create: { slug: "leader", name: "Leader", description: "Task decomposition, delegation, and orchestration" },
   });
 
-  console.log("Roles seeded:", [coding, search, planning, writing, review, leader].map((r) => r.slug));
+  const deepResearch = await prisma.role.upsert({
+    where: { slug: "deep-research" },
+    update: {},
+    create: { slug: "deep-research", name: "Deep Research", description: "Exhaustive multi-source research, comprehensive analysis, and detailed reports" },
+  });
+
+  console.log("Roles seeded:", [coding, search, planning, writing, review, leader, deepResearch].map((r) => r.slug));
 
   // ===== DEMO PROJECT =====
   const project = await prisma.project.upsert({
@@ -890,12 +914,13 @@ async function main() {
 
   // ===== ASSIGNMENTS (optimized defaults) =====
   const assignments = [
-    { role: coding, provider: claudeSonnet45, label: "Coding    -> Claude Sonnet 4.5" },
-    { role: search, provider: perplexitySonarPro, label: "Search    -> Perplexity Sonar Pro" },
-    { role: planning, provider: gemini25Pro, label: "Planning  -> Gemini 2.5 Pro" },
-    { role: writing, provider: claudeSonnet45, label: "Writing   -> Claude Sonnet 4.5" },
-    { role: review, provider: gpt41, label: "Review    -> GPT-4.1" },
-    { role: leader, provider: gemini25Flash, label: "Leader    -> Gemini 2.5 Flash" },
+    { role: coding, provider: claudeSonnet45, label: "Coding         -> Claude Sonnet 4.5" },
+    { role: search, provider: perplexitySonarPro, label: "Search         -> Perplexity Sonar Pro" },
+    { role: planning, provider: gemini25Pro, label: "Planning       -> Gemini 2.5 Pro" },
+    { role: writing, provider: claudeSonnet45, label: "Writing        -> Claude Sonnet 4.5" },
+    { role: review, provider: gpt41, label: "Review         -> GPT-4.1" },
+    { role: leader, provider: gemini25Flash, label: "Leader         -> Gemini 2.5 Flash" },
+    { role: deepResearch, provider: perplexityDeepResearch, label: "Deep Research  -> Perplexity Deep Research" },
   ];
 
   for (const a of assignments) {

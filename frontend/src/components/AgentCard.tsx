@@ -67,7 +67,7 @@ export function AgentCard({ agent, onRerun, onChangeProvider, compact }: AgentCa
         </div>
       )}
 
-      {/* Thinking section */}
+      {/* Thinking section — auto-open while running, toggle after done */}
       {!compact && agent.thinking && (
         <div className="mb-3">
           <button
@@ -75,21 +75,40 @@ export function AgentCard({ agent, onRerun, onChangeProvider, compact }: AgentCa
             className="flex items-center gap-1.5 text-[10px] font-medium text-amber-400/80 hover:text-amber-400 transition-colors mb-1"
           >
             <svg
-              className={`w-3 h-3 transition-transform ${showThinking ? 'rotate-90' : ''}`}
+              className={`w-3 h-3 transition-transform ${showThinking || agent.status === 'running' ? 'rotate-90' : ''}`}
               fill="none" viewBox="0 0 24 24" stroke="currentColor"
             >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
             Thinking
+            {agent.status === 'running' && (
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            )}
             <span className="text-amber-400/50">
               ({agent.thinking.length > 1000 ? `${(agent.thinking.length / 1000).toFixed(1)}k` : agent.thinking.length} chars)
             </span>
           </button>
-          {showThinking && (
+          {(showThinking || agent.status === 'running') && (
             <div className="p-2 rounded-lg bg-amber-500/5 border border-amber-500/10 text-[11px] text-amber-200/70 font-mono leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap">
               {agent.thinking}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Streaming output — shown in real-time while running */}
+      {!compact && agent.status === 'running' && agent.output && (
+        <div className="mb-3">
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-green-400/80 mb-1">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            Output
+            <span className="text-green-400/50">
+              ({agent.output.length > 1000 ? `${(agent.output.length / 1000).toFixed(1)}k` : agent.output.length} chars)
+            </span>
+          </div>
+          <div className="p-2 rounded-lg bg-green-500/5 border border-green-500/10 text-[11px] text-green-200/70 font-mono leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap">
+            {agent.output}
+          </div>
         </div>
       )}
 

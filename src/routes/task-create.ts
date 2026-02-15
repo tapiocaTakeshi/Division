@@ -13,6 +13,11 @@ const createTasksSchema = z.object({
   projectId: z.string().min(1),
   input: z.string().min(1),
   apiKeys: z.record(z.string()).optional(),
+  /** Chat history for context */
+  chatHistory: z.array(z.object({
+    role: z.enum(["user", "assistant"]),
+    content: z.string(),
+  })).optional(),
 });
 
 const updateTaskSchema = z.object({
@@ -26,6 +31,7 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 
 利用可能なロール:
 - search: ウェブ検索・情報収集
+- deep-research: 徹底的な多角的調査・包括的分析・詳細レポート作成
 - planning: 企画・設計・戦略立案
 - coding: コード生成・デバッグ
 - writing: 文章作成・ドキュメント
@@ -119,7 +125,7 @@ taskCreateRouter.post(
       return;
     }
 
-    const { projectId, input, apiKeys } = parsed.data;
+    const { projectId, input, apiKeys, chatHistory } = parsed.data;
 
     // Verify project exists
     const project = await prisma.project.findUnique({
@@ -171,6 +177,7 @@ taskCreateRouter.post(
       input,
       role: { slug: "leader", name: "Leader" },
       systemPrompt: TASK_CREATION_PROMPT,
+      chatHistory,
     });
 
     if (leaderResult.status === "error") {

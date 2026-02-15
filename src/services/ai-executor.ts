@@ -6,6 +6,11 @@
  * configured API keys (from request or environment variables).
  */
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface ExecutionRequest {
   provider: {
     name: string;
@@ -22,6 +27,8 @@ export interface ExecutionRequest {
   };
   /** Override the default system prompt for this request */
   systemPrompt?: string;
+  /** Chat history to provide context to the AI (previous user/assistant messages) */
+  chatHistory?: ChatMessage[];
 }
 
 export interface ExecutionResult {
@@ -98,12 +105,20 @@ function buildRequestBody(
   modelId: string,
   input: string,
   systemPrompt: string,
-  config?: Record<string, unknown>
+  config?: Record<string, unknown>,
+  chatHistory?: ChatMessage[]
 ): { url: string; headers: Record<string, string>; body: unknown } | null {
   const apiKey = config?.apiKey as string | undefined;
   const maxTokens = (config?.maxTokens as number) || 4096;
 
   if (apiType === "anthropic") {
+    const messages: Array<{ role: string; content: string }> = [];
+    if (chatHistory?.length) {
+      for (const msg of chatHistory) {
+        messages.push({ role: msg.role, content: msg.content });
+      }
+    }
+    messages.push({ role: "user", content: input });
     return {
       url: "/v1/messages",
       headers: {
@@ -115,7 +130,7 @@ function buildRequestBody(
         model: modelId,
         max_tokens: maxTokens,
         system: systemPrompt,
-        messages: [{ role: "user", content: input }],
+        messages,
         thinking: {
           type: "enabled",
           budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.6), 1024), 10000),
@@ -125,6 +140,16 @@ function buildRequestBody(
   }
 
   if (apiType === "google") {
+    const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
+    if (chatHistory?.length) {
+      for (const msg of chatHistory) {
+        contents.push({
+          role: msg.role === "assistant" ? "model" : "user",
+          parts: [{ text: msg.content }],
+        });
+      }
+    }
+    contents.push({ role: "user", parts: [{ text: input }] });
     return {
       url: `/v1beta/models/${modelId}:generateContent`,
       headers: {
@@ -135,7 +160,7 @@ function buildRequestBody(
         systemInstruction: {
           parts: [{ text: systemPrompt }],
         },
-        contents: [{ parts: [{ text: input }] }],
+        contents,
         generationConfig: {
           maxOutputTokens: maxTokens,
           thinkingConfig: { thinkingBudget: Math.min(Math.floor(maxTokens * 0.6), 8192) },
@@ -147,6 +172,15 @@ function buildRequestBody(
   // OpenAI-compatible providers (openai, perplexity, xai, deepseek)
   const endpoint = OPENAI_COMPATIBLE_TYPES[apiType];
   if (endpoint) {
+    const messages: Array<{ role: string; content: string }> = [
+      { role: "system", content: systemPrompt },
+    ];
+    if (chatHistory?.length) {
+      for (const msg of chatHistory) {
+        messages.push({ role: msg.role, content: msg.content });
+      }
+    }
+    messages.push({ role: "user", content: input });
     return {
       url: endpoint,
       headers: {
@@ -156,10 +190,7 @@ function buildRequestBody(
       body: {
         model: modelId,
         max_tokens: maxTokens,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: input },
-        ],
+        messages,
       },
     };
   }
@@ -299,7 +330,8 @@ export async function executeTaskStream(
     req.provider.modelId,
     req.input,
     systemPrompt,
-    req.config || undefined
+    req.config || undefined,
+    req.chatHistory
   );
 
   if (!requestSpec) {
@@ -468,7 +500,8 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     req.provider.modelId,
     req.input,
     systemPrompt,
-    req.config || undefined
+    req.config || undefined,
+    req.chatHistory
   );
 
   if (!requestSpec) {

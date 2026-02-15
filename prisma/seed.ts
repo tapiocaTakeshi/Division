@@ -733,6 +733,34 @@ async function main() {
     description: "Enterprise RAG-optimized — retrieval & tool use",
   });
 
+  // --- Image Generation ---
+  const gptImage1 = await upsertProvider({
+    name: "gpt-image-1",
+    displayName: "GPT Image 1 (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "gpt-image-1",
+    description: "Native image generation — high quality, prompt-faithful output",
+  });
+
+  await upsertProvider({
+    name: "dall-e-3",
+    displayName: "DALL-E 3 (OpenAI)",
+    apiBaseUrl: "https://api.openai.com",
+    apiType: "openai",
+    modelId: "dall-e-3",
+    description: "Advanced image generation — detailed, creative visuals",
+  });
+
+  await upsertProvider({
+    name: "imagen-3",
+    displayName: "Imagen 3 (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "imagen-3.0-generate-002",
+    description: "Google's highest quality image generation model",
+  });
+
   // --- Legacy aliases (backward compatibility) ---
   const claude = await upsertProvider({
     name: "claude",
@@ -897,7 +925,13 @@ async function main() {
     create: { slug: "deep-research", name: "Deep Research", description: "Exhaustive multi-source research, comprehensive analysis, and detailed reports" },
   });
 
-  console.log("Roles seeded:", [coding, search, planning, writing, review, leader, deepResearch].map((r) => r.slug));
+  const image = await prisma.role.upsert({
+    where: { slug: "image" },
+    update: {},
+    create: { slug: "image", name: "Image", description: "Image generation, visual content creation, and illustration" },
+  });
+
+  console.log("Roles seeded:", [coding, search, planning, writing, review, leader, deepResearch, image].map((r) => r.slug));
 
   // ===== DEMO PROJECT =====
   const project = await prisma.project.upsert({
@@ -921,6 +955,7 @@ async function main() {
     { role: review, provider: gpt41, label: "Review         -> GPT-4.1" },
     { role: leader, provider: gemini25Flash, label: "Leader         -> Gemini 2.5 Flash" },
     { role: deepResearch, provider: perplexityDeepResearch, label: "Deep Research  -> Perplexity Deep Research" },
+    { role: image, provider: gptImage1, label: "Image          -> GPT Image 1" },
   ];
 
   for (const a of assignments) {

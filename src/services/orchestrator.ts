@@ -67,6 +67,7 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 - coding: コード生成・デバッグ（Claude担当）
 - writing: 文章作成・ドキュメント（Claude担当）
 - review: レビュー・品質確認（GPT担当）
+- image: 画像生成・ビジュアルコンテンツ作成・イラスト（GPT Image担当）
 
 ルール:
 1. 各タスクには0始まりのインデックスが暗黙的に付与されます（最初のタスクが0、次が1...）

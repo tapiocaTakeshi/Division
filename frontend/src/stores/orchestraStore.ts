@@ -237,4 +237,10 @@ export const ROLE_META: Record<RoleSlug, { label: string; color: string; icon: s
     icon: '🔎',
     strengths: ['品質検証', 'バグ発見', '改善提案'],
   },
+  image: {
+    label: 'Image',
+    color: '#14b8a6',
+    icon: '🎨',
+    strengths: ['画像生成', 'イラスト', 'ビジュアル'],
+  },
 }

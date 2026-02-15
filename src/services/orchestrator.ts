@@ -506,8 +506,9 @@ export interface StreamEventLeaderChunk {
 export interface StreamEventLeaderDone {
   type: "leader_done";
   id: string;
+  output: string;
   taskCount: number;
-  tasks: Array<{ role: string; input: string; reason: string; dependsOn?: number[] }>;
+  tasks: Array<{ id: string; role: string; title: string; reason: string; dependsOn?: string[] }>;
   rawOutput: string;
 }
 export interface StreamEventLeaderError {
@@ -518,6 +519,7 @@ export interface StreamEventLeaderError {
 export interface StreamEventTaskStart {
   type: "task_start";
   id: string;
+  taskId: string;
   index: number;
   total: number;
   role: string;
@@ -528,6 +530,7 @@ export interface StreamEventTaskStart {
 export interface StreamEventTaskChunk {
   type: "task_chunk";
   id: string;
+  taskId: string;
   index: number;
   role: string;
   text: string;
@@ -535,6 +538,7 @@ export interface StreamEventTaskChunk {
 export interface StreamEventTaskThinkingChunk {
   type: "task_thinking_chunk";
   id: string;
+  taskId: string;
   index: number;
   role: string;
   text: string;
@@ -542,6 +546,7 @@ export interface StreamEventTaskThinkingChunk {
 export interface StreamEventTaskDone {
   type: "task_done";
   id: string;
+  taskId: string;
   index: number;
   role: string;
   provider: string;
@@ -555,6 +560,7 @@ export interface StreamEventTaskDone {
 export interface StreamEventTaskError {
   type: "task_error";
   id: string;
+  taskId: string;
   index: number;
   role: string;
   error: string;
@@ -566,6 +572,7 @@ export interface StreamEventSessionDone {
   status: string;
   totalDurationMs: number;
   taskCount: number;
+  finalOutput?: string;
   results: Array<{
     role: string;
     provider: string;
@@ -585,13 +592,17 @@ export interface StreamEventHeartbeat {
 export interface StreamEventWaveStart {
   type: "wave_start";
   id: string;
+  waveIndex: number;
   wave: number;
+  taskIds: string[];
   taskIndices: number[];
 }
 export interface StreamEventWaveDone {
   type: "wave_done";
   id: string;
+  waveIndex: number;
   wave: number;
+  taskIds: string[];
   taskIndices: number[];
 }
 
@@ -741,11 +752,21 @@ async function runAgentStreamCore(
     return;
   }
 
+  // Generate stable string IDs for each task so the frontend can track them
+  const taskIdOf = (idx: number) => `task-${idx}`;
+
   emit({
     type: "leader_done",
     id: nextId(),
+    output: leaderResult.output,
     taskCount: subTasks.length,
-    tasks: subTasks.map((t) => ({ role: t.role, input: t.input, reason: t.reason, dependsOn: t.dependsOn })),
+    tasks: subTasks.map((t, idx) => ({
+      id: taskIdOf(idx),
+      role: t.role,
+      title: t.input,
+      reason: t.reason,
+      dependsOn: (t.dependsOn || []).map((d) => taskIdOf(d)),
+    })),
     rawOutput: leaderResult.output,
   });
 
@@ -778,7 +799,7 @@ async function runAgentStreamCore(
       where: { slug: task.role },
     });
     if (!role) {
-      emit({ type: "task_error", id: nextId(), index: i, role: task.role, error: `Role not found: ${task.role}` });
+      emit({ type: "task_error", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, error: `Role not found: ${task.role}` });
       taskResults[i] = {
         role: task.role,
         provider: "unknown",
@@ -827,6 +848,7 @@ async function runAgentStreamCore(
       emit({
         type: "task_error",
         id: nextId(),
+        taskId: taskIdOf(i),
         index: i,
         role: task.role,
         error: `No provider assigned to role "${task.role}"`,
@@ -863,6 +885,7 @@ async function runAgentStreamCore(
     emit({
       type: "task_start",
       id: nextId(),
+      taskId: taskIdOf(i),
       index: i,
       total: subTasks.length,
       role: task.role,
@@ -878,14 +901,15 @@ async function runAgentStreamCore(
         input: enrichedInput,
         role: { slug: role.slug, name: role.name },
       },
-      (text) => emit({ type: "task_chunk", id: nextId(), index: i, role: task.role, text }),
-      (text) => emit({ type: "task_thinking_chunk", id: nextId(), index: i, role: task.role, text })
+      (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
+      (text) => emit({ type: "task_thinking_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text })
     );
 
     if (result.status === "success") {
       emit({
         type: "task_done",
         id: nextId(),
+        taskId: taskIdOf(i),
         index: i,
         role: task.role,
         provider: provider.displayName,
@@ -900,6 +924,7 @@ async function runAgentStreamCore(
       emit({
         type: "task_error",
         id: nextId(),
+        taskId: taskIdOf(i),
         index: i,
         role: task.role,
         error: result.errorMsg || "Execution failed",
@@ -962,7 +987,7 @@ async function runAgentStreamCore(
     }
 
     // Emit wave start (indicates which tasks are running in parallel)
-    emit({ type: "wave_start", id: nextId(), wave: waveNum, taskIndices: ready });
+    emit({ type: "wave_start", id: nextId(), waveIndex: waveNum, wave: waveNum, taskIds: ready.map(taskIdOf), taskIndices: ready });
 
     // Execute this wave concurrently
     await Promise.all(ready.map((idx) => executeSubTask(idx)));
@@ -972,7 +997,7 @@ async function runAgentStreamCore(
       completed.add(idx);
     }
 
-    emit({ type: "wave_done", id: nextId(), wave: waveNum, taskIndices: ready });
+    emit({ type: "wave_done", id: nextId(), waveIndex: waveNum, wave: waveNum, taskIds: ready.map(taskIdOf), taskIndices: ready });
     waveNum++;
   }
 
@@ -983,6 +1008,10 @@ async function runAgentStreamCore(
   const status = allSuccess ? "success" : allError ? "error" : "partial";
   const totalDurationMs = Date.now() - startTime;
 
+  // Pick the last successful output as the final output
+  const lastSuccessResult = [...filledResults].reverse().find((r) => r.status === "success");
+  const finalOutput = lastSuccessResult?.output;
+
   emit({
     type: "session_done",
     id: nextId(),
@@ -990,6 +1019,7 @@ async function runAgentStreamCore(
     status,
     totalDurationMs,
     taskCount: subTasks.length,
+    finalOutput,
     results: filledResults,
   });
 }

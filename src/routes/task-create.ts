@@ -86,11 +86,14 @@ const API_KEY_ALIASES: Record<string, string[]> = {
 function resolveApiKey(
   providerName: string,
   apiType: string,
-  apiKeys?: Record<string, string>
+  apiKeys?: Record<string, string>,
+  authenticated?: boolean
 ): string | undefined {
-  const envVar = ENV_KEY_MAP[apiType];
-  if (envVar && process.env[envVar]) {
-    return process.env[envVar];
+  if (authenticated) {
+    const envVar = ENV_KEY_MAP[apiType];
+    if (envVar && process.env[envVar]) {
+      return process.env[envVar];
+    }
   }
   if (apiKeys) {
     if (apiKeys[providerName]) return apiKeys[providerName];
@@ -165,10 +168,12 @@ taskCreateRouter.post(
       return;
     }
 
+    const authenticated = !!res.locals.authenticated;
     const leaderApiKey = resolveApiKey(
       leaderAssignment.provider.name,
       leaderAssignment.provider.apiType,
-      apiKeys
+      apiKeys,
+      authenticated
     );
 
     // Call Leader AI to decompose the task

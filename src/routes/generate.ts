@@ -41,18 +41,23 @@ const generateSchema = z.object({
 
 /**
  * Resolve the API key for a given provider.
- * Priority: environment variable > user-supplied apiKeys
+ * When authenticated (valid Clerk token): env vars first, then user-supplied keys.
+ * When NOT authenticated: user-supplied keys only.
  */
 function resolveApiKey(
   apiType: string,
-  apiKeys?: Record<string, string>
+  apiKeys?: Record<string, string>,
+  authenticated?: boolean
 ): string | undefined {
-  const envVar = ENV_KEY_MAP[apiType];
-  if (envVar && process.env[envVar]) {
-    return process.env[envVar];
+  if (authenticated) {
+    const envVar = ENV_KEY_MAP[apiType];
+    if (envVar && process.env[envVar]) {
+      return process.env[envVar];
+    }
   }
   if (apiKeys) {
     if (apiKeys[apiType]) return apiKeys[apiType];
+    const envVar = ENV_KEY_MAP[apiType];
     if (envVar && apiKeys[envVar]) return apiKeys[envVar];
   }
   return undefined;
@@ -73,6 +78,7 @@ generateRouter.post(
     }
 
     const { provider: providerName, input, systemPrompt, maxTokens, apiKeys } = parsed.data;
+    const authenticated = !!res.locals.authenticated;
 
     const provider = await prisma.provider.findUnique({ where: { name: providerName } });
     if (!provider) {
@@ -84,7 +90,7 @@ generateRouter.post(
       return;
     }
 
-    const apiKey = resolveApiKey(provider.apiType, apiKeys);
+    const apiKey = resolveApiKey(provider.apiType, apiKeys, authenticated);
 
     const result = await executeTask({
       provider,
@@ -127,6 +133,7 @@ generateRouter.post(
     }
 
     const { provider: providerName, input, systemPrompt, maxTokens, apiKeys } = parsed.data;
+    const authenticated = !!res.locals.authenticated;
 
     const provider = await prisma.provider.findUnique({ where: { name: providerName } });
     if (!provider) {
@@ -138,7 +145,7 @@ generateRouter.post(
       return;
     }
 
-    const apiKey = resolveApiKey(provider.apiType, apiKeys);
+    const apiKey = resolveApiKey(provider.apiType, apiKeys, authenticated);
 
     // Set up SSE headers
     res.writeHead(200, {

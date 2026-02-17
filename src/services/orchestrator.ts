@@ -42,6 +42,8 @@ export interface OrchestratorRequest {
   overrides?: Record<string, string>;
   /** Chat history for context (previous user/assistant messages) */
   chatHistory?: ChatMessage[];
+  /** When true, server-side env var provider keys are used */
+  authenticated?: boolean;
 }
 
 export interface OrchestratorResult {
@@ -158,17 +160,21 @@ const ENV_KEY_MAP: Record<string, string> = {
 
 /**
  * Resolve the API key for a given provider using its apiType.
- * Priority: 1) environment variables (Vercel/production), 2) user-supplied apiKeys (request)
+ * When authenticated (valid Clerk token): env vars first, then user-supplied keys.
+ * When NOT authenticated: user-supplied keys only (env vars are not exposed).
  */
 function resolveApiKey(
   providerName: string,
   apiType: string,
-  apiKeys?: Record<string, string>
+  apiKeys?: Record<string, string>,
+  authenticated?: boolean
 ): string | undefined {
-  // 1. Check environment variables first (production / Vercel)
-  const envVar = ENV_KEY_MAP[apiType];
-  if (envVar && process.env[envVar]) {
-    return process.env[envVar];
+  // 1. Check environment variables only when authenticated via Clerk
+  if (authenticated) {
+    const envVar = ENV_KEY_MAP[apiType];
+    if (envVar && process.env[envVar]) {
+      return process.env[envVar];
+    }
   }
 
   // 2. Fall back to user-supplied apiKeys from request
@@ -225,7 +231,8 @@ export async function runAgent(
   const leaderApiKey = resolveApiKey(
     leaderAssignment.provider.name,
     leaderAssignment.provider.apiType,
-    req.apiKeys
+    req.apiKeys,
+    req.authenticated
   );
 
   // 2. Ask Leader to decompose the task
@@ -381,7 +388,7 @@ export async function runAgent(
       }
     }
 
-    const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys);
+    const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys, req.authenticated);
 
     log(`[Agent] Executing: [${task.role}] → ${provider.displayName}`);
     logger.info(
@@ -689,7 +696,8 @@ async function runAgentStreamCore(
   const leaderApiKey = resolveApiKey(
     leaderAssignment.provider.name,
     leaderAssignment.provider.apiType,
-    req.apiKeys
+    req.apiKeys,
+    req.authenticated
   );
 
   // 2. Emit session start
@@ -885,7 +893,7 @@ async function runAgentStreamCore(
       }
     }
 
-    const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys);
+    const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys, req.authenticated);
 
     emit({
       type: "task_start",

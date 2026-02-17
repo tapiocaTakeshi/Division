@@ -10,29 +10,35 @@ import providersListRouter from "./routes/providers-list";
 import mcpRouter from "./routes/mcp";
 import { sseRouter } from "./routes/sse";
 import { taskCreateRouter } from "./routes/task-create";
+import { clerkMiddleware, divisionAuth } from "./middleware/auth";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
+// Clerk authentication (adds auth state to all requests)
+app.use(clerkMiddleware());
+
 // Health check
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "division-api" });
 });
 
-// API routes
+// Public API routes (no auth required)
 app.use("/api/providers", providerRouter);
 app.use("/api/roles", roleRouter);
 app.use("/api/projects", projectRouter);
 app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", taskRouter);
 app.use("/api/tasks", taskCreateRouter);
-app.use("/api/agent", agentRouter);
-app.use("/api/generate", generateRouter);
 app.use("/api/models", providersListRouter);
-app.use("/api/sse", sseRouter);
-app.use("/mcp", mcpRouter);
+
+// Protected API routes (auth state checked — uses env var provider keys when authenticated)
+app.use("/api/agent", divisionAuth, agentRouter);
+app.use("/api/generate", divisionAuth, generateRouter);
+app.use("/api/sse", divisionAuth, sseRouter);
+app.use("/mcp", divisionAuth, mcpRouter);
 
 // Error handler
 app.use(

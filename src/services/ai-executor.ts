@@ -343,15 +343,15 @@ export async function executeTaskStream(
     };
   }
 
-  // Resolve API key
-  const envVar = ENV_KEY_MAP[req.provider.apiType];
-  const apiKey = (envVar ? process.env[envVar] : undefined) || (req.config?.apiKey as string) || "";
+  // Use API key from config (resolved upstream with auth-aware logic)
+  const apiKey = (req.config?.apiKey as string) || "";
   if (!apiKey) {
+    const envVar = ENV_KEY_MAP[req.provider.apiType];
     return {
       output: "",
       durationMs: Date.now() - start,
       status: "error",
-      errorMsg: `No API key found for ${req.provider.name} (${req.provider.apiType}). Set ${envVar || "the API key"} environment variable.`,
+      errorMsg: `No API key found for ${req.provider.name} (${req.provider.apiType}). Set ${envVar || "the API key"} environment variable or authenticate with a valid Division API key.`,
     };
   }
 
@@ -514,15 +514,15 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     };
   }
 
-  // Resolve API key: environment variable > config (request)
-  const envVar = ENV_KEY_MAP[req.provider.apiType];
-  const apiKey = (envVar ? process.env[envVar] : undefined) || (req.config?.apiKey as string) || "";
+  // Use API key from config (resolved upstream with auth-aware logic)
+  const apiKey = (req.config?.apiKey as string) || "";
   if (!apiKey) {
+    const envVar = ENV_KEY_MAP[req.provider.apiType];
     return {
       output: "",
       durationMs: Date.now() - start,
       status: "error",
-      errorMsg: `No API key found for ${req.provider.name} (${req.provider.apiType}). Set ${envVar || "the API key"} environment variable.`,
+      errorMsg: `No API key found for ${req.provider.name} (${req.provider.apiType}). Set ${envVar || "the API key"} environment variable or authenticate with a valid Division API key.`,
     };
   }
 

@@ -10,15 +10,15 @@ import providersListRouter from "./routes/providers-list";
 import mcpRouter from "./routes/mcp";
 import { sseRouter } from "./routes/sse";
 import { taskCreateRouter } from "./routes/task-create";
-import { clerkMiddleware, divisionAuth } from "./middleware/auth";
+import { clerkAuth, divisionAuth } from "./middleware/auth";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Clerk authentication (adds auth state to all requests)
-app.use(clerkMiddleware());
+// Clerk authentication (adds auth state to all requests; skips if keys not configured)
+app.use(clerkAuth());
 
 // Health check
 app.get("/health", (_req, res) => {

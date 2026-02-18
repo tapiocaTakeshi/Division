@@ -7,8 +7,10 @@
  *    Validates session tokens via Clerk. Used by the Conductor UI.
  *
  * 2. **Division API Key** (MCP servers / external clients / Vercel)
- *    Validates `Authorization: Bearer ak_xxx` against the DIVISION_API_KEY
- *    environment variable. Used by MCP servers, curl, and programmatic access.
+ *    Validates `Authorization: Bearer ak_xxx` against:
+ *      a) Database-stored API keys (created by Clerk users)
+ *      b) The DIVISION_API_KEY environment variable (legacy fallback)
+ *    Used by MCP servers, curl, and programmatic access.
  *
  * When either method succeeds, sets res.locals.authenticated = true,
  * which allows downstream routes to use server-side provider API keys
@@ -17,6 +19,7 @@
 
 import { clerkMiddleware as _clerkMiddleware, getAuth } from "@clerk/express";
 import { Request, Response, NextFunction } from "express";
+import { prisma } from "../db";
 
 /**
  * Check whether Clerk is configured by looking for required env vars.
@@ -53,10 +56,10 @@ function extractBearerToken(req: Request): string | undefined {
 }
 
 /**
- * Validate a Division API key (ak_xxx format) against the server secret.
+ * Validate a Division API key (ak_xxx format) against the env var (legacy).
  * Uses timing-safe comparison to prevent timing attacks.
  */
-function validateDivisionApiKey(token: string): boolean {
+function validateEnvApiKey(token: string): boolean {
   const serverKey = process.env.DIVISION_API_KEY;
   if (!serverKey) return false;
   if (token.length !== serverKey.length) return false;
@@ -70,10 +73,29 @@ function validateDivisionApiKey(token: string): boolean {
 }
 
 /**
+ * Validate a Division API key against the database.
+ * Returns true if the key exists and is not revoked.
+ */
+async function validateDbApiKey(token: string): Promise<boolean> {
+  try {
+    const apiKey = await prisma.apiKey.findUnique({
+      where: { key: token },
+      select: { revoked: true },
+    });
+    return !!apiKey && !apiKey.revoked;
+  } catch {
+    // DB unavailable — fall through to env var check
+    return false;
+  }
+}
+
+/**
  * Unified authentication middleware.
  *
  * Authentication priority:
  *   1. Division API Key — `Authorization: Bearer ak_xxx`
+ *      a) Check database first (Clerk-user-generated keys)
+ *      b) Fall back to DIVISION_API_KEY env var (legacy)
  *   2. Clerk session token — validated via getAuth()
  *
  * Does NOT block unauthenticated requests — they can still proceed
@@ -83,8 +105,16 @@ export function divisionAuth(req: Request, res: Response, next: NextFunction) {
   // 1. Check Division API key (ak_ prefix)
   const token = extractBearerToken(req);
   if (token && token.startsWith("ak_")) {
-    res.locals.authenticated = validateDivisionApiKey(token);
-    next();
+    // Try DB first, then env var fallback
+    validateDbApiKey(token)
+      .then((valid) => {
+        res.locals.authenticated = valid || validateEnvApiKey(token);
+        next();
+      })
+      .catch(() => {
+        res.locals.authenticated = validateEnvApiKey(token);
+        next();
+      });
     return;
   }
 

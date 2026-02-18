@@ -84,6 +84,20 @@ model Task {
   @@index([sessionId])
 }
 
+/// API key for authenticated access (linked to Clerk users)
+model ApiKey {
+  id        String   @id @default(uuid())
+  key       String   @unique // "ak_xxx" format
+  userId    String   // Clerk user ID
+  name      String   @default("default") // Human-readable label
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([key])
+}
+
 /// Execution log for tasks sent to AI providers
 model TaskLog {
   id         String   @id @default(uuid())

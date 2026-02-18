@@ -10,6 +10,7 @@ import providersListRouter from "./routes/providers-list";
 import mcpRouter from "./routes/mcp";
 import { sseRouter } from "./routes/sse";
 import { taskCreateRouter } from "./routes/task-create";
+import { apiKeyRouter } from "./routes/api-keys";
 import { clerkMiddleware, divisionAuth } from "./middleware/auth";
 
 const app = express();
@@ -33,6 +34,9 @@ app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", taskRouter);
 app.use("/api/tasks", taskCreateRouter);
 app.use("/api/models", providersListRouter);
+
+// API key management (requires Clerk auth)
+app.use("/api/api-keys", apiKeyRouter);
 
 // Protected API routes (auth state checked — uses env var provider keys when authenticated)
 app.use("/api/agent", divisionAuth, agentRouter);

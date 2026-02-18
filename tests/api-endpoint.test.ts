@@ -188,6 +188,73 @@ test("POST /mcp (tools/list)", () => {
   return `${names.length} tools: ${names.join(", ")}`;
 });
 
+// ---------- 12. Knock Detection - Status ----------
+test("GET /api/knock/status", () => {
+  const data = curlJson(`${API_BASE}/api/knock/status`) as {
+    status: string;
+    sequenceLength: number;
+  };
+  assert(data.status === "active", `Expected status "active", got "${data.status}"`);
+  assert(data.sequenceLength > 0, "sequenceLength should be > 0");
+  return `Knock detection active, sequence length: ${data.sequenceLength}`;
+});
+
+// ---------- 13. Knock Detection - Wrong Code ----------
+test("POST /api/knock (wrong code)", () => {
+  const body = JSON.stringify({ code: "wrong-code", clientId: "test-client-1" });
+  const raw = curl(
+    `-X POST -H "Content-Type: application/json" -d '${body}' -w "\\n%{http_code}" ${API_BASE}/api/knock`
+  );
+  const lines = raw.trim().split("\n");
+  const httpCode = lines[lines.length - 1];
+  assert(httpCode === "403", `Expected HTTP 403, got ${httpCode}`);
+  return "Incorrect knock correctly rejected with 403";
+});
+
+// ---------- 14. Knock Detection - Partial Sequence ----------
+test("POST /api/knock (first knock)", () => {
+  const body = JSON.stringify({
+    code: "shave-and-a-haircut",
+    clientId: "test-client-2",
+  });
+  const data = curlJson(
+    `-X POST -H "Content-Type: application/json" -d '${body}' ${API_BASE}/api/knock`
+  ) as { status: string; progress: string };
+  assert(data.status === "continue", `Expected status "continue", got "${data.status}"`);
+  return `First knock accepted: progress=${data.progress}`;
+});
+
+// ---------- 15. Knock Detection - Full Sequence ----------
+test("POST /api/knock (full sequence → token)", () => {
+  const clientId = `test-client-${Date.now()}`;
+  // First knock
+  const body1 = JSON.stringify({ code: "shave-and-a-haircut", clientId });
+  const r1 = curlJson(
+    `-X POST -H "Content-Type: application/json" -d '${body1}' ${API_BASE}/api/knock`
+  ) as { status: string };
+  assert(r1.status === "continue", `First knock: expected "continue", got "${r1.status}"`);
+
+  // Second knock
+  const body2 = JSON.stringify({ code: "two-bits", clientId });
+  const r2 = curlJson(
+    `-X POST -H "Content-Type: application/json" -d '${body2}' ${API_BASE}/api/knock`
+  ) as { status: string; token?: string };
+  assert(r2.status === "granted", `Second knock: expected "granted", got "${r2.status}"`);
+  assert(!!r2.token, "Token not returned after completing sequence");
+  return `Full knock sequence completed, token issued: ${r2.token!.slice(0, 12)}...`;
+});
+
+// ---------- 16. Knock Detection - Verify Token ----------
+test("GET /api/knock/verify (invalid token)", () => {
+  const raw = curl(
+    `-H "Authorization: Bearer knock_invalidtoken" -w "\\n%{http_code}" ${API_BASE}/api/knock/verify`
+  );
+  const lines = raw.trim().split("\n");
+  const httpCode = lines[lines.length - 1];
+  assert(httpCode === "401", `Expected HTTP 401, got ${httpCode}`);
+  return "Invalid knock token correctly rejected with 401";
+});
+
 // ---------- Summary ----------
 console.log(`\n=== Results ===`);
 const passed = results.filter((r) => r.status === "PASS").length;

@@ -36,6 +36,11 @@ app.get("/debug/auth", divisionAuth, (_req, res) => {
     "PERPLEXITY_API_KEY",
     "XAI_API_KEY",
     "DEEPSEEK_API_KEY",
+    "MISTRAL_API_KEY",
+    "META_API_KEY",
+    "QWEN_API_KEY",
+    "COHERE_API_KEY",
+    "MOONSHOT_API_KEY",
   ];
   const envStatus: Record<string, boolean> = {};
   for (const key of envKeys) {
@@ -53,7 +58,7 @@ app.use("/api/roles", roleRouter);
 app.use("/api/projects", projectRouter);
 app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", taskRouter);
-app.use("/api/tasks", taskCreateRouter);
+app.use("/api/tasks", divisionAuth, taskCreateRouter);
 app.use("/api/models", providersListRouter);
 
 // API key management (requires Clerk auth)

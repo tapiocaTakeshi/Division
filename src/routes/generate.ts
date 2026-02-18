@@ -13,23 +13,9 @@ import { z } from "zod";
 import { prisma } from "../db";
 import { executeTask, executeTaskStream } from "../services/ai-executor";
 import { asyncHandler } from "../middleware/async-handler";
+import { resolveApiKey } from "../services/api-key-resolver";
 
 export const generateRouter = Router();
-
-/** Maps apiType to the corresponding environment variable name */
-const ENV_KEY_MAP: Record<string, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  google: "GOOGLE_API_KEY",
-  openai: "OPENAI_API_KEY",
-  perplexity: "PERPLEXITY_API_KEY",
-  xai: "XAI_API_KEY",
-  deepseek: "DEEPSEEK_API_KEY",
-  mistral: "MISTRAL_API_KEY",
-  meta: "META_API_KEY",
-  qwen: "QWEN_API_KEY",
-  cohere: "COHERE_API_KEY",
-  moonshot: "MOONSHOT_API_KEY",
-};
 
 const generateSchema = z.object({
   provider: z.string().min(1, "provider is required (e.g. 'claude-sonnet-4.5', 'gemini-3-pro')"),
@@ -38,33 +24,6 @@ const generateSchema = z.object({
   maxTokens: z.number().int().positive().optional(),
   apiKeys: z.record(z.string()).optional(),
 });
-
-/**
- * Resolve the API key for a given provider.
- * When authenticated (valid Clerk token): env vars first, then user-supplied keys.
- * When NOT authenticated: user-supplied keys only.
- */
-function resolveApiKey(
-  apiType: string,
-  apiKeys?: Record<string, string>,
-  authenticated?: boolean
-): string | undefined {
-  console.log(`[resolveApiKey] apiType=${apiType}, authenticated=${authenticated}, hasApiKeys=${!!apiKeys}`);
-  if (authenticated) {
-    const envVar = ENV_KEY_MAP[apiType];
-    const hasEnvVar = !!(envVar && process.env[envVar]);
-    console.log(`[resolveApiKey] envVar=${envVar}, exists=${hasEnvVar}`);
-    if (hasEnvVar) {
-      return process.env[envVar];
-    }
-  }
-  if (apiKeys) {
-    if (apiKeys[apiType]) return apiKeys[apiType];
-    const envVar = ENV_KEY_MAP[apiType];
-    if (envVar && apiKeys[envVar]) return apiKeys[envVar];
-  }
-  return undefined;
-}
 
 /**
  * POST /api/generate
@@ -93,7 +52,7 @@ generateRouter.post(
       return;
     }
 
-    const apiKey = resolveApiKey(provider.apiType, apiKeys, authenticated);
+    const apiKey = resolveApiKey(provider.name, provider.apiType, apiKeys, authenticated);
 
     const result = await executeTask({
       provider,
@@ -148,7 +107,7 @@ generateRouter.post(
       return;
     }
 
-    const apiKey = resolveApiKey(provider.apiType, apiKeys, authenticated);
+    const apiKey = resolveApiKey(provider.name, provider.apiType, apiKeys, authenticated);
 
     // Set up SSE headers
     res.writeHead(200, {

@@ -12,6 +12,7 @@ import { prisma } from "../db";
 import { executeTask, executeTaskStream } from "./ai-executor";
 import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
+import { resolveApiKey } from "./api-key-resolver";
 
 // --- Types ---
 
@@ -92,18 +93,6 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 }
 \`\`\``;
 
-// --- API Key Resolution ---
-
-/** Maps apiType to the env var name and common aliases users might pass */
-const API_KEY_ALIASES: Record<string, string[]> = {
-  anthropic: ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-  google: ["google", "gemini", "GOOGLE_API_KEY"],
-  openai: ["openai", "gpt", "OPENAI_API_KEY"],
-  perplexity: ["perplexity", "PERPLEXITY_API_KEY"],
-  xai: ["xai", "grok", "XAI_API_KEY"],
-  deepseek: ["deepseek", "DEEPSEEK_API_KEY"],
-};
-
 // --- Core Functions ---
 
 /**
@@ -146,50 +135,6 @@ function parseLeaderResponse(output: string): SubTask[] {
       `Failed to parse Leader response: ${err instanceof Error ? err.message : String(err)}\nRaw output: ${output}`
     );
   }
-}
-
-/** Maps apiType to the corresponding environment variable name */
-const ENV_KEY_MAP: Record<string, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  google: "GOOGLE_API_KEY",
-  openai: "OPENAI_API_KEY",
-  perplexity: "PERPLEXITY_API_KEY",
-  xai: "XAI_API_KEY",
-  deepseek: "DEEPSEEK_API_KEY",
-};
-
-/**
- * Resolve the API key for a given provider using its apiType.
- * When authenticated (valid Clerk token): env vars first, then user-supplied keys.
- * When NOT authenticated: user-supplied keys only (env vars are not exposed).
- */
-function resolveApiKey(
-  providerName: string,
-  apiType: string,
-  apiKeys?: Record<string, string>,
-  authenticated?: boolean
-): string | undefined {
-  // 1. Check environment variables only when authenticated via Clerk
-  if (authenticated) {
-    const envVar = ENV_KEY_MAP[apiType];
-    if (envVar && process.env[envVar]) {
-      return process.env[envVar];
-    }
-  }
-
-  // 2. Fall back to user-supplied apiKeys from request
-  if (apiKeys) {
-    // Direct match by provider name
-    if (apiKeys[providerName]) return apiKeys[providerName];
-
-    // Look up by apiType aliases
-    const aliases = API_KEY_ALIASES[apiType] || [];
-    for (const alias of aliases) {
-      if (apiKeys[alias]) return apiKeys[alias];
-    }
-  }
-
-  return undefined;
 }
 
 /**

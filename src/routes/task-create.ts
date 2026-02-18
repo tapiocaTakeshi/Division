@@ -4,6 +4,7 @@ import { z } from "zod";
 import { executeTask } from "../services/ai-executor";
 import { asyncHandler } from "../middleware/async-handler";
 import { logger } from "../utils/logger";
+import { resolveApiKey } from "../services/api-key-resolver";
 
 export const taskCreateRouter = Router();
 
@@ -62,48 +63,6 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
   ]
 }
 \`\`\``;
-
-// --- API Key Resolution (same logic as orchestrator) ---
-
-const ENV_KEY_MAP: Record<string, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  google: "GOOGLE_API_KEY",
-  openai: "OPENAI_API_KEY",
-  perplexity: "PERPLEXITY_API_KEY",
-  xai: "XAI_API_KEY",
-  deepseek: "DEEPSEEK_API_KEY",
-};
-
-const API_KEY_ALIASES: Record<string, string[]> = {
-  anthropic: ["anthropic", "claude", "ANTHROPIC_API_KEY"],
-  google: ["google", "gemini", "GOOGLE_API_KEY"],
-  openai: ["openai", "gpt", "OPENAI_API_KEY"],
-  perplexity: ["perplexity", "PERPLEXITY_API_KEY"],
-  xai: ["xai", "grok", "XAI_API_KEY"],
-  deepseek: ["deepseek", "DEEPSEEK_API_KEY"],
-};
-
-function resolveApiKey(
-  providerName: string,
-  apiType: string,
-  apiKeys?: Record<string, string>,
-  authenticated?: boolean
-): string | undefined {
-  if (authenticated) {
-    const envVar = ENV_KEY_MAP[apiType];
-    if (envVar && process.env[envVar]) {
-      return process.env[envVar];
-    }
-  }
-  if (apiKeys) {
-    if (apiKeys[providerName]) return apiKeys[providerName];
-    const aliases = API_KEY_ALIASES[apiType] || [];
-    for (const alias of aliases) {
-      if (apiKeys[alias]) return apiKeys[alias];
-    }
-  }
-  return undefined;
-}
 
 // --- JSON Extraction ---
 

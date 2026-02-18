@@ -67,20 +67,7 @@ function truncate(text: string, maxLen = 200): string {
   return text.slice(0, maxLen) + `... (${text.length} chars)`;
 }
 
-/** Maps apiType to the corresponding environment variable name */
-const ENV_KEY_MAP: Record<string, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  google: "GOOGLE_API_KEY",
-  openai: "OPENAI_API_KEY",
-  perplexity: "PERPLEXITY_API_KEY",
-  xai: "XAI_API_KEY",
-  deepseek: "DEEPSEEK_API_KEY",
-  mistral: "MISTRAL_API_KEY",
-  meta: "META_API_KEY",
-  qwen: "QWEN_API_KEY",
-  cohere: "COHERE_API_KEY",
-  moonshot: "MOONSHOT_API_KEY",
-};
+import { ENV_KEY_MAP } from "./api-key-resolver";
 
 /** API types that use the OpenAI-compatible chat completions format */
 const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {

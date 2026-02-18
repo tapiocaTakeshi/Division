@@ -14,7 +14,6 @@ import { apiKeyRouter } from "./routes/api-keys";
 import { clerkMiddleware, divisionAuth } from "./middleware/auth";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
@@ -59,8 +58,9 @@ app.use(
 
 // Only start server when running locally (not on Vercel)
 if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`Division API running on port ${PORT}`);
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => {
+    console.log(`Division API running on port ${port}`);
   });
 }
 

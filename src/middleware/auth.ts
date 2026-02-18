@@ -109,12 +109,17 @@ export function divisionAuth(req: Request, res: Response, next: NextFunction) {
   if (token && token.startsWith("ak_")) {
     // Try DB first, then env var fallback
     validateDbApiKey(token)
-      .then((valid) => {
-        res.locals.authenticated = valid || validateEnvApiKey(token);
+      .then((dbValid) => {
+        const envValid = validateEnvApiKey(token);
+        res.locals.authenticated = dbValid || envValid;
+        console.log(`[divisionAuth] ak_ key: db=${dbValid}, env=${envValid}, authenticated=${res.locals.authenticated}`);
         next();
       })
-      .catch(() => {
-        res.locals.authenticated = validateEnvApiKey(token);
+      .catch((err) => {
+        const envValid = validateEnvApiKey(token);
+        res.locals.authenticated = envValid;
+        console.error(`[divisionAuth] DB check failed:`, err);
+        console.log(`[divisionAuth] ak_ key fallback: env=${envValid}, authenticated=${res.locals.authenticated}`);
         next();
       });
     return;

@@ -27,7 +27,7 @@ import { prisma } from "../db";
  * the "Publishable key is missing" error.
  */
 const isClerkConfigured =
-  !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
+  !!process.env.CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
 
 /**
  * Wraps Clerk's middleware so it only runs when Clerk env vars are present.

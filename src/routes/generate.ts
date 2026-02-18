@@ -49,9 +49,12 @@ function resolveApiKey(
   apiKeys?: Record<string, string>,
   authenticated?: boolean
 ): string | undefined {
+  console.log(`[resolveApiKey] apiType=${apiType}, authenticated=${authenticated}, hasApiKeys=${!!apiKeys}`);
   if (authenticated) {
     const envVar = ENV_KEY_MAP[apiType];
-    if (envVar && process.env[envVar]) {
+    const hasEnvVar = !!(envVar && process.env[envVar]);
+    console.log(`[resolveApiKey] envVar=${envVar}, exists=${hasEnvVar}`);
+    if (hasEnvVar) {
       return process.env[envVar];
     }
   }

@@ -17,16 +17,17 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 // --- Configuration ---
-const API_BASE_URL =
-  process.env.DIVISION_API_URL || "https://api.division.he-ro.jp";
-const DIVISION_API_KEY = process.env.DIVISION_API_KEY || "";
+function getApiBaseUrl(): string {
+  return process.env.DIVISION_API_URL || "https://api.division.he-ro.jp";
+}
 
 function getHeaders(): Record<string, string> {
+  const apiKey = process.env.DIVISION_API_KEY || "";
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (DIVISION_API_KEY) {
-    headers["Authorization"] = `Bearer ${DIVISION_API_KEY}`;
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
   }
   return headers;
 }
@@ -36,7 +37,7 @@ async function apiRequest(
   path: string,
   body?: unknown
 ): Promise<unknown> {
-  const url = `${API_BASE_URL}${path}`;
+  const url = `${getApiBaseUrl()}${path}`;
   const options: RequestInit = {
     method,
     headers: getHeaders(),
@@ -220,7 +221,7 @@ server.tool(
         content: [
           {
             type: "text" as const,
-            text: `✅ Division API is **${result.status}** (${result.service}) at ${API_BASE_URL}`,
+            text: `✅ Division API is **${result.status}** (${result.service}) at ${getApiBaseUrl()}`,
           },
         ],
       };

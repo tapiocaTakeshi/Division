@@ -2,10 +2,13 @@ import fs from "fs";
 import path from "path";
 
 // Vercel serverless: /var/task is read-only, use /tmp for logs
-const isVercel = !!process.env.VERCEL;
-const LOG_DIR = isVercel
-  ? "/tmp/logs"
-  : path.join(process.cwd(), "logs");
+function getLogDir(): string {
+  return process.env.VERCEL
+    ? "/tmp/logs"
+    : path.join(process.cwd(), "logs");
+}
+
+const LOG_DIR = getLogDir();
 const LOG_FILE = path.join(LOG_DIR, "ai.log");
 
 // Ensure log directory exists (silently skip on failure)

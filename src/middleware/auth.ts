@@ -25,16 +25,18 @@ import { prisma } from "../db";
  * Check whether Clerk is configured by looking for required env vars.
  * When deploying without Clerk (API-key-only mode), this avoids
  * the "Publishable key is missing" error.
+ * Read dynamically so env var changes are reflected without restart.
  */
-const isClerkConfigured =
-  !!process.env.CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
+function isClerkConfigured(): boolean {
+  return !!process.env.CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
+}
 
 /**
  * Wraps Clerk's middleware so it only runs when Clerk env vars are present.
  * When Clerk is not configured, this is a no-op passthrough.
  */
 export function clerkMiddleware() {
-  if (isClerkConfigured) {
+  if (isClerkConfigured()) {
     return _clerkMiddleware();
   }
   // No-op: skip Clerk when keys aren't configured
@@ -119,7 +121,7 @@ export function divisionAuth(req: Request, res: Response, next: NextFunction) {
   }
 
   // 2. Fall back to Clerk authentication
-  if (isClerkConfigured) {
+  if (isClerkConfigured()) {
     try {
       const auth = getAuth(req);
       res.locals.authenticated = !!auth.userId;

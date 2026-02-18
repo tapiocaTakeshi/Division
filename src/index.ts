@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Clerk authentication (adds auth state to all requests)
+// Authentication layer (Clerk when configured, no-op otherwise)
 app.use(clerkMiddleware());
 
 // Health check

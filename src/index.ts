@@ -25,6 +25,27 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "division-api" });
 });
 
+// Debug: check auth state and env var availability (temporary)
+app.get("/debug/auth", divisionAuth, (_req, res) => {
+  const envKeys = [
+    "DIVISION_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENAI_API_KEY",
+    "PERPLEXITY_API_KEY",
+    "XAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+  ];
+  const envStatus: Record<string, boolean> = {};
+  for (const key of envKeys) {
+    envStatus[key] = !!process.env[key];
+  }
+  res.json({
+    authenticated: !!res.locals.authenticated,
+    envVars: envStatus,
+  });
+});
+
 // Public API routes (no auth required)
 app.use("/api/providers", providerRouter);
 app.use("/api/roles", roleRouter);

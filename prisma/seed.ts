@@ -26,7 +26,7 @@ async function main() {
     displayName: "Claude Opus 4.6 (Anthropic)",
     apiBaseUrl: "https://api.anthropic.com",
     apiType: "anthropic",
-    modelId: "claude-opus-4-20260205",
+    modelId: "claude-opus-4-6",
     description: "Latest & most intelligent Claude — agents & deep reasoning",
   });
 

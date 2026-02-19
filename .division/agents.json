@@ -1,31 +1,39 @@
 {
-  "name": "Default Division Project",
-  "projectId": "8b15df7b-68cc-4c46-b587-7078f0f12e31",
-  "agents": [
+  "activeProjectIds": [
+    "d4926dfe-74a8-4477-b8e0-fdb842375ef2"
+  ],
+  "projects": [
     {
-      "role": "leader",
-      "provider": "openAI",
-      "model": "gpt-4o"
-    },
-    {
-      "role": "coder",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-20250514"
-    },
-    {
-      "role": "planner",
-      "provider": "gemini",
-      "model": "gemini-2.0-flash"
-    },
-    {
-      "role": "search",
-      "provider": "openAI",
-      "model": "gpt-4o"
-    },
-    {
-      "role": "design",
-      "provider": "gemini",
-      "model": "gemini-2.0-flash"
+      "id": "d4926dfe-74a8-4477-b8e0-fdb842375ef2",
+      "name": "Default Division Project",
+      "projectId": "8b15df7b-68cc-4c46-b587-7078f0f12e31",
+      "agents": [
+        {
+          "role": "leader",
+          "provider": "openAI",
+          "model": "gpt-4o"
+        },
+        {
+          "role": "coder",
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-20250514"
+        },
+        {
+          "role": "planner",
+          "provider": "gemini",
+          "model": "gemini-2.0-flash"
+        },
+        {
+          "role": "search",
+          "provider": "openAI",
+          "model": "gpt-4o"
+        },
+        {
+          "role": "design",
+          "provider": "gemini",
+          "model": "gemini-2.0-flash"
+        }
+      ]
     }
   ]
 }

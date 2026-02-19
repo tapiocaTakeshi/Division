@@ -189,7 +189,10 @@ function buildRequestBody(
       },
       body: {
         model: modelId,
-        max_tokens: maxTokens,
+        // OpenAI's newer models require max_completion_tokens; other compatible providers use max_tokens
+        ...(apiType === "openai"
+          ? { max_completion_tokens: maxTokens }
+          : { max_tokens: maxTokens }),
         messages,
       },
     };

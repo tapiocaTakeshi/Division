@@ -243,4 +243,10 @@ export const ROLE_META: Record<RoleSlug, { label: string; color: string; icon: s
     icon: '🎨',
     strengths: ['画像生成', 'イラスト', 'ビジュアル'],
   },
+  ideaman: {
+    label: 'Idea Man',
+    color: '#f97316',
+    icon: '💡',
+    strengths: ['ブレスト', 'アイデア出し', '発想力'],
+  },
 }

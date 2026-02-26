@@ -3,8 +3,8 @@ import { useOrchestraStore, ROLE_META } from '../stores/orchestraStore'
 import type { PipelineStep, RoleSlug } from '../types'
 
 const AVAILABLE_PROVIDERS = [
-  { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'Claude', roles: ['coding', 'writing', 'review'] },
-  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'Claude', roles: ['coding', 'writing', 'review', 'planning'] },
+  { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'Claude', roles: ['coding', 'writing', 'review', 'ideaman'] },
+  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'Claude', roles: ['coding', 'writing', 'review', 'planning', 'ideaman'] },
   { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'Gemini', roles: ['planning', 'coding', 'writing'] },
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'Gemini', roles: ['planning', 'writing'] },
   { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'GPT', roles: ['coding', 'review', 'writing'] },

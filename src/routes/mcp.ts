@@ -87,6 +87,52 @@ const TOOLS = [
       properties: {},
     },
   },
+  {
+    name: "division_list_agents",
+    description:
+      "List all agents (AI providers assigned to roles) for a project. Shows each agent's role, provider, and model.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Project ID to list agents for (default: demo-project-001)",
+          default: "demo-project-001",
+        },
+      },
+    },
+  },
+  {
+    name: "division_set_agent",
+    description:
+      "Assign an AI provider to a role in a project. Creates or updates the agent assignment.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Project ID (default: demo-project-001)",
+          default: "demo-project-001",
+        },
+        role: {
+          type: "string",
+          description:
+            "Role slug to assign (e.g. leader, coding, search, planning, writing, review, image, ideaman, deep-research)",
+        },
+        provider: {
+          type: "string",
+          description:
+            "Provider name to assign to the role (e.g. claude-sonnet-4, gemini-2.0-flash, gpt-4o, perplexity-sonar-pro)",
+        },
+        priority: {
+          type: "number",
+          description: "Priority of this assignment (higher = preferred). Default: 0",
+          default: 0,
+        },
+      },
+      required: ["role", "provider"],
+    },
+  },
 ];
 
 // ===== Tool Handlers =====
@@ -230,6 +276,131 @@ async function handleHealth() {
   ];
 }
 
+async function handleListAgents(args: Record<string, unknown>) {
+  const projectId = (args.projectId as string) || "demo-project-001";
+
+  const assignments = await prisma.roleAssignment.findMany({
+    where: { projectId },
+    include: { role: true, provider: true },
+    orderBy: [{ role: { name: "asc" } }, { priority: "desc" }],
+  });
+
+  if (assignments.length === 0) {
+    return [
+      {
+        type: "text",
+        text: `No agents configured for project \`${projectId}\`. Use \`division_set_agent\` to assign AI providers to roles.`,
+      },
+    ];
+  }
+
+  const lines: string[] = [`## Agents for Project \`${projectId}\`\n`];
+
+  // Group by role
+  const byRole: Record<string, typeof assignments> = {};
+  for (const a of assignments) {
+    const key = a.role.slug;
+    if (!byRole[key]) byRole[key] = [];
+    byRole[key].push(a);
+  }
+
+  for (const [roleSlug, roleAssignments] of Object.entries(byRole)) {
+    const role = roleAssignments[0].role;
+    lines.push(`### ${role.name} (\`${roleSlug}\`)`);
+    if (role.description) lines.push(`> ${role.description}`);
+    for (const a of roleAssignments) {
+      lines.push(
+        `- **${a.provider.displayName}** (\`${a.provider.name}\`) → ${a.provider.modelId} (priority: ${a.priority})`
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push(`---`);
+  lines.push(`Total: ${assignments.length} agent(s) across ${Object.keys(byRole).length} role(s)`);
+
+  return [{ type: "text", text: lines.join("\n") }];
+}
+
+async function handleSetAgent(args: Record<string, unknown>) {
+  const projectId = (args.projectId as string) || "demo-project-001";
+  const roleSlug = args.role as string;
+  const providerName = args.provider as string;
+  const priority = (args.priority as number) ?? 0;
+
+  if (!roleSlug) {
+    return [{ type: "text", text: "Error: `role` is required." }];
+  }
+  if (!providerName) {
+    return [{ type: "text", text: "Error: `provider` is required." }];
+  }
+
+  // Find role
+  const role = await prisma.role.findUnique({ where: { slug: roleSlug } });
+  if (!role) {
+    const allRoles = await prisma.role.findMany({ select: { slug: true, name: true } });
+    const available = allRoles.map((r) => `\`${r.slug}\` (${r.name})`).join(", ");
+    return [
+      {
+        type: "text",
+        text: `Error: Role \`${roleSlug}\` not found.\n\nAvailable roles: ${available}`,
+      },
+    ];
+  }
+
+  // Find provider
+  const provider = await prisma.provider.findUnique({ where: { name: providerName } });
+  if (!provider) {
+    const allProviders = await prisma.provider.findMany({
+      where: { isEnabled: true },
+      select: { name: true, displayName: true, modelId: true },
+    });
+    const available = allProviders
+      .map((p) => `\`${p.name}\` (${p.displayName} — ${p.modelId})`)
+      .join("\n- ");
+    return [
+      {
+        type: "text",
+        text: `Error: Provider \`${providerName}\` not found.\n\nAvailable providers:\n- ${available}`,
+      },
+    ];
+  }
+
+  // Upsert assignment
+  const existing = await prisma.roleAssignment.findFirst({
+    where: { projectId, roleId: role.id, providerId: provider.id },
+  });
+
+  if (existing) {
+    await prisma.roleAssignment.update({
+      where: { id: existing.id },
+      data: { priority },
+    });
+    return [
+      {
+        type: "text",
+        text: `✅ Updated agent: **${provider.displayName}** (\`${provider.name}\`) assigned to role **${role.name}** (\`${roleSlug}\`) with priority ${priority} in project \`${projectId}\`.`,
+      },
+    ];
+  }
+
+  await prisma.roleAssignment.create({
+    data: {
+      projectId,
+      roleId: role.id,
+      providerId: provider.id,
+      priority,
+    },
+  });
+
+  return [
+    {
+      type: "text",
+      text: `✅ Agent assigned: **${provider.displayName}** (\`${provider.name}\`) → role **${role.name}** (\`${roleSlug}\`) with priority ${priority} in project \`${projectId}\`.`,
+    },
+  ];
+}
+
 // ===== JSON-RPC Handler =====
 
 interface JsonRpcRequest {
@@ -278,7 +449,18 @@ async function handleJsonRpc(
         result: {
           protocolVersion: "2024-11-05",
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "division", version: "1.0.0" },
+          serverInfo: {
+            name: "division",
+            version: "1.0.0",
+            agents: {
+              description: "Multi-agent orchestration with role-based task routing",
+              availableRoles: [
+                "leader", "coding", "search", "planning", "writing",
+                "review", "image", "ideaman", "deep-research",
+              ],
+              managementTools: ["division_list_agents", "division_set_agent"],
+            },
+          },
         },
       };
 
@@ -311,6 +493,12 @@ async function handleJsonRpc(
             break;
           case "division_health":
             content = await handleHealth();
+            break;
+          case "division_list_agents":
+            content = await handleListAgents(args);
+            break;
+          case "division_set_agent":
+            content = await handleSetAgent(args);
             break;
           default:
             return {
@@ -394,6 +582,14 @@ router.get("/", (_req: Request, res: Response) => {
     version: "1.0.0",
     description: "Division API — AI agent orchestration MCP server",
     tools: TOOLS.map((t) => t.name),
+    agents: {
+      description: "Multi-agent orchestration with role-based task routing",
+      availableRoles: [
+        "leader", "coding", "search", "planning", "writing",
+        "review", "image", "ideaman", "deep-research",
+      ],
+      managementTools: ["division_list_agents", "division_set_agent"],
+    },
     endpoint: "POST /mcp",
     usage: 'Send JSON-RPC 2.0 requests to POST /mcp with method "initialize" to start.',
   });

@@ -9,6 +9,8 @@
  * Tools:
  *   - division_run: Execute AI agent orchestration
  *   - division_list_models: List available AI models
+ *   - division_list_agents: List agents with their assigned roles
+ *   - division_set_agent: Assign a provider to a role
  *   - division_health: Check API health
  */
 
@@ -191,6 +193,219 @@ server.tool(
 
       return {
         content: [{ type: "text" as const, text: lines.join("\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// Tool: division_list_agents
+server.tool(
+  "division_list_agents",
+  "List all agents (AI providers assigned to roles) for a project. Shows each agent's role, provider, and model.",
+  {
+    projectId: z
+      .string()
+      .default("demo-project-001")
+      .describe("Project ID to list agents for (default: demo-project-001)"),
+  },
+  async ({ projectId }) => {
+    try {
+      const result = (await apiRequest(
+        "GET",
+        `/api/assignments?projectId=${encodeURIComponent(projectId)}`
+      )) as Array<{
+        id: string;
+        projectId: string;
+        priority: number;
+        role: { slug: string; name: string; description?: string };
+        provider: {
+          name: string;
+          displayName: string;
+          modelId: string;
+          apiType: string;
+        };
+      }>;
+
+      if (!result || result.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No agents configured for project \`${projectId}\`. Use \`division_set_agent\` to assign AI providers to roles.`,
+            },
+          ],
+        };
+      }
+
+      const lines: string[] = [`## Agents for Project \`${projectId}\`\n`];
+
+      // Group by role
+      const byRole: Record<string, typeof result> = {};
+      for (const a of result) {
+        const key = a.role.slug;
+        if (!byRole[key]) byRole[key] = [];
+        byRole[key].push(a);
+      }
+
+      for (const [roleSlug, roleAssignments] of Object.entries(byRole)) {
+        const role = roleAssignments[0].role;
+        lines.push(`### ${role.name} (\`${roleSlug}\`)`);
+        if (role.description) lines.push(`> ${role.description}`);
+        for (const a of roleAssignments) {
+          lines.push(
+            `- **${a.provider.displayName}** (\`${a.provider.name}\`) → ${a.provider.modelId} (priority: ${a.priority})`
+          );
+        }
+        lines.push("");
+      }
+
+      lines.push(`---`);
+      lines.push(
+        `Total: ${result.length} agent(s) across ${Object.keys(byRole).length} role(s)`
+      );
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// Tool: division_set_agent
+server.tool(
+  "division_set_agent",
+  "Assign an AI provider to a role in a project. Creates or updates the agent assignment.",
+  {
+    projectId: z
+      .string()
+      .default("demo-project-001")
+      .describe("Project ID (default: demo-project-001)"),
+    role: z
+      .string()
+      .describe(
+        "Role slug to assign (e.g. leader, coding, search, planning, writing, review, image, ideaman, deep-research)"
+      ),
+    provider: z
+      .string()
+      .describe(
+        "Provider name to assign to the role (e.g. claude-sonnet-4, gemini-2.0-flash, gpt-4o, perplexity-sonar-pro)"
+      ),
+    priority: z
+      .number()
+      .default(0)
+      .describe("Priority of this assignment (higher = preferred). Default: 0"),
+  },
+  async ({ projectId, role, provider, priority }) => {
+    try {
+      // First, get the role ID
+      const roles = (await apiRequest("GET", "/api/roles")) as Array<{
+        id: string;
+        slug: string;
+        name: string;
+      }>;
+      const foundRole = roles.find((r) => r.slug === role);
+      if (!foundRole) {
+        const available = roles
+          .map((r) => `\`${r.slug}\` (${r.name})`)
+          .join(", ");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: Role \`${role}\` not found.\n\nAvailable roles: ${available}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Get the provider ID
+      const providers = (await apiRequest("GET", "/api/models")) as {
+        providers: Array<{
+          id: string;
+          name: string;
+          displayName: string;
+          modelId: string;
+        }>;
+      };
+      const foundProvider = providers.providers.find((p) => p.name === provider);
+      if (!foundProvider) {
+        const available = providers.providers
+          .map((p) => `\`${p.name}\` (${p.displayName} — ${p.modelId})`)
+          .join("\n- ");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: Provider \`${provider}\` not found.\n\nAvailable providers:\n- ${available}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Check for existing assignment and update or create
+      const existingAssignments = (await apiRequest(
+        "GET",
+        `/api/assignments?projectId=${encodeURIComponent(projectId)}`
+      )) as Array<{
+        id: string;
+        roleId: string;
+        providerId: string;
+      }>;
+
+      const existing = existingAssignments.find(
+        (a) => a.roleId === foundRole.id && a.providerId === foundProvider.id
+      );
+
+      if (existing) {
+        await apiRequest("PUT", `/api/assignments/${existing.id}`, {
+          priority,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `✅ Updated agent: **${foundProvider.displayName}** (\`${provider}\`) assigned to role **${foundRole.name}** (\`${role}\`) with priority ${priority} in project \`${projectId}\`.`,
+            },
+          ],
+        };
+      }
+
+      await apiRequest("POST", "/api/assignments", {
+        projectId,
+        roleId: foundRole.id,
+        providerId: foundProvider.id,
+        priority,
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `✅ Agent assigned: **${foundProvider.displayName}** (\`${provider}\`) → role **${foundRole.name}** (\`${role}\`) with priority ${priority} in project \`${projectId}\`.`,
+          },
+        ],
       };
     } catch (err) {
       return {

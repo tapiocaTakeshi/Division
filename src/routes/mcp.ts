@@ -137,14 +137,15 @@ const TOOLS = [
 
 // ===== Tool Handlers =====
 
-async function handleDivisionRun(args: Record<string, unknown>) {
+async function handleDivisionRun(args: Record<string, unknown>, authenticated: boolean) {
   const input = args.input as string;
   const projectId = (args.projectId as string) || "demo-project-001";
   const overrides = args.overrides as Record<string, string> | undefined;
 
-  const request: { projectId: string; input: string; overrides?: Record<string, string> } = {
+  const request: { projectId: string; input: string; overrides?: Record<string, string>; authenticated?: boolean } = {
     projectId,
     input,
+    authenticated,
   };
   if (overrides && Object.keys(overrides).length > 0) {
     request.overrides = overrides;
@@ -213,14 +214,15 @@ async function handleListModels() {
   return [{ type: "text", text: lines.join("\n") }];
 }
 
-async function handleDivisionStream(args: Record<string, unknown>) {
+async function handleDivisionStream(args: Record<string, unknown>, authenticated: boolean) {
   const input = args.input as string;
   const projectId = (args.projectId as string) || "demo-project-001";
   const overrides = args.overrides as Record<string, string> | undefined;
 
-  const request: { projectId: string; input: string; overrides?: Record<string, string> } = {
+  const request: { projectId: string; input: string; overrides?: Record<string, string>; authenticated?: boolean } = {
     projectId,
     input,
+    authenticated,
   };
   if (overrides && Object.keys(overrides).length > 0) {
     request.overrides = overrides;
@@ -436,7 +438,8 @@ cleanupInterval.unref(); // Don't prevent process exit
 
 async function handleJsonRpc(
   req: JsonRpcRequest,
-  sessionId: string
+  sessionId: string,
+  authenticated: boolean
 ): Promise<JsonRpcResponse> {
   const id = req.id ?? null;
 
@@ -483,10 +486,10 @@ async function handleJsonRpc(
         let content;
         switch (toolName) {
           case "division_run":
-            content = await handleDivisionRun(args);
+            content = await handleDivisionRun(args, authenticated);
             break;
           case "division_stream":
-            content = await handleDivisionStream(args);
+            content = await handleDivisionStream(args, authenticated);
             break;
           case "division_list_models":
             content = await handleListModels();
@@ -550,10 +553,12 @@ router.post("/", async (req: Request, res: Response) => {
 
     const body = req.body;
 
+    const authenticated = !!res.locals.authenticated;
+
     // Handle batch requests
     if (Array.isArray(body)) {
       const responses = await Promise.all(
-        body.map((r: JsonRpcRequest) => handleJsonRpc(r, sessionId!))
+        body.map((r: JsonRpcRequest) => handleJsonRpc(r, sessionId!, authenticated))
       );
       // Filter out notifications (no id)
       const filtered = responses.filter((r) => r.id !== null);
@@ -562,7 +567,7 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const response = await handleJsonRpc(body, sessionId);
+    const response = await handleJsonRpc(body, sessionId, authenticated);
     res.setHeader("mcp-session-id", sessionId);
     res.json(response);
   } catch (err) {

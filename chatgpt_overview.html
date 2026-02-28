@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatGPT Overview</title>
+    <style>
+      :root {
+        --primary-color: #10a37f;
+        --bg-color: #ffffff;
+        --text-main: #343541;
+        --text-muted: #6e6e80;
+        --section-bg: #f7f7f8;
+        --border-color: #e5e5e5;
+        --shadow:
+          0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg-color: #343541;
+          --text-main: #d1d5db;
+          --text-muted: #9ca3af;
+          --section-bg: #444654;
+          --border-color: #565869;
+          --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.3);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family:
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        line-height: 1.6;
+        color: var(--text-main);
+        background-color: var(--bg-color);
+        transition:
+          background-color 0.3s,
+          color 0.3s;
+      }
+
+      header {
+        background-color: var(--bg-color);
+        border-bottom: 1px solid var(--border-color);
+        padding: 2rem;
+        text-align: center;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+
+      h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        background: linear-gradient(135deg, var(--primary-color), #0e8c6d);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .subtitle {
+        color: var(--text-muted);
+        font-size: 1.1rem;
+      }
+
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 3rem 2rem;
+      }
+
+      section {
+        margin-bottom: 4rem;
+        opacity: 0;
+        transform: translateY(20px);
+        animation: fadeIn 0.6s ease-out forwards;
+      }
+
+      @keyframes fadeIn {
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      section:nth-child(1) {
+        animation-delay: 0.1s;
+      }
+      section:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+      section:nth-child(3) {
+        animation-delay: 0.3s;
+      }
+
+      h2 {
+        font-size: 1.8rem;
+        margin-bottom: 1.5rem;
+        color: var(--primary-color);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      h2::before {
+        content: "";
+        display: block;
+        width: 4px;
+        height: 1.5rem;
+        background-color: var(--primary-color);
+        border-radius: 2px;
+      }
+
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1.5rem;
+      }
+
+      .card {
+        background-color: var(--section-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.5rem;
+        transition:
+          transform 0.2s,
+          box-shadow 0.2s;
+      }
+
+      .card:hover {
+        transform: translateY(-4px);
+        box-shadow: var(--shadow);
+      }
+
+      .card h3 {
+        font-size: 1.2rem;
+        margin-bottom: 0.75rem;
+        color: var(--text-main);
+      }
+
+      .card p {
+        color: var(--text-muted);
+        font-size: 0.95rem;
+      }
+
+      ul.feature-list {
+        list-style: none;
+      }
+
+      ul.feature-list li {
+        position: relative;
+        padding-left: 2rem;
+        margin-bottom: 1rem;
+      }
+
+      ul.feature-list li::before {
+        content: "✓";
+        position: absolute;
+        left: 0;
+        color: var(--primary-color);
+        font-weight: bold;
+        font-size: 1.2rem;
+      }
+
+      footer {
+        text-align: center;
+        padding: 2rem;
+        border-top: 1px solid var(--border-color);
+        color: var(--text-muted);
+        margin-top: 4rem;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        background-color: var(--primary-color);
+        color: white;
+        border-radius: 9999px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        margin-bottom: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="badge">OpenAI製 対話型AI</div>
+      <h1>ChatGPT 概要</h1>
+      <p class="subtitle">
+        自然な対話で人間のタスクを強力にサポートするAIアシスタント
+      </p>
+    </header>
+
+    <div class="container">
+      <section>
+        <h2>ChatGPTとは？</h2>
+        <p>
+          ChatGPTは、OpenAIによって開発された高度な自然言語処理モデルです。
+          大量のテキストデータを学習しており、人間の言葉を理解し、人間が書いたような自然な文章を生成することができます。
+          単なる検索エンジンの代替ではなく、文脈を理解した上での対話、推論、創作など、多岐にわたる知的タスクをサポートします。
+        </p>
+      </section>
+
+      <section>
+        <h2>主な特徴</h2>
+        <ul class="feature-list">
+          <li>
+            <strong>高度な自然言語処理能力</strong><br />
+            <span style="color: var(--text-muted)"
+              >文脈を理解し、前後の会話のつながりを維持したまま自然な回答を生成します。</span
+            >
+          </li>
+          <li>
+            <strong>多様なタスク対応</strong><br />
+            <span style="color: var(--text-muted)"
+              >翻訳、要約、プログラミングコードの生成、物語の執筆など、幅広い作業を自動化・支援します。</span
+            >
+          </li>
+          <li>
+            <strong>継続的な進化 (GPT-4 / GPT-4o など)</strong><br />
+            <span style="color: var(--text-muted)"
+              >画像入力対応（マルチモーダル）、高度な論理的推論、音声対話など、アップデートにより常に進化しています。</span
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>想定されるユースケース</h2>
+        <div class="card-grid">
+          <div class="card">
+            <h3>💻 プログラミング支援</h3>
+            <p>
+              コードの生成、バグの発見と修正案の提示、新しいライブラリやフレームワークの使い方解説など、エンジニアの生産性を劇的に向上させます。
+            </p>
+          </div>
+          <div class="card">
+            <h3>📝 コンテンツ作成・壁打ち</h3>
+            <p>
+              ブログ記事の構成案作成、メールの文面作成、アイデアのブレインストーミングなど、0から1を生み出す作業の壁打ち相手として機能します。
+            </p>
+          </div>
+          <div class="card">
+            <h3>📚 学習サポート・分析</h3>
+            <p>
+              難解な概念を小学生にもわかるように説明したり、長文ドキュメントの要約、外国語の学習アシスタントとして活用できます。
+            </p>
+          </div>
+          <div class="card">
+            <h3>⚙️ 業務自動化 (API)</h3>
+            <p>
+              自社サービスに組み込んでカスタマーサポート用チャットボットを構築したり、社内データに基づいたQ&Aシステムを作ることができます。
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer>
+      <p>&copy; 2026 AI Insight. Generated directly for demonstration.</p>
+    </footer>
+
+    <script>
+      // シンプルなスクロールアニメーション（拡張用）
+      document.addEventListener("DOMContentLoaded", () => {
+        console.log("ChatGPT Overview page loaded.");
+      });
+    </script>
+  </body>
+</html>

@@ -15,7 +15,10 @@ const updateRoleSchema = createRoleSchema.partial();
 
 // List all roles
 roleRouter.get("/", asyncHandler(async (_req: Request, res: Response) => {
-  const roles = await prisma.role.findMany({ orderBy: { name: "asc" } });
+  const roles = await prisma.role.findMany({
+    orderBy: { name: "asc" },
+    include: { assignments: { include: { provider: true } } },
+  });
   res.json(roles);
 }));
 

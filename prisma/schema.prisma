@@ -70,6 +70,7 @@ model Task {
   projectId   String
   sessionId   String   // Groups tasks created in the same request
   role        String   // Role slug (e.g. "coding", "search")
+  mode        String   @default("chat") // "chat" | "computer_use" | "function_calling"
   title       String
   description String
   reason      String?  // Why this task is needed

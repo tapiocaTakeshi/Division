@@ -48,16 +48,38 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 8. 1つのタスクに複数の作業を詰め込まず、できるだけ細かく分割してください
 9. 調査・計画・実装・レビューなど各フェーズを独立したタスクにしてください
 10. 同じロールでも異なる観点・対象であれば別タスクに分けてください
+11. 各タスクには、そのタスクの性質に応じた "mode" を指定してください。
+    - "chat" (デフォルト): 通常の文章生成等のテキストベースのタスク
+    - "computer_use": 実際にターミナル等でコードを実行・テストする必要があるタスク（例: codingやreview時等）
+    - "function_calling": 検索やファイルの読み込み等、外部ツールを利用して情報収集するタスク（例: search等）
+12. 単一の層（すべて並列実行など）ではなく、必ず複数層（例: 調査層→計画層→実装層→テスト層）になるように dependsOn を用いて多層的な依存関係（パイプライン）を構築してください。
 
 \`\`\`json
 {
   "tasks": [
     {
       "role": "search",
-      "title": "タスクのタイトル",
-      "description": "具体的な作業内容の説明",
-      "reason": "なぜこのタスクが必要か",
+      "mode": "function_calling",
+      "title": "技術仕様の調査",
+      "description": "実装に必要なAPIや技術の仕様を調査する",
+      "reason": "正確な設計の土台とするため",
       "dependsOn": []
+    },
+    {
+      "role": "planning",
+      "mode": "chat",
+      "title": "アーキテクチャ設計",
+      "description": "調査結果を元にシステム全体の設計図を作成する",
+      "reason": "実装の方向性を決めるため",
+      "dependsOn": [0]
+    },
+    {
+      "role": "coding",
+      "mode": "computer_use",
+      "title": "コアモジュール実装",
+      "description": "設計に沿って中心機能の開発を行う",
+      "reason": "要件の主要部分を実現するため",
+      "dependsOn": [1]
     }
   ]
 }
@@ -200,6 +222,7 @@ taskCreateRouter.post(
     // Parse Leader's response
     let parsedTasks: Array<{
       role: string;
+      mode: string;
       title: string;
       description: string;
       reason?: string;
@@ -215,6 +238,7 @@ taskCreateRouter.post(
       parsedTasks = parsed.tasks.map(
         (t: Record<string, unknown>) => ({
           role: String(t.role || ""),
+          mode: String(t.mode || "chat"),
           title: String(t.title || ""),
           description: String(t.description || t.input || ""),
           reason: t.reason ? String(t.reason) : undefined,
@@ -243,6 +267,7 @@ taskCreateRouter.post(
             projectId,
             sessionId,
             role: task.role,
+            mode: task.mode,
             title: task.title,
             description: task.description,
             reason: task.reason || null,

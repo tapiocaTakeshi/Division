@@ -25,6 +25,7 @@ export interface ExecutionRequest {
     slug: string;
     name: string;
   };
+  mode?: string; // "chat" | "computer_use" | "function_calling"
   /** Override the default system prompt for this request */
   systemPrompt?: string;
   /** Chat history to provide context to the AI (previous user/assistant messages) */
@@ -96,6 +97,7 @@ const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
 };
 
 import { logger } from "../utils/logger";
+import { executeNativeTool } from "./agent-tools";
 
 /**
  * Build the request body for each API type
@@ -313,6 +315,96 @@ function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
   }
 }
 
+async function gatherToolContext(req: ExecutionRequest): Promise<string> {
+  let contextAdded = false;
+  let currentInput = req.input;
+  let toolContext = "## Tool Results (Context gathered automatically before your generation)\\n\\n";
+
+  const systemPrompt = `You are a search and file retrieval agent.
+Your goal is to gather necessary context from the local filesystem to answer the user's request.
+You have the following tools available:
+1. read_file: {"path": "..."}
+2. search_files: {"query": "...", "directory": "."}
+3. list_directory: {"path": "..."}
+
+If you need to use a tool, output a JSON block in this exact format:
+\`\`\`json
+{
+  "tool": "read_file",
+  "args": { "path": "src/main.ts" }
+}
+\`\`\`
+Do not output anything else. I will execute the tool and provide the result.
+
+If you DO NOT need to use any tools, or you have gathered enough information, output EXACTLY:
+\`\`\`json
+{ "done": true }
+\`\`\`
+DO NOT output the final answer to the user. Only output the tool JSON or the done JSON.`;
+
+  let loopCount = 0;
+  const chatHistory = [...(req.chatHistory || [])];
+
+  while (loopCount < 5) {
+    loopCount++;
+    const result = await executeTask({
+      provider: req.provider,
+      config: req.config,
+      input: currentInput,
+      role: req.role,
+      systemPrompt: systemPrompt,
+      chatHistory: chatHistory
+    });
+
+    if (result.status === "error") {
+      logger.error("[Tool Loop] Provider error: " + (result.errorMsg || "unknown error"));
+      break;
+    }
+
+    try {
+      const match = result.output.match(/\`\`\`(?:json)?\s*\n?([\s\S]*?)\n?\`\`\`/);
+      let jsonStr = match ? match[1].trim() : result.output.trim();
+      
+      // Attempt to clean up jsonStr if it wasn't inside markdown blocks
+      if (!jsonStr.startsWith("{")) {
+        const firstBrace = jsonStr.indexOf("{");
+        const lastBrace = jsonStr.lastIndexOf("}");
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+          jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
+        }
+      }
+
+      const parsed = JSON.parse(jsonStr);
+
+      if (parsed.done) {
+        break;
+      }
+
+      if (parsed.tool && parsed.args) {
+        logger.info(`[Tool Loop] Executing tool ${parsed.tool}`);
+        const toolResult = await executeNativeTool(parsed.tool, parsed.args);
+
+        toolContext += `### Tool: ${parsed.tool}\\nArgs: ${JSON.stringify(parsed.args)}\\nResult:\\n${toolResult}\\n\\n`;
+        contextAdded = true;
+
+        chatHistory.push({ role: "user", content: currentInput });
+        chatHistory.push({ role: "assistant", content: result.output });
+        currentInput = `Tool Result for ${parsed.tool}:\\n${toolResult.slice(0, 10000)}\\n\\nWhat other tool do you need? (Or output {"done": true})`;
+      } else {
+        break;
+      }
+    } catch (err) {
+      logger.warn(`[Tool Loop] Failed to parse tool call: ${result.output}`);
+      break;
+    }
+  }
+
+  if (contextAdded) {
+    return `${toolContext}\\n\\n## User Request:\\n${req.input}`;
+  }
+  return req.input;
+}
+
 /**
  * Execute a task with streaming, calling onChunk for each text fragment.
  * Optionally calls onThinkingChunk for thinking/reasoning fragments.
@@ -325,13 +417,25 @@ export async function executeTaskStream(
 ): Promise<ExecutionResult> {
   const start = Date.now();
 
+  // For function_calling mode, perform an implicit multi-turn tool calling loop to gather file context
+  // before running the final streaming generation.
+  let enrichedInput = req.input;
+  if (req.mode === "function_calling" || req.role.slug === "search") {
+    try {
+      enrichedInput = await gatherToolContext(req);
+    } catch (err) {
+      logger.error("[AI Executor] Error in gatherToolContext", err);
+      // Fallback to original input if tool gathering fails
+    }
+  }
+
   const systemPrompt =
     req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
 
   const requestSpec = buildRequestBody(
     req.provider.apiType,
     req.provider.modelId,
-    req.input,
+    enrichedInput,
     systemPrompt,
     req.config || undefined,
     req.chatHistory

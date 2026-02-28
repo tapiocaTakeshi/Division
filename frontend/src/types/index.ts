@@ -6,6 +6,7 @@ export type RoleSlug = 'leader' | 'coding' | 'search' | 'planning' | 'writing' |
 export interface AgentNode {
   id: string
   role: RoleSlug
+  mode?: string
   label: string
   provider: string
   modelId: string

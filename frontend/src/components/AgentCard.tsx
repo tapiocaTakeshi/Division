@@ -47,10 +47,15 @@ export function AgentCard({ agent, onRerun, onChangeProvider, compact }: AgentCa
       {/* Task title */}
       <p className="text-sm text-white/90 mb-3 line-clamp-2">{agent.label}</p>
 
-      {/* Provider info */}
+      {/* Provider info and Mode */}
       <div className="flex items-center gap-2 mb-3">
         <ProviderBadge provider={agent.provider} />
         <span className="text-xs text-conductor-muted truncate">{agent.modelId}</span>
+        {agent.mode && agent.mode !== 'chat' && (
+          <span className="ml-auto text-[9px] font-mono px-1.5 py-0.5 rounded border border-conductor-accent/20 bg-conductor-accent/10 text-conductor-accent tracking-wider uppercase">
+            {agent.mode.replace('_', ' ')}
+          </span>
+        )}
       </div>
 
       {/* Stats row */}

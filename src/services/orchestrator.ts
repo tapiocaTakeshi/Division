@@ -17,6 +17,7 @@ import { logger } from "../utils/logger";
 
 export interface SubTask {
   role: string;
+  mode: string;
   input: string;
   reason: string;
   /** Zero-based indices of tasks that must complete before this one starts */
@@ -83,12 +84,19 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 8. 1つのタスクに複数の作業を詰め込まず、できるだけ細かく分割してください
 9. 調査・計画・実装・レビューなど各フェーズを独立したタスクにしてください
 10. 同じロールでも異なる観点・対象であれば別タスクに分けてください
+11. 各タスクには、そのタスクの性質に応じた "mode" を指定してください。
+    - "chat" (デフォルト): 通常の文章生成等のテキストベースのタスク
+    - "computer_use": 実際にターミナル等でコードを実行・テストする必要があるタスク（例: codingやreview時等）
+    - "function_calling": 検索やファイルの読み込み等、外部ツールを利用して情報収集するタスク（例: search等）
+12. 単一の層（すべて並列実行など）ではなく、必ず複数層（例: 基礎調査層→企画層→実装層→レビュー層）になるように dependsOn を用いて多段階のパイプライン計画を作成してください。
 
 \`\`\`json
 {
   "tasks": [
-    { "role": "search", "input": "具体的な検索指示", "reason": "なぜこのタスクが必要か" },
-    { "role": "planning", "input": "具体的な企画指示", "reason": "なぜこのタスクが必要か", "dependsOn": [0] }
+    { "role": "search", "mode": "function_calling", "input": "機能の実現可能性についての技術情報を検索", "reason": "プランの前提知識を得るため" },
+    { "role": "ideaman", "mode": "chat", "input": "検索結果を元に機能アイデアを複数提案", "reason": "クリエイティブな視点を取り入れるため", "dependsOn": [0] },
+    { "role": "planning", "mode": "chat", "input": "アイデアを元に具体的な要件定義と設計を作成", "reason": "実装の明確なゴールを設定するため", "dependsOn": [1] },
+    { "role": "coding", "mode": "computer_use", "input": "要件定義に沿ってプロトタイプを実装", "reason": "検証可能な形にするため", "dependsOn": [2] }
   ]
 }
 \`\`\``;
@@ -138,6 +146,7 @@ function parseLeaderResponse(output: string): SubTask[] {
 
     return parsed.tasks.map((t: Record<string, unknown>) => ({
       role: String(t.role || ""),
+      mode: String(t.mode || "chat"),
       input: String(t.input || ""),
       reason: String(t.reason || ""),
       dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn.filter((v: unknown) => typeof v === "number") as number[] : undefined,
@@ -276,6 +285,7 @@ export async function runAgent(
       tasks: [
         {
           role: "leader",
+          mode: "chat",
           input: req.input,
           reason: "Task decomposition failed",
           provider: leaderAssignment.provider.displayName,
@@ -401,6 +411,7 @@ export async function runAgent(
       config: { apiKey },
       input: enrichedInput,
       role: { slug: role.slug, name: role.name },
+      mode: task.mode,
     });
 
     if (result.status === "success") {
@@ -539,6 +550,7 @@ export interface StreamEventTaskStart {
   provider: string;
   model: string;
   input: string;
+  mode: string;
 }
 export interface StreamEventTaskChunk {
   type: "task_chunk";
@@ -906,6 +918,7 @@ async function runAgentStreamCore(
       provider: provider.displayName,
       model: provider.modelId,
       input: task.input,
+      mode: task.mode,
     });
 
     const result = await executeTaskStream(
@@ -914,6 +927,7 @@ async function runAgentStreamCore(
         config: { apiKey },
         input: enrichedInput,
         role: { slug: role.slug, name: role.name },
+        mode: task.mode,
       },
       (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
       (text) => emit({ type: "task_thinking_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text })

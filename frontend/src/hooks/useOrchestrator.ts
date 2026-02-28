@@ -125,6 +125,7 @@ function handleSSEEvent(
         provider?: string
         modelId?: string
         dependsOn?: string[]
+        mode?: string
       }>
       if (tasks) {
         const agents: AgentNode[] = tasks.map((t) => ({
@@ -135,6 +136,7 @@ function handleSSEEvent(
           modelId: t.modelId ?? '',
           status: 'idle',
           dependsOn: t.dependsOn ?? [],
+          mode: t.mode,
         }))
         store.addAgents(agents)
       }
@@ -162,6 +164,7 @@ function handleSSEEvent(
     case 'task_start':
       store.updateAgentStatus(event.taskId as string, 'running', {
         provider: event.provider as string,
+        mode: event.mode as string,
       })
       break
 

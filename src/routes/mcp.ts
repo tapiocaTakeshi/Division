@@ -173,6 +173,46 @@ async function handleDivisionRun(args: Record<string, unknown>, authenticated: b
   lines.push(`**Leader**: ${result.leaderProvider} (${result.leaderModel})`);
   lines.push(`**Status**: ${result.status} (${result.totalDurationMs}ms)\n`);
 
+  // Build Mindmap
+  lines.push(`\`\`\`mermaid`);
+  lines.push(`mindmap`);
+  lines.push(`  root(("Session ${result.sessionId.split('-')[0]}"))`);
+  lines.push(`    Leader["Leader: ${result.leaderProvider}"]`);
+
+  const childrenMap = new Map<number, number[]>();
+  const roots: number[] = [];
+  
+  for (let i = 0; i < result.tasks.length; i++) {
+    const task = result.tasks[i];
+    if (!task.dependsOn || task.dependsOn.length === 0) {
+      roots.push(i);
+    } else {
+      const parent = task.dependsOn[0]; // use the first dependency as the tree parent
+      if (!childrenMap.has(parent)) {
+        childrenMap.set(parent, []);
+      }
+      childrenMap.get(parent)!.push(i);
+    }
+  }
+
+  function printNode(index: number, depth: number) {
+    const task = result.tasks[index];
+    const indent = "  ".repeat(depth + 2);
+    const nodeId = `task${index}`;
+    lines.push(`${indent}${nodeId}["Step ${index + 1}: ${task.role}<br/>${task.provider}"]`);
+    
+    const children = childrenMap.get(index) || [];
+    for (const child of children) {
+      printNode(child, depth + 1);
+    }
+  }
+
+  for (const root of roots) {
+    printNode(root, 0);
+  }
+
+  lines.push(`\`\`\`\n`);
+
   for (let i = 0; i < result.tasks.length; i++) {
     const task = result.tasks[i];
     lines.push(`### Step ${i + 1}: ${task.role}`);
@@ -260,6 +300,46 @@ async function handleDivisionStream(args: Record<string, unknown>, authenticated
         break;
       case "leader_done":
         lines.push(`### Leader Decomposition (${event.taskCount} tasks)`);
+        
+        lines.push(`\`\`\`mermaid`);
+        lines.push(`mindmap`);
+        lines.push(`  root(("Session ${sessionId.split('-')[0]}"))`);
+        lines.push(`    Leader["Leader"]`);
+
+        const sChildrenMap = new Map<string, string[]>();
+        const sRoots: string[] = [];
+        const taskMap = new Map<string, typeof event.tasks[0]>();
+        
+        for (const t of event.tasks) {
+          taskMap.set(t.id, t);
+          if (!t.dependsOn || t.dependsOn.length === 0) {
+            sRoots.push(t.id);
+          } else {
+            const parent = t.dependsOn[0];
+            if (!sChildrenMap.has(parent)) {
+              sChildrenMap.set(parent, []);
+            }
+            sChildrenMap.get(parent)!.push(t.id);
+          }
+        }
+
+        const printStreamNode = (taskId: string, depth: number) => {
+          const t = taskMap.get(taskId)!;
+          const indent = "  ".repeat(depth + 2);
+          const nodeId = taskId.replace('-', '');
+          lines.push(`${indent}${nodeId}["${t.role}"]`);
+          
+          const children = sChildrenMap.get(taskId) || [];
+          for (const child of children) {
+            printStreamNode(child, depth + 1);
+          }
+        };
+
+        for (const root of sRoots) {
+          printStreamNode(root, 0);
+        }
+        lines.push(`\`\`\`\n`);
+
         for (const t of event.tasks) {
           lines.push(`- **${t.role}**: ${t.reason}`);
         }

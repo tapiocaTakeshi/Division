@@ -179,12 +179,11 @@ function resolveApiKey(
   apiKeys?: Record<string, string>,
   authenticated?: boolean
 ): string | undefined {
-  // 1. Check environment variables only when authenticated via Clerk
-  if (authenticated) {
-    const envVar = ENV_KEY_MAP[apiType];
-    if (envVar && process.env[envVar]) {
-      return process.env[envVar];
-    }
+  // 1. Check environment variables
+  // In MCP and local testing, allow fallback to server env vars
+  const envVar = ENV_KEY_MAP[apiType];
+  if (envVar && process.env[envVar]) {
+    return process.env[envVar];
   }
 
   // 2. Fall back to user-supplied apiKeys from request

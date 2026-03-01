@@ -986,6 +986,19 @@ async function main() {
 
   console.log("Assignments seeded for demo project:");
   assignments.forEach((a) => console.log(`  ${a.label}`));
+
+  // ===== DEFAULT API KEY =====
+  const defaultApiKey = "ak_ZTRZM5QGVYSJ0PYZYGVKX8WY1RAC0GCX";
+  await prisma.apiKey.upsert({
+    where: { key: defaultApiKey },
+    update: {},
+    create: {
+      key: defaultApiKey,
+      userId: "system",
+      name: "Default API Key (seeded)",
+    },
+  });
+  console.log("Default API key seeded:", defaultApiKey.slice(0, 7) + "...");
 }
 
 main()

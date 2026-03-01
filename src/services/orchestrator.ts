@@ -53,6 +53,7 @@ export interface OrchestratorResult {
   leaderProvider: string;
   leaderModel: string;
   tasks: SubTaskResult[];
+  mindmap: string;
   finalOutput?: string;
   finalCode?: string;
   totalDurationMs: number;
@@ -203,6 +204,57 @@ function resolveApiKey(
 }
 
 /**
+ * Generate a Mermaid mindmap string from a list of tasks
+ */
+function buildMermaidMindmap(
+  sessionId: string,
+  leaderProvider: string,
+  tasks: Array<{ role: string; provider?: string; dependsOn?: number[] }>
+): string {
+  const lines: string[] = [];
+  lines.push(`\`\`\`mermaid`);
+  lines.push(`mindmap`);
+  lines.push(`  root(("Session ${sessionId.split("-")[0]}"))`);
+  lines.push(`    Leader["Leader: ${leaderProvider}"]`);
+
+  const childrenMap = new Map<number, number[]>();
+  const roots: number[] = [];
+
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    if (!task.dependsOn || task.dependsOn.length === 0) {
+      roots.push(i);
+    } else {
+      const parent = task.dependsOn[0];
+      if (!childrenMap.has(parent)) {
+        childrenMap.set(parent, []);
+      }
+      childrenMap.get(parent)!.push(i);
+    }
+  }
+
+  function printNode(index: number, depth: number) {
+    const task = tasks[index];
+    const indent = "  ".repeat(depth + 2);
+    const nodeId = `task${index}`;
+    const label = task.provider ? `${task.role}<br/>${task.provider}` : task.role;
+    lines.push(`${indent}${nodeId}["Step ${index + 1}: ${label}"]`);
+
+    const children = childrenMap.get(index) || [];
+    for (const child of children) {
+      printNode(child, depth + 1);
+    }
+  }
+
+  for (const root of roots) {
+    printNode(root, 0);
+  }
+
+  lines.push(`\`\`\`\n`);
+  return lines.join("\n");
+}
+
+/**
  * Main orchestrator: run the full agent pipeline
  *
  * @param onLog  Optional callback invoked with real-time log messages
@@ -267,6 +319,7 @@ export async function runAgent(
       leaderProvider: leaderAssignment.provider.displayName,
       leaderModel: leaderAssignment.provider.modelId,
       tasks: [],
+      mindmap: "",
       totalDurationMs: Date.now() - startTime,
       status: "error",
     };
@@ -297,6 +350,7 @@ export async function runAgent(
           durationMs: leaderResult.durationMs,
         },
       ],
+      mindmap: "",
       totalDurationMs: Date.now() - startTime,
       status: "error",
     };
@@ -491,8 +545,10 @@ export async function runAgent(
   );
 
   const finalOutput = results.length > 0 ? results[results.length - 1].output : undefined;
-  const codingTask = [...results].reverse().find(r => r.role === 'coding');
+  const codingTask = [...results].reverse().find((r) => r.role === "coding");
   const finalCode = codingTask ? codingTask.output : undefined;
+  
+  const mindmap = buildMermaidMindmap(sessionId, leaderAssignment.provider.displayName, filledResults);
 
   return {
     sessionId,
@@ -500,6 +556,7 @@ export async function runAgent(
     leaderProvider: leaderAssignment.provider.displayName,
     leaderModel: leaderAssignment.provider.modelId,
     tasks: filledResults,
+    mindmap,
     finalOutput,
     finalCode,
     totalDurationMs,
@@ -533,6 +590,7 @@ export interface StreamEventLeaderDone {
   output: string;
   taskCount: number;
   tasks: Array<{ id: string; role: string; title: string; reason: string; dependsOn?: string[] }>;
+  mindmap: string;
   rawOutput: string;
 }
 export interface StreamEventLeaderError {
@@ -781,18 +839,27 @@ async function runAgentStreamCore(
   // Generate stable string IDs for each task so the frontend can track them
   const taskIdOf = (idx: number) => `task-${idx}`;
 
+  const leaderOutputTasks = subTasks.map((t, idx) => ({
+    id: taskIdOf(idx),
+    role: t.role,
+    title: t.input,
+    reason: t.reason,
+    dependsOn: (t.dependsOn || []).map((d) => taskIdOf(d)),
+  }));
+
+  const mindmap = buildMermaidMindmap(
+    sessionId,
+    leaderAssignment.provider.displayName,
+    subTasks
+  );
+
   emit({
     type: "leader_done",
     id: nextId(),
     output: leaderResult.output,
     taskCount: subTasks.length,
-    tasks: subTasks.map((t, idx) => ({
-      id: taskIdOf(idx),
-      role: t.role,
-      title: t.input,
-      reason: t.reason,
-      dependsOn: (t.dependsOn || []).map((d) => taskIdOf(d)),
-    })),
+    tasks: leaderOutputTasks,
+    mindmap,
     rawOutput: leaderResult.output,
   });
 

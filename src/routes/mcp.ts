@@ -500,6 +500,23 @@ async function handleJsonRpc(
       const toolName = params.name as string;
       const args = (params.arguments || {}) as Record<string, unknown>;
 
+      // Reject if a divisionApiKey was provided but authentication failed
+      if (args.divisionApiKey && !authenticated) {
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: 401 Unauthorized - The provided divisionApiKey is invalid.",
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
       try {
         let content;
         switch (toolName) {

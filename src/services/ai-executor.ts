@@ -183,6 +183,13 @@ function buildRequestBody(
       }
     }
     messages.push({ role: "user", content: input });
+    const usesCompletionTokens = apiType === "openai" || 
+                                 modelId.includes("o1") || 
+                                 modelId.includes("o3") || 
+                                 modelId.includes("o4") || 
+                                 modelId.includes("reasoning") || 
+                                 modelId.includes("thinking");
+
     return {
       url: endpoint,
       headers: {
@@ -191,8 +198,7 @@ function buildRequestBody(
       },
       body: {
         model: modelId,
-        // OpenAI's newer models require max_completion_tokens; other compatible providers use max_tokens
-        ...(apiType === "openai"
+        ...(usesCompletionTokens
           ? { max_completion_tokens: maxTokens }
           : { max_tokens: maxTokens }),
         messages,

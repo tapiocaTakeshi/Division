@@ -47,6 +47,15 @@ AIにタスクを実行させます。
 }
 ```
 
+※実行にはAuthorizationヘッダーにディビジョンAPIキー（`ak_...`）を含める必要があります。
+
+```bash
+curl -X POST https://api.division.he-ro.jp/api/agent/run \
+  -H "Authorization: Bearer ak_..." \
+  -H "Content-Type: application/json" \
+  -d '{ "projectId": "demo-project-001", "input": "クイズを投稿するアプリ「リドル」を作って" }'
+```
+
 **レスポンス:**
 
 ```json
@@ -83,27 +92,30 @@ AIにタスクを実行させます。
 }
 ```
 
+※実行にはAuthorizationヘッダーにディビジョンAPIキー（`ak_...`）を含める必要があります。
+
 `format` は `"sse"`（デフォルト）または `"ndjson"` を指定可能です。
 
 **イベント一覧:**
 
-| イベント | 説明 |
-| --- | --- |
-| `session_start` | セッション開始（sessionId含む） |
-| `leader_start` | Leader AIがタスク分解を開始 |
-| `leader_chunk` | Leader AIからのストリーミングテキスト |
-| `leader_done` | タスク分解完了（dependsOn含む依存関係情報） |
-| `leader_error` | Leader AI失敗 |
-| `wave_start` | 並列実行グループの開始（同時実行されるタスクのインデックス） |
-| `task_start` | サブタスク実行開始（プロバイダー・入力情報含む） |
-| `task_chunk` | サブタスクAIからのストリーミングテキスト |
-| `task_done` | サブタスク完了（出力含む） |
-| `task_error` | サブタスク失敗 |
-| `wave_done` | 並列実行グループの完了 |
-| `session_done` | 全タスク完了（集計結果含む） |
-| `heartbeat` | 接続維持（15秒ごと） |
+| イベント        | 説明                                                         |
+| --------------- | ------------------------------------------------------------ |
+| `session_start` | セッション開始（sessionId含む）                              |
+| `leader_start`  | Leader AIがタスク分解を開始                                  |
+| `leader_chunk`  | Leader AIからのストリーミングテキスト                        |
+| `leader_done`   | タスク分解完了（dependsOn含む依存関係情報）                  |
+| `leader_error`  | Leader AI失敗                                                |
+| `wave_start`    | 並列実行グループの開始（同時実行されるタスクのインデックス） |
+| `task_start`    | サブタスク実行開始（プロバイダー・入力情報含む）             |
+| `task_chunk`    | サブタスクAIからのストリーミングテキスト                     |
+| `task_done`     | サブタスク完了（出力含む）                                   |
+| `task_error`    | サブタスク失敗                                               |
+| `wave_done`     | 並列実行グループの完了                                       |
+| `session_done`  | 全タスク完了（集計結果含む）                                 |
+| `heartbeat`     | 接続維持（15秒ごと）                                         |
 
 **SSEレスポンス例:**
+
 ```
 event: session_start
 data: {"type":"session_start","sessionId":"...","input":"...","leader":"Gemini (Google)"}
@@ -201,7 +213,7 @@ Cursor / Antigravity / Claude Desktop のMCP設定に追加するだけで使え
 {
   "mcpServers": {
     "division": {
-      "url": "https://api.division.he-ro.jp/mcp"
+      "url": "https://api.division.he-ro.jp/mcp?key=ak_..."
     }
   }
 }
@@ -215,6 +227,21 @@ Cursor / Antigravity / Claude Desktop のMCP設定に追加するだけで使え
 | `division_stream`      | ストリーミング付きでエージェントを実行する |
 | `division_list_models` | 利用可能な全モデルを一覧表示               |
 | `division_health`      | APIの稼働状態を確認                        |
+
+### MCPツール呼び出し例
+
+MCPツール（`division_run` または `division_stream`）の引数に `divisionApiKey` を含めることで、認証情報を送ることができます。
+
+```json
+{
+  "name": "division_run",
+  "arguments": {
+    "projectId": "demo-project-001",
+    "input": "クイズを投稿するアプリ「リドル」を作って",
+    "divisionApiKey": "ak_..."
+  }
+}
+```
 
 ---
 

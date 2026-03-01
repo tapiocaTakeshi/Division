@@ -40,6 +40,11 @@ const TOOLS = [
           description:
             "Override AI for roles. Keys: coding/search/planning/writing/review. Values: model names (e.g. claude-opus-4.6, gemini-3-pro, gpt-5.2, grok-4.1-fast, deepseek-r1)",
         },
+        divisionApiKey: {
+          type: "string",
+          description:
+            "Division API Key (e.g. ak_...). Required to authenticate the request.",
+        },
       },
       required: ["input"],
     },
@@ -74,6 +79,11 @@ const TOOLS = [
           additionalProperties: { type: "string" },
           description:
             "Override AI for roles. Keys: coding/search/planning/writing/review. Values: model names (e.g. claude-opus-4.6, gemini-3-pro, gpt-5.2)",
+        },
+        divisionApiKey: {
+          type: "string",
+          description:
+            "Division API Key (e.g. ak_...). Required to authenticate the request.",
         },
       },
       required: ["input"],
@@ -141,14 +151,18 @@ async function handleDivisionRun(args: Record<string, unknown>, authenticated: b
   const input = args.input as string;
   const projectId = (args.projectId as string) || "demo-project-001";
   const overrides = args.overrides as Record<string, string> | undefined;
+  const divisionApiKey = args.divisionApiKey as string | undefined;
 
-  const request: { projectId: string; input: string; overrides?: Record<string, string>; authenticated?: boolean } = {
+  const request: { projectId: string; input: string; overrides?: Record<string, string>; divisionApiKey?: string; authenticated?: boolean } = {
     projectId,
     input,
     authenticated,
   };
   if (overrides && Object.keys(overrides).length > 0) {
     request.overrides = overrides;
+  }
+  if (divisionApiKey) {
+    request.divisionApiKey = divisionApiKey;
   }
 
   const result = await runAgent(request);
@@ -218,14 +232,18 @@ async function handleDivisionStream(args: Record<string, unknown>, authenticated
   const input = args.input as string;
   const projectId = (args.projectId as string) || "demo-project-001";
   const overrides = args.overrides as Record<string, string> | undefined;
+  const divisionApiKey = args.divisionApiKey as string | undefined;
 
-  const request: { projectId: string; input: string; overrides?: Record<string, string>; authenticated?: boolean } = {
+  const request: { projectId: string; input: string; overrides?: Record<string, string>; divisionApiKey?: string; authenticated?: boolean } = {
     projectId,
     input,
     authenticated,
   };
   if (overrides && Object.keys(overrides).length > 0) {
     request.overrides = overrides;
+  }
+  if (divisionApiKey) {
+    request.divisionApiKey = divisionApiKey;
   }
 
   // Collect stream events and build a formatted output
@@ -554,17 +572,32 @@ router.post("/", async (req: Request, res: Response) => {
     const body = req.body;
 
     const authenticated = !!res.locals.authenticated;
+    
+    // Extract base SDK divisionApiKey from query parameter if provided, to be used in runAgent
+    const queryKey = req.query.key as string | undefined;
 
     // Handle batch requests
     if (Array.isArray(body)) {
       const responses = await Promise.all(
-        body.map((r: JsonRpcRequest) => handleJsonRpc(r, sessionId!, authenticated))
+        body.map((r: JsonRpcRequest) => {
+          // If query key is present, apply it to tool arguments
+          if (queryKey && r.method === "tools/call" && r.params) {
+            r.params.arguments = r.params.arguments || {};
+            (r.params.arguments as any).divisionApiKey = (r.params.arguments as any).divisionApiKey || queryKey;
+          }
+          return handleJsonRpc(r, sessionId!, authenticated);
+        })
       );
       // Filter out notifications (no id)
       const filtered = responses.filter((r) => r.id !== null);
       res.setHeader("mcp-session-id", sessionId);
       res.json(filtered.length === 1 ? filtered[0] : filtered);
       return;
+    }
+
+    if (queryKey && body.method === "tools/call" && body.params) {
+      body.params.arguments = body.params.arguments || {};
+      body.params.arguments.divisionApiKey = body.params.arguments.divisionApiKey || queryKey;
     }
 
     const response = await handleJsonRpc(body, sessionId, authenticated);

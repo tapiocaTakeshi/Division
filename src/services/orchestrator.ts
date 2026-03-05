@@ -12,6 +12,7 @@ import { prisma } from "../db";
 import { executeTask, executeTaskStream } from "./ai-executor";
 import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
+import { checkCredits, consumeCredits, estimateTokens } from "./credits";
 
 // --- Types ---
 
@@ -45,6 +46,8 @@ export interface OrchestratorRequest {
   chatHistory?: ChatMessage[];
   /** When true, server-side env var provider keys are used */
   authenticated?: boolean;
+  /** Clerk user ID for credit tracking */
+  userId?: string;
 }
 
 export interface OrchestratorResult {
@@ -80,7 +83,7 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 3. dependsOnが空または省略されたタスクは他のタスクと並列実行されます
 4. 不要なロールは使わなくてOKです
 5. 各タスクのinputは、そのロールのAIに直接渡す具体的な指示にしてください
-6. 必ず以下のJSON形式のみで回答してください。説明文は不要です
+6. 必ず以下のJSON形式のみで回答してください。挨拶や説明文など、JSONブロック以外のテキストは【絶対に】出力しないでください。
 7. タスクは最低5個以上生成してください。リクエストが複雑な場合は8〜15個程度に細分化してください
 8. 1つのタスクに複数の作業を詰め込まず、できるだけ細かく分割してください
 9. 調査・計画・実装・レビューなど各フェーズを独立したタスクにしてください
@@ -121,15 +124,18 @@ const API_KEY_ALIASES: Record<string, string[]> = {
  */
 function extractJson(text: string): string {
   // Try to extract from markdown code block
-  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (codeBlockMatch) {
+  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)(\n?```|$)/);
+  if (codeBlockMatch && codeBlockMatch[1].trim().startsWith("{")) {
     return codeBlockMatch[1].trim();
   }
+  
   // Try to find raw JSON object
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    return jsonMatch[0];
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+    return text.substring(firstBrace, lastBrace + 1);
   }
+  
   return text;
 }
 
@@ -302,6 +308,28 @@ export async function runAgent(
   log(`[Agent] Input: ${req.input}`);
   log(`[Agent] Leader: ${leaderAssignment.provider.displayName} (${leaderAssignment.provider.modelId})`);
   logger.info(`[Agent] Starting session`, { sessionId, projectId: req.projectId });
+
+  // --- Credit check before processing ---
+  if (req.userId && req.authenticated) {
+    const estimatedTokensForSession = estimateTokens(req.input) * 5; // Rough estimate for multi-task session
+    const creditCheck = await checkCredits(req.userId, estimatedTokensForSession);
+    if (creditCheck && !creditCheck.canAfford) {
+      log(`[Agent] Insufficient credits: balance=${creditCheck.creditBalance}, estimated=${creditCheck.estimatedCost}`);
+      return {
+        sessionId,
+        input: req.input,
+        leaderProvider: leaderAssignment.provider.displayName,
+        leaderModel: leaderAssignment.provider.modelId,
+        tasks: [],
+        mindmap: "",
+        totalDurationMs: Date.now() - startTime,
+        status: "error",
+      };
+    }
+    if (creditCheck) {
+      log(`[Agent] Credit check OK: balance=${creditCheck.creditBalance}`);
+    }
+  }
 
   const leaderResult = await executeTask({
     provider: leaderAssignment.provider,
@@ -486,6 +514,25 @@ export async function runAgent(
       citations: result.citations,
     };
     taskOutputs[i] = result.output;
+
+    // --- Credit consumption after each task ---
+    if (req.userId && req.authenticated && result.status === "success") {
+      // Estimate tokens from input + output length
+      const inputTokens = Math.ceil(enrichedInput.length / 3);
+      const outputTokens = Math.ceil((result.output || "").length / 3);
+      const totalTokens = inputTokens + outputTokens;
+      try {
+        await consumeCredits(
+          req.userId,
+          totalTokens,
+          provider.modelId,
+          provider.name,
+          sessionId
+        );
+      } catch (creditErr) {
+        log(`[Agent] Credit error: ${creditErr instanceof Error ? creditErr.message : String(creditErr)}`);
+      }
+    }
 
     // Log to DB
     await prisma.taskLog.create({

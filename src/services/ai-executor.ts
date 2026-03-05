@@ -199,7 +199,7 @@ function buildRequestBody(
       body: {
         model: modelId,
         ...(usesCompletionTokens
-          ? { max_completion_tokens: maxTokens }
+          ? { max_completion_tokens: (config?.maxTokens as number) || 32768 }
           : { max_tokens: maxTokens }),
         messages,
       },

@@ -63,7 +63,7 @@ agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
 
   try {
     const result = await runAgent(
-      { ...parsed.data, authenticated: !!res.locals.authenticated },
+      { ...parsed.data, authenticated: !!res.locals.authenticated, userId: res.locals.userId as string | undefined },
       (message) => { writeLine({ type: "log", message }); }
     );
     writeLine({ type: "result", data: result });
@@ -155,7 +155,7 @@ agentRouter.post("/stream", asyncHandler(async (req: Request, res: Response) => 
   };
 
   try {
-    await runAgentStream({ ...parsed.data, authenticated: !!res.locals.authenticated }, sendEvent);
+    await runAgentStream({ ...parsed.data, authenticated: !!res.locals.authenticated, userId: res.locals.userId as string | undefined }, sendEvent);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     const errorEvent: StreamEvent = {

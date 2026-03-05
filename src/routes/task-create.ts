@@ -43,7 +43,7 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 3. 各タスクにはわかりやすいtitleとdescriptionを付けてください
 4. titleは短く簡潔に（50文字以内）
 5. descriptionはそのタスクで何をすべきか具体的に記述してください
-6. 必ず以下のJSON形式のみで回答してください。説明文は不要です
+6. 必ず以下のJSON形式のみで回答してください。説明文や前置き（例：「はい、承知いたしました」等）は一切不要です。
 7. タスクは最低5個以上生成してください。リクエストが複雑な場合は8〜15個程度に細分化してください
 8. 1つのタスクに複数の作業を詰め込まず、できるだけ細かく分割してください
 9. 調査・計画・実装・レビューなど各フェーズを独立したタスクにしてください
@@ -202,13 +202,19 @@ taskCreateRouter.post(
     const sessionId = crypto.randomUUID();
     logger.info(`[TaskCreate] Session ${sessionId} - Input: ${input}`);
 
+    // Format chat history as a string to avoid persona drift in the model
+    const formattedHistory = chatHistory && chatHistory.length > 0
+      ? "【これまでの会話履歴】\n" + chatHistory.map(m => `${m.role === 'user' ? 'ユーザー' : 'AI'}: ${m.content}`).join('\n\n') + "\n\n"
+      : "";
+
+    const enrichedInput = `${formattedHistory}【ユーザーの最新のリクエスト】\n${input}`;
+
     const leaderResult = await executeTask({
       provider: leaderAssignment.provider,
       config: { apiKey: leaderApiKey },
-      input,
+      input: enrichedInput,
       role: { slug: "leader", name: "Leader" },
       systemPrompt: TASK_CREATION_PROMPT,
-      chatHistory,
     });
 
     if (leaderResult.status === "error") {
@@ -244,8 +250,8 @@ taskCreateRouter.post(
           reason: t.reason ? String(t.reason) : undefined,
           dependsOn: Array.isArray(t.dependsOn)
             ? (t.dependsOn.filter(
-                (v: unknown) => typeof v === "number"
-              ) as number[])
+              (v: unknown) => typeof v === "number"
+            ) as number[])
             : undefined,
         })
       );

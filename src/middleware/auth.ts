@@ -78,16 +78,19 @@ function validateEnvApiKey(token: string): boolean {
  * Validate a Division API key against the database.
  * Returns true if the key exists and is not revoked.
  */
-async function validateDbApiKey(token: string): Promise<boolean> {
+async function validateDbApiKey(token: string): Promise<{ valid: boolean; userId?: string }> {
   try {
     const apiKey = await prisma.apiKey.findUnique({
       where: { key: token },
-      select: { revoked: true },
+      select: { revoked: true, userId: true },
     });
-    return !!apiKey && !apiKey.revoked;
+    if (apiKey && !apiKey.revoked) {
+      return { valid: true, userId: apiKey.userId };
+    }
+    return { valid: false };
   } catch {
     // DB unavailable — fall through to env var check
-    return false;
+    return { valid: false };
   }
 }
 
@@ -109,10 +112,14 @@ export function divisionAuth(req: Request, res: Response, next: NextFunction) {
   if (token && token.startsWith("ak_")) {
     // Try DB first, then env var fallback
     validateDbApiKey(token)
-      .then((dbValid) => {
+      .then((dbResult) => {
         const envValid = validateEnvApiKey(token);
-        res.locals.authenticated = dbValid || envValid;
-        console.log(`[divisionAuth] ak_ key: db=${dbValid}, env=${envValid}, authenticated=${res.locals.authenticated}`);
+        res.locals.authenticated = dbResult.valid || envValid;
+        // Store userId for credit tracking
+        if (dbResult.valid && dbResult.userId) {
+          res.locals.userId = dbResult.userId;
+        }
+        console.log(`[divisionAuth] ak_ key: db=${dbResult.valid}, env=${envValid}, userId=${res.locals.userId || 'env'}, authenticated=${res.locals.authenticated}`);
         next();
       })
       .catch((err) => {
@@ -130,6 +137,9 @@ export function divisionAuth(req: Request, res: Response, next: NextFunction) {
     try {
       const auth = getAuth(req);
       res.locals.authenticated = !!auth.userId;
+      if (auth.userId) {
+        res.locals.userId = auth.userId;
+      }
     } catch {
       res.locals.authenticated = false;
     }

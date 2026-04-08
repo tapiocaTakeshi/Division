@@ -303,7 +303,7 @@ server.tool(
     role: z
       .string()
       .describe(
-        "Role slug to assign (e.g. leader, coding, search, planning, writing, review, image, ideaman, deep-research)"
+        "Role slug to assign (e.g. leader, coding, search, planning, writing, review, design, image, ideaman, deep-research)"
       ),
     provider: z
       .string()

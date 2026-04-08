@@ -937,7 +937,13 @@ async function main() {
     create: { slug: "ideaman", name: "Idea Man", description: "Creative brainstorming, idea generation, and innovative concept proposals" },
   });
 
-  console.log("Roles seeded:", [coding, search, planning, writing, review, leader, deepResearch, image, ideaman].map((r) => r.slug));
+  const design = await prisma.role.upsert({
+    where: { slug: "design" },
+    update: {},
+    create: { slug: "design", name: "Design", description: "UI/UX design, wireframing, visual design, design system creation, and user experience optimization" },
+  });
+
+  console.log("Roles seeded:", [coding, search, planning, writing, review, leader, deepResearch, image, ideaman, design].map((r) => r.slug));
 
   // ===== DEMO PROJECT =====
   const project = await prisma.project.upsert({
@@ -963,6 +969,7 @@ async function main() {
     { role: deepResearch, provider: perplexityDeepResearch, label: "Deep Research  -> Perplexity Deep Research" },
     { role: image, provider: gptImage1, label: "Image          -> GPT Image 1" },
     { role: ideaman, provider: claudeSonnet45, label: "Idea Man       -> Claude Sonnet 4.5" },
+    { role: design, provider: gemini3Flash, label: "Design         -> Gemini 3 Flash" },
   ];
 
   for (const a of assignments) {

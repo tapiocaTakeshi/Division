@@ -57,6 +57,15 @@ async function main() {
     description: "Balanced speed & intelligence for coding & writing",
   });
 
+  const claudeSonnet46 = await upsertProvider({
+    name: "claude-sonnet-4.6",
+    displayName: "Claude Sonnet 4.6 (Anthropic)",
+    apiBaseUrl: "https://api.anthropic.com",
+    apiType: "anthropic",
+    modelId: "claude-sonnet-4-6",
+    description: "Claude 4.6 gen Sonnet — balanced speed, intelligence & coding",
+  });
+
   const claudeHaiku45 = await upsertProvider({
     name: "claude-haiku-4.5",
     displayName: "Claude Haiku 4.5 (Anthropic)",
@@ -94,13 +103,31 @@ async function main() {
   });
 
   // --- Google (Gemini) ---
+  const gemini31Pro = await upsertProvider({
+    name: "gemini-3.1-pro",
+    displayName: "Gemini 3.1 Pro Preview (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "gemini-3.1-pro-preview",
+    description: "Latest flagship — advanced intelligence, agents & vibe coding",
+  });
+
+  const gemini31FlashLite = await upsertProvider({
+    name: "gemini-3.1-flash-lite",
+    displayName: "Gemini 3.1 Flash-Lite Preview (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "gemini-3.1-flash-lite-preview",
+    description: "Frontier-class cost-performance — fastest Gemini 3.1",
+  });
+
   const gemini3Pro = await upsertProvider({
     name: "gemini-3-pro",
-    displayName: "Gemini 3 Pro Preview (Google)",
+    displayName: "Gemini 3 Pro Preview (Google) [SHUT DOWN]",
     apiBaseUrl: "https://generativelanguage.googleapis.com",
     apiType: "google",
     modelId: "gemini-3-pro-preview",
-    description: "Latest flagship — complex agentic workflows & coding",
+    description: "⚠️ SHUT DOWN — use gemini-3.1-pro-preview instead",
   });
 
   const gemini3Flash = await upsertProvider({
@@ -131,6 +158,15 @@ async function main() {
   });
 
   await upsertProvider({
+    name: "gemini-2.5-flash-lite",
+    displayName: "Gemini 2.5 Flash-Lite (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "gemini-2.5-flash-lite-preview-06-17",
+    description: "Fastest & lowest cost Gemini 2.5 — multimodal, 1M context",
+  });
+
+  await upsertProvider({
     name: "gemini-3-deep-think",
     displayName: "Gemini 3 Deep Think (Google)",
     apiBaseUrl: "https://generativelanguage.googleapis.com",
@@ -141,11 +177,11 @@ async function main() {
 
   const gemini20Flash = await upsertProvider({
     name: "gemini-2.0-flash",
-    displayName: "Gemini 2.0 Flash (Google)",
+    displayName: "Gemini 2.0 Flash (Google) [DEPRECATED]",
     apiBaseUrl: "https://generativelanguage.googleapis.com",
     apiType: "google",
     modelId: "gemini-2.0-flash",
-    description: "Fast & efficient general purpose",
+    description: "⚠️ DEPRECATED — use gemini-2.5-flash instead",
   });
 
   // --- OpenAI (GPT / o-series) ---
@@ -322,6 +358,15 @@ async function main() {
   });
 
   // --- xAI (Grok) ---
+  const grok420 = await upsertProvider({
+    name: "grok-4.20",
+    displayName: "Grok 4.20 (xAI)",
+    apiBaseUrl: "https://api.x.ai",
+    apiType: "xai",
+    modelId: "grok-4.20",
+    description: "Latest flagship — 2M context, industry-lowest hallucination rate",
+  });
+
   const grok41Fast = await upsertProvider({
     name: "grok-4.1-fast",
     displayName: "Grok 4.1 Fast (xAI)",
@@ -758,7 +803,16 @@ async function main() {
     apiBaseUrl: "https://generativelanguage.googleapis.com",
     apiType: "google",
     modelId: "imagen-3.0-generate-002",
-    description: "Google's highest quality image generation model",
+    description: "Google's image generation model (previous gen)",
+  });
+
+  await upsertProvider({
+    name: "imagen-4",
+    displayName: "Imagen 4 (Google)",
+    apiBaseUrl: "https://generativelanguage.googleapis.com",
+    apiType: "google",
+    modelId: "imagen-4-generate",
+    description: "Latest Google image generation — 2K resolution, photorealistic quality",
   });
 
   // --- Legacy aliases (backward compatibility) ---
@@ -803,8 +857,8 @@ async function main() {
     displayName: "Grok (xAI)",
     apiBaseUrl: "https://api.x.ai",
     apiType: "xai",
-    modelId: "grok-4",
-    description: "Alias → Grok 4",
+    modelId: "grok-4.20",
+    description: "Alias → Grok 4.20",
   });
 
   const deepseek = await upsertProvider({
@@ -876,11 +930,11 @@ async function main() {
     displayName: "Gemini Pro (Google)",
     apiBaseUrl: "https://generativelanguage.googleapis.com",
     apiType: "google",
-    modelId: "gemini-2.5-pro",
-    description: "Alias → Gemini 2.5 Pro",
+    modelId: "gemini-3.1-pro-preview",
+    description: "Alias → Gemini 3.1 Pro Preview",
   });
 
-  console.log("Providers seeded (87+ models)");
+  console.log("Providers seeded (93+ models)");
 
   // ===== ROLES =====
   const coding = await prisma.role.upsert({
@@ -960,7 +1014,7 @@ async function main() {
 
   // ===== ASSIGNMENTS (optimized defaults) =====
   const assignments = [
-    { role: coding, provider: claudeSonnet45, label: "Coding         -> Claude Sonnet 4.5" },
+    { role: coding, provider: claudeSonnet46, label: "Coding         -> Claude Sonnet 4.6" },
     { role: search, provider: perplexitySonarPro, label: "Search         -> Perplexity Sonar Pro" },
     { role: planning, provider: gemini25Pro, label: "Planning       -> Gemini 2.5 Pro" },
     { role: writing, provider: claudeSonnet45, label: "Writing        -> Claude Sonnet 4.5" },

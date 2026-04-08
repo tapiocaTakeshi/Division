@@ -13,6 +13,7 @@ import { taskCreateRouter } from "./routes/task-create";
 import { apiKeyRouter } from "./routes/api-keys";
 import { knockRouter } from "./routes/knock";
 import { clerkMiddleware, divisionAuth } from "./middleware/auth";
+import { syncModelsBackground } from "./services/sync-models";
 
 const app = express();
 
@@ -86,6 +87,8 @@ if (!process.env.VERCEL) {
   const port = process.env.PORT || 3000;
   app.listen(port, () => {
     console.log(`Division API running on port ${port}`);
+    // Auto-sync models from provider APIs in the background
+    syncModelsBackground();
   });
 }
 

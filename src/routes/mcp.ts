@@ -12,6 +12,7 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { prisma } from "../db";
 import { runAgent, runAgentStream, StreamEvent } from "../services/orchestrator";
+import { syncModels } from "../services/sync-models";
 
 const router = Router();
 
@@ -143,6 +144,15 @@ const TOOLS = [
       required: ["role", "provider"],
     },
   },
+  {
+    name: "division_sync_models",
+    description:
+      "Sync available AI models from provider APIs (OpenAI, Anthropic, Google, xAI, DeepSeek, Mistral). Fetches the latest model lists and updates the database. Requires provider API keys to be configured.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 // ===== Tool Handlers =====
@@ -249,6 +259,11 @@ async function handleListModels() {
     perplexity: "🟠 Perplexity",
     xai: "⚫ xAI (Grok)",
     deepseek: "🔴 DeepSeek",
+    meta: "🔷 Meta (Llama)",
+    qwen: "🟡 Alibaba (Qwen)",
+    mistral: "🟤 Mistral AI",
+    cohere: "🟩 Cohere",
+    moonshot: "🌙 Moonshot AI (Kimi)",
   };
 
   const lines: string[] = ["## Available AI Models\n"];
@@ -501,6 +516,28 @@ async function handleSetAgent(args: Record<string, unknown>) {
   ];
 }
 
+async function handleSyncModels() {
+  const result = await syncModels();
+
+  const lines: string[] = [
+    `## Model Sync Results\n`,
+    `**Timestamp:** ${result.timestamp}`,
+    `**Total:** ${result.totalDiscovered} discovered, ${result.totalAdded} added, ${result.totalUpdated} updated\n`,
+  ];
+
+  for (const p of result.providers) {
+    if (p.error) {
+      lines.push(`### ⚠️ ${p.provider}\n- ${p.error}\n`);
+    } else {
+      lines.push(
+        `### ✅ ${p.provider}\n- Discovered: ${p.discovered} | Added: ${p.added} | Updated: ${p.updated} | Unchanged: ${p.skipped}\n`
+      );
+    }
+  }
+
+  return [{ type: "text", text: lines.join("\n") }];
+}
+
 // ===== JSON-RPC Handler =====
 
 interface JsonRpcRequest {
@@ -617,6 +654,9 @@ async function handleJsonRpc(
             break;
           case "division_set_agent":
             content = await handleSetAgent(args);
+            break;
+          case "division_sync_models":
+            content = await handleSyncModels();
             break;
           default:
             return {

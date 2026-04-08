@@ -56,11 +56,13 @@ npm run build
 
 ## 使えるツール
 
-| ツール                 | 説明                               |
-| ---------------------- | ---------------------------------- |
-| `division_run`         | AIエージェントにタスクを実行させる |
-| `division_list_models` | 利用可能な全AIモデルを一覧表示     |
-| `division_health`      | APIの稼働状態を確認                |
+| ツール                  | 説明                               |
+| ----------------------- | ---------------------------------- |
+| `division_run`          | AIエージェントにタスクを実行させる |
+| `division_list_models`  | 利用可能な全AIモデルを一覧表示     |
+| `division_list_agents`  | プロジェクトのエージェント一覧     |
+| `division_set_agent`    | ロールにAIプロバイダーを割り当て   |
+| `division_health`       | APIの稼働状態を確認                |
 
 ## 使用例
 

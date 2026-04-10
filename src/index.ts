@@ -1,3 +1,4 @@
+import "./env";
 import express from "express";
 import { providerRouter } from "./routes/providers";
 import { roleRouter } from "./routes/roles";

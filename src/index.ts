@@ -8,20 +8,18 @@ import { projectRouter } from "./routes/projects";
 import { agentRouter } from "./routes/agent";
 import { generateRouter } from "./routes/generate";
 import providersListRouter from "./routes/providers-list";
+import { modelSyncRouter } from "./routes/model-sync";
 import mcpRouter from "./routes/mcp";
 import { sseRouter } from "./routes/sse";
 import { taskCreateRouter } from "./routes/task-create";
 import { apiKeyRouter } from "./routes/api-keys";
 import { knockRouter } from "./routes/knock";
-import { clerkMiddleware, divisionAuth } from "./middleware/auth";
+import { divisionAuth } from "./middleware/auth";
 import { syncModelsBackground } from "./services/sync-models";
 
 const app = express();
 
 app.use(express.json());
-
-// Authentication layer (Clerk when configured, no-op otherwise)
-app.use(clerkMiddleware());
 
 // Health check
 app.get("/health", (_req, res) => {
@@ -57,6 +55,7 @@ app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", taskRouter);
 app.use("/api/tasks", taskCreateRouter);
 app.use("/api/models", providersListRouter);
+app.use("/api/models", modelSyncRouter);
 
 // API key management (requires Clerk auth)
 app.use("/api/api-keys", apiKeyRouter);

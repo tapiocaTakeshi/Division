@@ -3,12 +3,12 @@
  *
  * Supports two authentication methods:
  *
- * 1. **Clerk Authentication** (frontend / OAuth users)
- *    Validates session tokens via Clerk. Used by the Conductor UI.
+ * 1. **Supabase Authentication** (frontend / OAuth users)
+ *    Validates JWTs issued by Supabase.
  *
  * 2. **Division API Key** (MCP servers / external clients / Vercel)
  *    Validates `Authorization: Bearer ak_xxx` against:
- *      a) Database-stored API keys (created by Clerk users)
+ *      a) Database-stored API keys (created by users)
  *      b) The DIVISION_API_KEY environment variable (legacy fallback)
  *    Used by MCP servers, curl, and programmatic access.
  *
@@ -17,30 +17,32 @@
  * from environment variables.
  */
 
-import { clerkMiddleware as _clerkMiddleware, getAuth } from "@clerk/express";
 import { Request, Response, NextFunction } from "express";
+import { createClient } from "@supabase/supabase-js";
 import { prisma } from "../db";
 
-/**
- * Check whether Clerk is configured by looking for required env vars.
- * When deploying without Clerk (API-key-only mode), this avoids
- * the "Publishable key is missing" error.
- * Read dynamically so env var changes are reflected without restart.
- */
-function isClerkConfigured(): boolean {
-  return !!process.env.CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
+/** Lazy Supabase client — only created when env vars are present */
+function getSupabaseClient() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false } });
 }
 
 /**
- * Wraps Clerk's middleware so it only runs when Clerk env vars are present.
- * When Clerk is not configured, this is a no-op passthrough.
+ * Verify a Supabase JWT by calling the Supabase Auth API.
+ * Returns the Supabase user UUID on success, null otherwise.
  */
-export function clerkMiddleware() {
-  if (isClerkConfigured()) {
-    return _clerkMiddleware();
+export async function validateSupabaseToken(token: string): Promise<string | null> {
+  try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data.user) return null;
+    return data.user.id;
+  } catch {
+    return null;
   }
-  // No-op: skip Clerk when keys aren't configured
-  return (_req: Request, _res: Response, next: NextFunction) => next();
 }
 
 /**
@@ -99,23 +101,22 @@ async function validateDbApiKey(token: string): Promise<{ valid: boolean; userId
  *
  * Authentication priority:
  *   1. Division API Key — `Authorization: Bearer ak_xxx`
- *      a) Check database first (Clerk-user-generated keys)
+ *      a) Check database first
  *      b) Fall back to DIVISION_API_KEY env var (legacy)
- *   2. Clerk session token — validated via getAuth()
+ *   2. Supabase JWT — validated via Supabase Auth API
  *
  * Does NOT block unauthenticated requests — they can still proceed
  * but must supply their own provider API keys in the request body.
  */
 export function divisionAuth(req: Request, res: Response, next: NextFunction) {
-  // 1. Check Division API key (ak_ prefix)
   const token = extractBearerToken(req);
+
+  // 1. Check Division API key (ak_ prefix)
   if (token && token.startsWith("ak_")) {
-    // Try DB first, then env var fallback
     validateDbApiKey(token)
       .then((dbResult) => {
         const envValid = validateEnvApiKey(token);
         res.locals.authenticated = dbResult.valid || envValid;
-        // Store userId for credit tracking
         if (dbResult.valid && dbResult.userId) {
           res.locals.userId = dbResult.userId;
         }
@@ -126,26 +127,30 @@ export function divisionAuth(req: Request, res: Response, next: NextFunction) {
         const envValid = validateEnvApiKey(token);
         res.locals.authenticated = envValid;
         console.error(`[divisionAuth] DB check failed:`, err);
-        console.log(`[divisionAuth] ak_ key fallback: env=${envValid}, authenticated=${res.locals.authenticated}`);
         next();
       });
     return;
   }
 
-  // 2. Fall back to Clerk authentication
-  if (isClerkConfigured()) {
-    try {
-      const auth = getAuth(req);
-      res.locals.authenticated = !!auth.userId;
-      if (auth.userId) {
-        res.locals.userId = auth.userId;
-      }
-    } catch {
-      res.locals.authenticated = false;
-    }
-  } else {
-    res.locals.authenticated = false;
+  // 2. Try Supabase JWT
+  if (token) {
+    validateSupabaseToken(token)
+      .then((supabaseUserId) => {
+        res.locals.authenticated = !!supabaseUserId;
+        if (supabaseUserId) {
+          res.locals.userId = supabaseUserId;
+          console.log(`[divisionAuth] Supabase JWT: userId=${supabaseUserId}`);
+        }
+        next();
+      })
+      .catch(() => {
+        res.locals.authenticated = false;
+        next();
+      });
+    return;
   }
 
+  // No token
+  res.locals.authenticated = false;
   next();
 }

@@ -1,10 +1,10 @@
 /**
  * API Key Management Routes
  *
- * Allows authenticated Clerk users to create, list, and revoke
+ * Allows authenticated Supabase users to create, list, and revoke
  * Division API keys (ak_xxx format) stored in the database.
  *
- * All routes require Clerk authentication.
+ * All routes require Supabase authentication.
  *
  * POST   /api/api-keys       — Create a new API key
  * GET    /api/api-keys       — List all keys for the current user
@@ -13,9 +13,9 @@
 
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
-import { getAuth } from "@clerk/express";
 import { prisma } from "../db";
 import { asyncHandler } from "../middleware/async-handler";
+import { validateSupabaseToken } from "../middleware/auth";
 
 export const apiKeyRouter = Router();
 
@@ -25,14 +25,22 @@ function generateApiKey(): string {
   return `ak_${bytes.toString("base64url")}`;
 }
 
-/** Extract Clerk userId from request, returns null if not authenticated */
-function getClerkUserId(req: Request): string | null {
-  try {
-    const auth = getAuth(req);
-    return auth.userId || null;
-  } catch {
-    return null;
-  }
+/** Extract bearer token from Authorization header */
+function extractBearer(req: Request): string | undefined {
+  const h = req.headers.authorization;
+  if (!h) return undefined;
+  const parts = h.split(" ");
+  return parts.length === 2 && parts[0].toLowerCase() === "bearer" ? parts[1] : undefined;
+}
+
+/**
+ * Resolve the authenticated user ID from Supabase JWT.
+ * Returns null if authentication fails.
+ */
+async function getUserId(req: Request): Promise<string | null> {
+  const token = extractBearer(req);
+  if (!token || token.startsWith("ak_")) return null;
+  return validateSupabaseToken(token);
 }
 
 /**
@@ -42,9 +50,9 @@ function getClerkUserId(req: Request): string | null {
 apiKeyRouter.post(
   "/",
   asyncHandler(async (req: Request, res: Response) => {
-    const userId = getClerkUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
-      res.status(401).json({ error: "Clerk authentication required to manage API keys" });
+      res.status(401).json({ error: "Authentication required to manage API keys" });
       return;
     }
 
@@ -73,9 +81,9 @@ apiKeyRouter.post(
 apiKeyRouter.get(
   "/",
   asyncHandler(async (req: Request, res: Response) => {
-    const userId = getClerkUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
-      res.status(401).json({ error: "Clerk authentication required to manage API keys" });
+      res.status(401).json({ error: "Authentication required to manage API keys" });
       return;
     }
 
@@ -102,9 +110,9 @@ apiKeyRouter.get(
 apiKeyRouter.delete(
   "/:id",
   asyncHandler(async (req: Request, res: Response) => {
-    const userId = getClerkUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
-      res.status(401).json({ error: "Clerk authentication required to manage API keys" });
+      res.status(401).json({ error: "Authentication required to manage API keys" });
       return;
     }
 

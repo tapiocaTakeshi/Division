@@ -12,7 +12,7 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { prisma } from "../db";
 import { runAgent, runAgentStream, StreamEvent } from "../services/orchestrator";
-import { syncModels } from "../services/sync-models";
+import { syncModels, listAvailableModels } from "../services/sync-models";
 
 const router = Router();
 
@@ -151,6 +151,21 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "division_list_available_models",
+    description:
+      "List all available AI models directly from provider APIs (OpenAI, Anthropic, Google, xAI, DeepSeek, Mistral). This is a read-only operation — it does NOT update the database. Use division_sync_models to persist changes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: {
+          type: "string",
+          description:
+            "Optional. Filter by provider name (openai, anthropic, google, xai, deepseek, mistral). If omitted, lists from all providers.",
+        },
+      },
     },
   },
 ];
@@ -538,6 +553,39 @@ async function handleSyncModels() {
   return [{ type: "text", text: lines.join("\n") }];
 }
 
+async function handleListAvailableModels(args: Record<string, unknown>) {
+  const providerFilter = args.provider as string | undefined;
+  const result = await listAvailableModels(providerFilter);
+
+  const lines: string[] = [
+    `## Available Models from Provider APIs\n`,
+    `**Timestamp:** ${result.timestamp}`,
+    `**Total:** ${result.totalModels} models\n`,
+  ];
+
+  for (const p of result.providers) {
+    if (p.error) {
+      lines.push(`### ⚠️ ${p.provider}\n- ${p.error}\n`);
+      continue;
+    }
+    if (p.models.length === 0) {
+      lines.push(`### ${p.provider}\n- No models found\n`);
+      continue;
+    }
+
+    lines.push(`### ✅ ${p.provider} (${p.models.length} models)\n`);
+    lines.push(`| Name | Model ID | Description |`);
+    lines.push(`|------|----------|-------------|`);
+    for (const m of p.models) {
+      const desc = m.description.length > 50 ? m.description.slice(0, 47) + "..." : m.description;
+      lines.push(`| ${m.name} | \`${m.modelId}\` | ${desc} |`);
+    }
+    lines.push("");
+  }
+
+  return [{ type: "text", text: lines.join("\n") }];
+}
+
 // ===== JSON-RPC Handler =====
 
 interface JsonRpcRequest {
@@ -657,6 +705,9 @@ async function handleJsonRpc(
             break;
           case "division_sync_models":
             content = await handleSyncModels();
+            break;
+          case "division_list_available_models":
+            content = await handleListAvailableModels(args);
             break;
           default:
             return {

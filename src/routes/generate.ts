@@ -41,7 +41,7 @@ const generateSchema = z.object({
 
 /**
  * Resolve the API key for a given provider.
- * When authenticated (valid Clerk token): env vars first, then user-supplied keys.
+ * When authenticated (valid Supabase token): env vars first, then user-supplied keys.
  * When NOT authenticated: user-supplied keys only.
  */
 function resolveApiKey(

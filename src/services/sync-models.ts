@@ -497,3 +497,74 @@ export function syncModelsBackground(): void {
     console.error("[sync-models] Background sync failed:", err);
   });
 }
+
+// ===== List Available Models (read-only, no DB writes) =====
+
+export interface ProviderModels {
+  provider: string;
+  apiType: string;
+  models: DiscoveredModel[];
+  error?: string;
+}
+
+export interface ListModelsResult {
+  timestamp: string;
+  totalModels: number;
+  providers: ProviderModels[];
+}
+
+/**
+ * Queries all provider APIs and returns the discovered models,
+ * grouped by provider. This is a **read-only** operation — it
+ * does NOT write anything to the database.
+ *
+ * @param providerFilter - Optional provider name to fetch from a single provider only
+ */
+export async function listAvailableModels(
+  providerFilter?: string
+): Promise<ListModelsResult> {
+  const targets = providerFilter
+    ? PROVIDER_CONFIGS.filter(
+        (c) => c.name.toLowerCase() === providerFilter.toLowerCase() || c.apiType === providerFilter
+      )
+    : PROVIDER_CONFIGS;
+
+  const providerResults: ProviderModels[] = [];
+  let totalModels = 0;
+
+  for (const config of targets) {
+    const apiKey = process.env[config.envKey];
+    if (!apiKey) {
+      providerResults.push({
+        provider: config.name,
+        apiType: config.apiType,
+        models: [],
+        error: `${config.envKey} not set`,
+      });
+      continue;
+    }
+
+    try {
+      const models = await config.fetcher(apiKey);
+      totalModels += models.length;
+      providerResults.push({
+        provider: config.name,
+        apiType: config.apiType,
+        models: models.sort((a, b) => a.name.localeCompare(b.name)),
+      });
+    } catch (err) {
+      providerResults.push({
+        provider: config.name,
+        apiType: config.apiType,
+        models: [],
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return {
+    timestamp: new Date().toISOString(),
+    totalModels,
+    providers: providerResults,
+  };
+}

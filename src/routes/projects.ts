@@ -12,19 +12,35 @@ const createProjectSchema = z.object({
 
 const updateProjectSchema = createProjectSchema.partial();
 
-// List all projects
+// List projects (filtered by authenticated user's userId)
 projectRouter.get("/", asyncHandler(async (_req: Request, res: Response) => {
-  const projects = await prisma.project.findMany({ orderBy: { createdAt: "desc" } });
+  const userId = res.locals.userId as string | undefined;
+
+  const where: Record<string, unknown> = {};
+  if (userId) {
+    where.userId = userId;
+  }
+
+  const projects = await prisma.project.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+  });
   res.json(projects);
 }));
 
-// Get a project with its role assignments
+// Get a project with its role assignments (owner check)
 projectRouter.get("/:id", asyncHandler(async (req: Request, res: Response) => {
+  const userId = res.locals.userId as string | undefined;
+
   const project = await prisma.project.findUnique({
     where: { id: req.params.id },
   });
   if (!project) {
     res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  if (userId && project.userId && project.userId !== userId) {
+    res.status(403).json({ error: "Access denied" });
     return;
   }
   const assignments = await prisma.roleAssignment.findMany({
@@ -35,18 +51,24 @@ projectRouter.get("/:id", asyncHandler(async (req: Request, res: Response) => {
   res.json({ ...project, assignments });
 }));
 
-// Create a project
+// Create a project (attach userId from auth)
 projectRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   const parsed = createProjectSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.issues });
     return;
   }
-  const project = await prisma.project.create({ data: parsed.data });
+  const userId = res.locals.userId as string | undefined;
+  const project = await prisma.project.create({
+    data: {
+      ...parsed.data,
+      userId: userId || null,
+    },
+  });
   res.status(201).json(project);
 }));
 
-// Update a project
+// Update a project (owner check)
 projectRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => {
   const parsed = updateProjectSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -54,6 +76,16 @@ projectRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => {
     return;
   }
   try {
+    const userId = res.locals.userId as string | undefined;
+    const existing = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    if (userId && existing.userId && existing.userId !== userId) {
+      res.status(403).json({ error: "Access denied" });
+      return;
+    }
     const project = await prisma.project.update({
       where: { id: req.params.id },
       data: parsed.data,
@@ -64,9 +96,19 @@ projectRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => {
   }
 }));
 
-// Delete a project
+// Delete a project (owner check)
 projectRouter.delete("/:id", asyncHandler(async (req: Request, res: Response) => {
   try {
+    const userId = res.locals.userId as string | undefined;
+    const existing = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    if (userId && existing.userId && existing.userId !== userId) {
+      res.status(403).json({ error: "Access denied" });
+      return;
+    }
     await prisma.roleAssignment.deleteMany({ where: { projectId: req.params.id } });
     await prisma.project.delete({ where: { id: req.params.id } });
     res.status(204).send();

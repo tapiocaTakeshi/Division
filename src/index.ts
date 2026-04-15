@@ -50,7 +50,7 @@ app.get("/debug/auth", divisionAuth, (_req, res) => {
 // Public API routes (no auth required)
 app.use("/api/providers", providerRouter);
 app.use("/api/roles", roleRouter);
-app.use("/api/projects", projectRouter);
+app.use("/api/projects", divisionAuth, projectRouter);
 app.use("/api/assignments", assignmentRouter);
 app.use("/api/tasks", divisionAuth, taskRouter);
 app.use("/api/tasks", divisionAuth, taskCreateRouter);

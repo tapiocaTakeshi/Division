@@ -59,10 +59,13 @@ model RoleAssignment {
 /// A project that groups role assignments
 model Project {
   id          String   @id @default(uuid())
+  userId      String?
   name        String
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([userId])
 }
 
 /// AI-generated task (created by Leader AI decomposition)

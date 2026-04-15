@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react'
 import { useOrchestraStore } from '../stores/orchestraStore'
+import { useAuth } from './useAuth'
 import type { AgentNode, RoleSlug } from '../types'
 
 const API_BASE = '/api'
@@ -7,6 +8,7 @@ const API_BASE = '/api'
 export function useOrchestrator() {
   const store = useOrchestraStore()
   const abortRef = useRef<AbortController | null>(null)
+  const { getAccessToken } = useAuth()
 
   const runOrchestration = useCallback(
     async (input: string, projectId = 'demo-project-001', overrides?: Record<string, string>) => {
@@ -17,9 +19,13 @@ export function useOrchestrator() {
       store.resetSession()
 
       try {
+        const token = await getAccessToken()
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (token) headers['Authorization'] = `Bearer ${token}`
+
         const res = await fetch(`${API_BASE}/agent/stream`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ projectId, input, overrides }),
           signal: abort.signal,
         })
@@ -74,9 +80,13 @@ export function useOrchestrator() {
       store.updateAgentStatus(agentId, 'running')
 
       try {
+        const token = await getAccessToken()
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (token) headers['Authorization'] = `Bearer ${token}`
+
         const res = await fetch(`${API_BASE}/tasks/execute`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             projectId: store.session.projectId,
             role: agent.role,

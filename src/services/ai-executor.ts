@@ -83,6 +83,20 @@ const ENV_KEY_MAP: Record<string, string> = {
   moonshot: "MOONSHOT_API_KEY",
 };
 
+/**
+ * Resolve API key: prefer config, then fall back to environment variable.
+ */
+function resolveApiKeyFromConfig(
+  config: Record<string, unknown> | undefined,
+  apiType: string
+): string {
+  const fromConfig = (config?.apiKey as string) || "";
+  if (fromConfig) return fromConfig;
+  const envVar = ENV_KEY_MAP[apiType];
+  if (envVar) return process.env[envVar] || "";
+  return "";
+}
+
 /** API types that use the OpenAI-compatible chat completions format */
 const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
   openai: "/v1/chat/completions",
@@ -447,8 +461,7 @@ export async function executeTaskStream(
     };
   }
 
-  // Use API key from config (resolved upstream with auth-aware logic)
-  const apiKey = (req.config?.apiKey as string) || "";
+  const apiKey = resolveApiKeyFromConfig(req.config, req.provider.apiType);
   if (!apiKey) {
     const envVar = ENV_KEY_MAP[req.provider.apiType];
     return {
@@ -618,8 +631,7 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     };
   }
 
-  // Use API key from config (resolved upstream with auth-aware logic)
-  const apiKey = (req.config?.apiKey as string) || "";
+  const apiKey = resolveApiKeyFromConfig(req.config, req.provider.apiType);
   if (!apiKey) {
     const envVar = ENV_KEY_MAP[req.provider.apiType];
     return {

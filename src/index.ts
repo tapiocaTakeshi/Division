@@ -52,8 +52,8 @@ app.use("/api/providers", providerRouter);
 app.use("/api/roles", roleRouter);
 app.use("/api/projects", projectRouter);
 app.use("/api/assignments", assignmentRouter);
-app.use("/api/tasks", taskRouter);
-app.use("/api/tasks", taskCreateRouter);
+app.use("/api/tasks", divisionAuth, taskRouter);
+app.use("/api/tasks", divisionAuth, taskCreateRouter);
 app.use("/api/models", providersListRouter);
 app.use("/api/models", modelSyncRouter);
 

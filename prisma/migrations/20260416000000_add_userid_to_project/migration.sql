@@ -1,5 +1,5 @@
 -- AlterTable
-ALTER TABLE "Project" ADD COLUMN "userId" TEXT;
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "userId" TEXT;
 
 -- CreateIndex
-CREATE INDEX "Project_userId_idx" ON "Project"("userId");
+CREATE INDEX IF NOT EXISTS "Project_userId_idx" ON "Project"("userId");

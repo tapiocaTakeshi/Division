@@ -452,7 +452,10 @@ export async function runAgent(
         orderBy: { priority: "desc" },
       });
       if (assignment) {
-        provider = assignment.provider;
+        // Apply config.model override, falling back to provider.modelId
+        const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
+        const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
+        provider = { ...assignment.provider, modelId: taskModelId };
       }
     }
 
@@ -990,7 +993,10 @@ async function runAgentStreamCore(
         orderBy: { priority: "desc" },
       });
       if (assignment) {
-        provider = assignment.provider;
+        // Apply config.model override, falling back to provider.modelId
+        const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
+        const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
+        provider = { ...assignment.provider, modelId: taskModelId };
       }
     }
 

@@ -97,6 +97,21 @@ function resolveApiKeyFromConfig(
   return "";
 }
 
+/** Default base URLs when provider.apiBaseUrl is empty */
+const DEFAULT_BASE_URLS: Record<string, string> = {
+  openai: "https://api.openai.com",
+  anthropic: "https://api.anthropic.com",
+  google: "https://generativelanguage.googleapis.com",
+  perplexity: "https://api.perplexity.ai",
+  xai: "https://api.x.ai",
+  deepseek: "https://api.deepseek.com",
+  mistral: "https://api.mistral.ai",
+  meta: "https://api.llama.com",
+  qwen: "https://dashscope-intl.aliyuncs.com",
+  cohere: "https://api.cohere.com",
+  moonshot: "https://api.moonshot.cn",
+};
+
 /** API types that use the OpenAI-compatible chat completions format */
 const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
   openai: "/v1/chat/completions",
@@ -489,7 +504,8 @@ export async function executeTaskStream(
   );
 
   try {
-    const fullUrl = `${req.provider.apiBaseUrl}${streamUrl}`;
+    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[req.provider.apiType] || "";
+    const fullUrl = `${baseUrl}${streamUrl}`;
 
     console.log(`\n[API] ──── Stream Request ────`);
     console.log(`[API]  POST ${fullUrl}`);
@@ -652,7 +668,8 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   }
 
   try {
-    const fullUrl = `${req.provider.apiBaseUrl}${requestSpec.url}`;
+    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[req.provider.apiType] || "";
+    const fullUrl = `${baseUrl}${requestSpec.url}`;
 
     console.log(`\n[API] ──── Request ────`);
     console.log(`[API]  POST ${fullUrl}`);

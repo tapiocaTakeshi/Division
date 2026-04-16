@@ -97,6 +97,21 @@ function resolveApiKeyFromConfig(
   return "";
 }
 
+/** Default model IDs per apiType, used when provider.modelId is empty or not set */
+const DEFAULT_MODELS: Record<string, string> = {
+  anthropic: "claude-sonnet-4-5-20250929",
+  google: "gemini-2.5-flash",
+  openai: "gpt-4.1",
+  perplexity: "sonar-pro",
+  xai: "grok-4.20",
+  deepseek: "deepseek-v4",
+  mistral: "mistral-3-large-latest",
+  meta: "Llama-4-Maverick-17B-128E",
+  qwen: "qwen3-235b-a22b",
+  cohere: "command-r-plus",
+  moonshot: "kimi-k2",
+};
+
 /** Default base URLs when provider.apiBaseUrl is empty */
 const DEFAULT_BASE_URLS: Record<string, string> = {
   openai: "https://api.openai.com",
@@ -142,6 +157,9 @@ function buildRequestBody(
   const apiKey = config?.apiKey as string | undefined;
   const maxTokens = (config?.maxTokens as number) || 4096;
 
+  // Fall back to the default model for this apiType when modelId is not set
+  const resolvedModelId = modelId || DEFAULT_MODELS[apiType] || modelId;
+
   if (apiType === "anthropic") {
     const messages: Array<{ role: string; content: string }> = [];
     if (chatHistory?.length) {
@@ -158,7 +176,7 @@ function buildRequestBody(
         "anthropic-version": "2023-06-01",
       },
       body: {
-        model: modelId,
+        model: resolvedModelId,
         max_tokens: maxTokens,
         system: systemPrompt,
         messages,
@@ -182,7 +200,7 @@ function buildRequestBody(
     }
     contents.push({ role: "user", parts: [{ text: input }] });
     return {
-      url: `/v1beta/models/${modelId}:generateContent`,
+      url: `/v1beta/models/${resolvedModelId}:generateContent`,
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": apiKey || "",
@@ -219,7 +237,7 @@ function buildRequestBody(
         Authorization: `Bearer ${apiKey || ""}`,
       },
       body: {
-        model: modelId,
+        model: resolvedModelId,
         max_completion_tokens: maxTokens,
         messages,
       },

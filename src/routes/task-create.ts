@@ -210,9 +210,12 @@ taskCreateRouter.post(
 
     const enrichedInput = `${formattedHistory}【ユーザーの最新のリクエスト】\n${input}`;
 
+    const savedConfig = leaderAssignment.config
+      ? JSON.parse(leaderAssignment.config)
+      : {};
     const leaderResult = await executeTask({
       provider: leaderAssignment.provider,
-      config: { apiKey: leaderApiKey },
+      config: { ...savedConfig, apiKey: leaderApiKey },
       input: enrichedInput,
       role: { slug: "leader", name: "Leader" },
       systemPrompt: TASK_CREATION_PROMPT,

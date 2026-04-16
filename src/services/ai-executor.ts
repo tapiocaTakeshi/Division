@@ -476,9 +476,10 @@ export async function executeTaskStream(
   const systemPrompt =
     req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
 
+  const modelId = (req.config?.model as string) || req.provider.modelId;
   const requestSpec = buildRequestBody(
     req.provider.apiType,
-    req.provider.modelId,
+    modelId,
     enrichedInput,
     systemPrompt,
     req.config || undefined,
@@ -646,9 +647,10 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   const systemPrompt =
     req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
 
+  const modelId = (req.config?.model as string) || req.provider.modelId;
   const requestSpec = buildRequestBody(
     req.provider.apiType,
-    req.provider.modelId,
+    modelId,
     req.input,
     systemPrompt,
     req.config || undefined,

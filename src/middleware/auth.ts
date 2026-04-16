@@ -111,8 +111,8 @@ async function validateDbApiKey(token: string): Promise<{ valid: boolean; userId
 export function divisionAuth(req: Request, res: Response, next: NextFunction) {
   const token = extractBearerToken(req);
 
-  // 1. Check Division API key (ak_ prefix)
-  if (token && token.startsWith("ak_")) {
+  // 1. Check Division API key (ak_ or div_ prefix)
+  if (token && (token.startsWith("ak_") || token.startsWith("div_"))) {
     validateDbApiKey(token)
       .then((dbResult) => {
         const envValid = validateEnvApiKey(token);

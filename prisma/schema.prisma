@@ -1,12 +1,14 @@
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  provider        = "prisma-client-js"
+  binaryTargets   = ["native", "rhel-openssl-3.0.x"]
+  previewFeatures = ["multiSchema"]
 }
 
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+  schemas   = ["public", "auth"]
 }
 
 /// AI provider (e.g. Claude, Gemini, Perplexity, GPT, etc.)
@@ -23,6 +25,8 @@ model Provider {
   updatedAt   DateTime @updatedAt
 
   assignments RoleAssignment[]
+
+  @@schema("public")
 }
 
 /// A role/task category (e.g. coding, search, planning, writing)
@@ -36,6 +40,8 @@ model Role {
 
   assignments RoleAssignment[]
   taskLogs    TaskLog[]
+
+  @@schema("public")
 }
 
 /// Maps a provider to a role within a project
@@ -54,6 +60,7 @@ model RoleAssignment {
 
   @@unique([projectId, roleId, providerId])
   @@index([projectId])
+  @@schema("public")
 }
 
 /// A project that groups role assignments
@@ -66,6 +73,7 @@ model Project {
   updatedAt   DateTime @updatedAt
 
   @@index([userId])
+  @@schema("public")
 }
 
 /// AI-generated task (created by Leader AI decomposition)
@@ -87,6 +95,7 @@ model Task {
 
   @@index([projectId])
   @@index([sessionId])
+  @@schema("public")
 }
 
 /// API key for authenticated access (linked to Clerk users)
@@ -101,6 +110,7 @@ model ApiKey {
 
   @@index([userId])
   @@index([key])
+  @@schema("public")
 }
 
 /// Execution log for tasks sent to AI providers
@@ -119,4 +129,5 @@ model TaskLog {
   role Role @relation(fields: [roleId], references: [id])
 
   @@index([projectId])
+  @@schema("public")
 }

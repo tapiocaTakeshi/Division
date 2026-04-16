@@ -296,6 +296,11 @@ export async function runAgent(
     );
   }
 
+  // Resolve model: config.model overrides provider.modelId
+  const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
+  const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
+  const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
+
   const leaderApiKey = resolveApiKey(
     leaderAssignment.provider.name,
     leaderAssignment.provider.apiType,
@@ -306,7 +311,7 @@ export async function runAgent(
   // 2. Ask Leader to decompose the task
   log(`[Agent] Session ${sessionId}`);
   log(`[Agent] Input: ${req.input}`);
-  log(`[Agent] Leader: ${leaderAssignment.provider.displayName} (${leaderAssignment.provider.modelId})`);
+  log(`[Agent] Leader: ${leaderProvider.displayName} (${leaderModelId})`);
   logger.info(`[Agent] Starting session`, { sessionId, projectId: req.projectId });
 
   // --- Credit check before processing ---
@@ -318,8 +323,8 @@ export async function runAgent(
       return {
         sessionId,
         input: req.input,
-        leaderProvider: leaderAssignment.provider.displayName,
-        leaderModel: leaderAssignment.provider.modelId,
+        leaderProvider: leaderProvider.displayName,
+        leaderModel: leaderModelId,
         tasks: [],
         mindmap: "",
         totalDurationMs: Date.now() - startTime,
@@ -332,7 +337,7 @@ export async function runAgent(
   }
 
   const leaderResult = await executeTask({
-    provider: leaderAssignment.provider,
+    provider: leaderProvider,
     config: { apiKey: leaderApiKey },
     input: req.input,
     role: { slug: "leader", name: "Leader" },
@@ -344,8 +349,8 @@ export async function runAgent(
     return {
       sessionId,
       input: req.input,
-      leaderProvider: leaderAssignment.provider.displayName,
-      leaderModel: leaderAssignment.provider.modelId,
+      leaderProvider: leaderProvider.displayName,
+      leaderModel: leaderModelId,
       tasks: [],
       mindmap: "",
       totalDurationMs: Date.now() - startTime,
@@ -361,16 +366,16 @@ export async function runAgent(
     return {
       sessionId,
       input: req.input,
-      leaderProvider: leaderAssignment.provider.displayName,
-      leaderModel: leaderAssignment.provider.modelId,
+      leaderProvider: leaderProvider.displayName,
+      leaderModel: leaderModelId,
       tasks: [
         {
           role: "leader",
           mode: "chat",
           input: req.input,
           reason: "Task decomposition failed",
-          provider: leaderAssignment.provider.displayName,
-          model: leaderAssignment.provider.modelId,
+          provider: leaderProvider.displayName,
+          model: leaderModelId,
           output: leaderResult.output,
           status: "error",
           errorMsg:
@@ -595,13 +600,13 @@ export async function runAgent(
   const codingTask = [...results].reverse().find((r) => r.role === "coding");
   const finalCode = codingTask ? codingTask.output : undefined;
   
-  const mindmap = buildMermaidMindmap(sessionId, leaderAssignment.provider.displayName, filledResults);
+  const mindmap = buildMermaidMindmap(sessionId, leaderProvider.displayName, filledResults);
 
   return {
     sessionId,
     input: req.input,
-    leaderProvider: leaderAssignment.provider.displayName,
-    leaderModel: leaderAssignment.provider.modelId,
+    leaderProvider: leaderProvider.displayName,
+    leaderModel: leaderModelId,
     tasks: filledResults,
     mindmap,
     finalOutput,
@@ -811,6 +816,11 @@ async function runAgentStreamCore(
     return;
   }
 
+  // Resolve model: config.model overrides provider.modelId
+  const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
+  const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
+  const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
+
   const leaderApiKey = resolveApiKey(
     leaderAssignment.provider.name,
     leaderAssignment.provider.apiType,
@@ -824,20 +834,20 @@ async function runAgentStreamCore(
     id: nextId(),
     sessionId,
     input: req.input,
-    leader: leaderAssignment.provider.displayName,
+    leader: leaderProvider.displayName,
   });
 
   emit({
     type: "leader_start",
     id: nextId(),
-    provider: leaderAssignment.provider.displayName,
-    model: leaderAssignment.provider.modelId,
+    provider: leaderProvider.displayName,
+    model: leaderModelId,
   });
 
   // 3. Ask Leader to decompose (streaming)
   const leaderResult = await executeTaskStream(
     {
-      provider: leaderAssignment.provider,
+      provider: leaderProvider,
       config: { apiKey: leaderApiKey },
       input: req.input,
       role: { slug: "leader", name: "Leader" },
@@ -896,7 +906,7 @@ async function runAgentStreamCore(
 
   const mindmap = buildMermaidMindmap(
     sessionId,
-    leaderAssignment.provider.displayName,
+    leaderProvider.displayName,
     subTasks
   );
 

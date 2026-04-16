@@ -1027,6 +1027,7 @@ async function main() {
   ];
 
   for (const a of assignments) {
+    const assignmentConfig = JSON.stringify({ model: a.provider.modelId });
     await prisma.roleAssignment.upsert({
       where: {
         projectId_roleId_providerId: {
@@ -1035,12 +1036,13 @@ async function main() {
           providerId: a.provider.id,
         },
       },
-      update: {},
+      update: { config: assignmentConfig },
       create: {
         projectId: project.id,
         roleId: a.role.id,
         providerId: a.provider.id,
         priority: 10,
+        config: assignmentConfig,
       },
     });
   }

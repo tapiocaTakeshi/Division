@@ -52,11 +52,20 @@ assignmentRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
     return;
   }
   const { config, ...rest } = parsed.data;
+
+  // Ensure config.model is set so orchestrator always has an explicit model reference
+  const provider = await prisma.provider.findUnique({ where: { id: rest.providerId } });
+  if (!provider) {
+    res.status(400).json({ error: "Provider not found" });
+    return;
+  }
+  const mergedConfig = { model: provider.modelId, ...config };
+
   try {
     const assignment = await prisma.roleAssignment.create({
       data: {
         ...rest,
-        config: config ? JSON.stringify(config) : null,
+        config: JSON.stringify(mergedConfig),
       },
       include: { role: true, provider: true },
     });
@@ -83,9 +92,31 @@ assignmentRouter.put("/:id", asyncHandler(async (req: Request, res: Response) =>
   const { config, ...rest } = parsed.data;
   try {
     const data: Record<string, unknown> = { ...rest };
-    if (config !== undefined) {
-      data.config = JSON.stringify(config);
+
+    // When providerId changes and no explicit config.model is given, update config.model
+    // to reflect the new provider's modelId so the orchestrator always has an explicit reference
+    if (config !== undefined || rest.providerId !== undefined) {
+      const existing = await prisma.roleAssignment.findUnique({
+        where: { id: req.params.id },
+        include: { provider: true },
+      });
+      if (!existing) {
+        res.status(404).json({ error: "Assignment not found" });
+        return;
+      }
+      const targetProviderId = rest.providerId ?? existing.providerId;
+      const provider = rest.providerId
+        ? await prisma.provider.findUnique({ where: { id: targetProviderId } })
+        : existing.provider;
+      if (!provider) {
+        res.status(400).json({ error: "Provider not found" });
+        return;
+      }
+      const existingConfig = existing.config ? JSON.parse(existing.config) : {};
+      const mergedConfig = { model: provider.modelId, ...existingConfig, ...config };
+      data.config = JSON.stringify(mergedConfig);
     }
+
     const assignment = await prisma.roleAssignment.update({
       where: { id: req.params.id },
       data,
@@ -137,11 +168,14 @@ assignmentRouter.post("/bulk", asyncHandler(async (req: Request, res: Response) 
     const created = [];
     for (const a of assignments) {
       const { config, ...rest } = a;
+      // Fetch provider to ensure config.model is always explicitly set
+      const provider = await tx.provider.findUnique({ where: { id: rest.providerId } });
+      const mergedConfig = { model: provider?.modelId ?? "", ...config };
       const record = await tx.roleAssignment.create({
         data: {
           projectId,
           ...rest,
-          config: config ? JSON.stringify(config) : null,
+          config: JSON.stringify(mergedConfig),
         },
         include: { role: true, provider: true },
       });

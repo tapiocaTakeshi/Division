@@ -33,6 +33,11 @@ export interface OrchestraSession {
   waves: WaveGroup[]
   leaderOutput?: string
   finalOutput?: string
+  synthesisOutput?: string
+  synthesisStatus?: AgentStatus
+  synthesisRole?: string
+  synthesisProvider?: string
+  synthesisModel?: string
   totalDurationMs?: number
   totalTokens?: number
   estimatedCost?: number
@@ -92,6 +97,9 @@ export type SSEEventType =
   | 'task_thinking_chunk'
   | 'task_done'
   | 'task_error'
+  | 'synthesis_start'
+  | 'synthesis_chunk'
+  | 'synthesis_done'
   | 'session_done'
   | 'heartbeat'
 

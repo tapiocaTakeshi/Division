@@ -214,6 +214,22 @@ function handleSSEEvent(
       })
       break
 
+    case 'synthesis_start':
+      store.startSynthesis(
+        event.role as string,
+        event.provider as string,
+        event.model as string
+      )
+      break
+
+    case 'synthesis_chunk':
+      store.appendSynthesisChunk(event.text as string)
+      break
+
+    case 'synthesis_done':
+      store.completeSynthesis(event.output as string)
+      break
+
     case 'session_done':
       store.completeSession(
         event.finalOutput as string,

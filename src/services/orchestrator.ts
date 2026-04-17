@@ -105,6 +105,10 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
     - "computer_use": 実際にターミナル等でコードを実行・テストする必要があるタスク（例: codingやreview時等）
     - "function_calling": 検索やファイルの読み込み等、外部ツールを利用して情報収集するタスク（例: search等）
 12. 単一の層（すべて並列実行など）ではなく、必ず複数層（例: 基礎調査層→企画層→実装層→レビュー層）になるように dependsOn を用いて多段階のパイプライン計画を作成してください。
+13. "finalRole" を必ず指定してください。全エージェントの出力を最終的に統合する役割です。
+    - "coder": コード生成が主な成果物の場合
+    - "writer": ドキュメント・文章・レポートが主な成果物の場合
+    最終統合は自動的に行われるため、tasksに含める必要はありません。
 
 \`\`\`json
 {
@@ -113,9 +117,24 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
     { "role": "ideaman", "mode": "chat", "input": "検索結果を元に機能アイデアを複数提案", "reason": "クリエイティブな視点を取り入れるため", "dependsOn": [0] },
     { "role": "planning", "mode": "chat", "input": "アイデアを元に具体的な要件定義と設計を作成", "reason": "実装の明確なゴールを設定するため", "dependsOn": [1] },
     { "role": "coding", "mode": "computer_use", "input": "要件定義に沿ってプロトタイプを実装", "reason": "検証可能な形にするため", "dependsOn": [2] }
-  ]
+  ],
+  "finalRole": "coder"
 }
 \`\`\``;
+
+// --- Synthesis Prompt ---
+
+const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです。
+複数の専門AIエージェントが並列で作業した結果が以下に提供されます。
+これらの全出力を統合し、ユーザーの元のリクエストに対する**最終的な成果物**を生成してください。
+
+ルール:
+1. 必ず Markdown 形式で出力してください
+2. 各エージェントの出力から重要な情報を抽出し、矛盾があれば最も正確な情報を採用してください
+3. コードが含まれる場合はコードブロック内に正しい言語タグを付けてください
+4. 見出し・リスト・表などを適切に使い、読みやすく構造化してください
+5. 冗長な重複は排除し、簡潔で実用的な成果物にまとめてください
+6. ユーザーのリクエストに直接答える形で出力してください`;
 
 // --- API Key Resolution ---
 
@@ -151,10 +170,15 @@ function extractJson(text: string): string {
   return text;
 }
 
+interface LeaderParsedResponse {
+  tasks: SubTask[];
+  finalRole: "coder" | "writer";
+}
+
 /**
- * Parse the Leader's response into sub-tasks
+ * Parse the Leader's response into sub-tasks and a finalRole for synthesis.
  */
-function parseLeaderResponse(output: string): SubTask[] {
+function parseLeaderResponse(output: string): LeaderParsedResponse {
   try {
     const jsonStr = extractJson(output);
     const parsed = JSON.parse(jsonStr);
@@ -163,13 +187,17 @@ function parseLeaderResponse(output: string): SubTask[] {
       throw new Error("Leader response missing 'tasks' array");
     }
 
-    return parsed.tasks.map((t: Record<string, unknown>) => ({
+    const tasks = parsed.tasks.map((t: Record<string, unknown>) => ({
       role: String(t.role || ""),
       mode: String(t.mode || "chat"),
       input: String(t.input || ""),
       reason: String(t.reason || ""),
       dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn.filter((v: unknown) => typeof v === "number") as number[] : undefined,
     }));
+
+    const finalRole = parsed.finalRole === "coder" ? "coder" : "writer";
+
+    return { tasks, finalRole };
   } catch (err) {
     throw new Error(
       `Failed to parse Leader response: ${err instanceof Error ? err.message : String(err)}\nRaw output: ${output}`
@@ -372,8 +400,11 @@ export async function runAgent(
 
   // 3. Parse Leader's task breakdown
   let subTasks: SubTask[];
+  let finalRole: "coder" | "writer" = "writer";
   try {
-    subTasks = parseLeaderResponse(leaderResult.output);
+    const leaderParsed = parseLeaderResponse(leaderResult.output);
+    subTasks = leaderParsed.tasks;
+    finalRole = leaderParsed.finalRole;
   } catch (parseErr) {
     return {
       sessionId,
@@ -401,7 +432,7 @@ export async function runAgent(
     };
   }
 
-  log(`[Agent] Leader decomposed into ${subTasks.length} tasks:`);
+  log(`[Agent] Leader decomposed into ${subTasks.length} tasks (finalRole: ${finalRole}):`);
   logger.info(`[Agent] Leader decomposed into ${subTasks.length} tasks`);
   subTasks.forEach((t, i) =>
     log(`  ${i + 1}. [${t.role}] ${t.input.substring(0, 60)}...`)
@@ -599,8 +630,58 @@ export async function runAgent(
     }
   }
 
-  // 5. Determine overall status
+  // 5. Synthesis step — collect all outputs and pass to Coder/Writer
   const filledResults = results.filter(Boolean);
+  const successfulOutputs = filledResults
+    .filter((r) => r.status === "success" && r.output)
+    .map((r) => `### ${r.role} (${r.provider}):\n${r.output}`);
+
+  let finalOutput: string | undefined;
+  let finalCode: string | undefined;
+
+  if (successfulOutputs.length > 0) {
+    const synthesisRoleSlug = normalizeRoleSlug(finalRole);
+    const synthesisRole = await prisma.role.findUnique({ where: { slug: synthesisRoleSlug } });
+
+    let synthesisProvider: typeof leaderProvider | null = null;
+    if (synthesisRole) {
+      const synthesisAssignment = await prisma.roleAssignment.findFirst({
+        where: { projectId: req.projectId, roleId: synthesisRole.id },
+        include: { provider: true },
+        orderBy: { priority: "desc" },
+      });
+      if (synthesisAssignment) {
+        const synthConfig = synthesisAssignment.config ? JSON.parse(synthesisAssignment.config) : {};
+        const synthModelId = (synthConfig.model as string) || synthesisAssignment.provider.modelId;
+        synthesisProvider = { ...synthesisAssignment.provider, modelId: synthModelId };
+      }
+    }
+
+    if (synthesisProvider) {
+      const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
+      const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+
+      log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName}`);
+      const synthesisResult = await executeTask({
+        provider: synthesisProvider,
+        config: { apiKey: synthesisApiKey },
+        input: synthesisInput,
+        role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
+        systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
+      });
+
+      if (synthesisResult.status === "success") {
+        finalOutput = synthesisResult.output;
+        if (finalRole === "coder") finalCode = synthesisResult.output;
+      } else {
+        finalOutput = successfulOutputs.join("\n\n---\n\n");
+      }
+    } else {
+      finalOutput = successfulOutputs.join("\n\n---\n\n");
+    }
+  }
+
+  // 6. Determine overall status
   const allSuccess = filledResults.every((r) => r.status === "success");
   const allError = filledResults.every((r) => r.status === "error");
   const status = allSuccess ? "success" : allError ? "error" : "partial";
@@ -612,10 +693,6 @@ export async function runAgent(
     { sessionId, status, totalDurationMs }
   );
 
-  const finalOutput = results.length > 0 ? results[results.length - 1].output : undefined;
-  const codingTask = [...results].reverse().find((r) => r.role === "coding");
-  const finalCode = codingTask ? codingTask.output : undefined;
-  
   const mindmap = buildMermaidMindmap(sessionId, leaderProvider.displayName, filledResults);
 
   return {
@@ -756,6 +833,27 @@ export interface StreamEventWaveDone {
   taskIds: string[];
   taskIndices: number[];
 }
+export interface StreamEventSynthesisStart {
+  type: "synthesis_start";
+  id: string;
+  role: string;
+  provider: string;
+  model: string;
+}
+export interface StreamEventSynthesisChunk {
+  type: "synthesis_chunk";
+  id: string;
+  text: string;
+}
+export interface StreamEventSynthesisDone {
+  type: "synthesis_done";
+  id: string;
+  output: string;
+  durationMs: number;
+  role: string;
+  provider: string;
+  model: string;
+}
 
 export type StreamEvent =
   | StreamEventSessionStart
@@ -771,7 +869,10 @@ export type StreamEvent =
   | StreamEventSessionDone
   | StreamEventHeartbeat
   | StreamEventWaveStart
-  | StreamEventWaveDone;
+  | StreamEventWaveDone
+  | StreamEventSynthesisStart
+  | StreamEventSynthesisChunk
+  | StreamEventSynthesisDone;
 
 /**
  * Streaming orchestrator: run the full agent pipeline, emitting SSE events via the callback.
@@ -889,8 +990,11 @@ async function runAgentStreamCore(
 
   // 4. Parse Leader's task breakdown
   let subTasks: SubTask[];
+  let finalRole: "coder" | "writer" = "writer";
   try {
-    subTasks = parseLeaderResponse(leaderResult.output);
+    const leaderParsed = parseLeaderResponse(leaderResult.output);
+    subTasks = leaderParsed.tasks;
+    finalRole = leaderParsed.finalRole;
   } catch (parseErr) {
     emit({
       type: "leader_error",
@@ -1173,16 +1277,111 @@ async function runAgentStreamCore(
     waveNum++;
   }
 
-  // 6. Determine overall status & emit session_done with full results
+  // 6. Synthesis step — collect all outputs and pass to Coder/Writer
   const filledResults = taskResults.filter(Boolean);
+  const successfulOutputs = filledResults
+    .filter((r) => r.status === "success" && r.output)
+    .map((r) => `### ${r.role} (${r.provider}):\n${r.output}`);
+
+  let finalOutput: string | undefined;
+
+  if (successfulOutputs.length > 0) {
+    // Resolve the synthesis role (coder or writer)
+    const synthesisRoleSlug = normalizeRoleSlug(finalRole);
+    const synthesisRole = await prisma.role.findUnique({
+      where: { slug: synthesisRoleSlug },
+    });
+
+    let synthesisProvider: {
+      id: string;
+      name: string;
+      displayName: string;
+      apiBaseUrl: string;
+      apiType: string;
+      modelId: string;
+      isEnabled: boolean;
+    } | null = null;
+
+    if (synthesisRole) {
+      const synthesisAssignment = await prisma.roleAssignment.findFirst({
+        where: { projectId: req.projectId, roleId: synthesisRole.id },
+        include: { provider: true },
+        orderBy: { priority: "desc" },
+      });
+      if (synthesisAssignment) {
+        const synthConfig = synthesisAssignment.config ? JSON.parse(synthesisAssignment.config) : {};
+        const synthModelId = (synthConfig.model as string) || synthesisAssignment.provider.modelId;
+        synthesisProvider = { ...synthesisAssignment.provider, modelId: synthModelId };
+      }
+    }
+
+    if (synthesisProvider) {
+      const synthesisApiKey = resolveApiKey(
+        synthesisProvider.name,
+        synthesisProvider.apiType,
+        req.apiKeys,
+        req.authenticated
+      );
+
+      const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+
+      emit({
+        type: "synthesis_start",
+        id: nextId(),
+        role: finalRole,
+        provider: synthesisProvider.displayName,
+        model: synthesisProvider.modelId,
+      });
+
+      const synthStart = Date.now();
+      const synthesisResult = await executeTaskStream(
+        {
+          provider: synthesisProvider,
+          config: { apiKey: synthesisApiKey },
+          input: synthesisInput,
+          role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
+          systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
+        },
+        (text) => emit({ type: "synthesis_chunk", id: nextId(), text })
+      );
+
+      const synthDurationMs = Date.now() - synthStart;
+
+      if (synthesisResult.status === "success") {
+        finalOutput = synthesisResult.output;
+        emit({
+          type: "synthesis_done",
+          id: nextId(),
+          output: synthesisResult.output,
+          durationMs: synthDurationMs,
+          role: finalRole,
+          provider: synthesisProvider.displayName,
+          model: synthesisProvider.modelId,
+        });
+      } else {
+        // Synthesis failed — fall back to concatenated outputs
+        finalOutput = successfulOutputs.join("\n\n---\n\n");
+        emit({
+          type: "synthesis_done",
+          id: nextId(),
+          output: finalOutput,
+          durationMs: synthDurationMs,
+          role: finalRole,
+          provider: synthesisProvider.displayName,
+          model: synthesisProvider.modelId,
+        });
+      }
+    } else {
+      // No synthesis provider assigned — fall back to concatenated outputs
+      finalOutput = successfulOutputs.join("\n\n---\n\n");
+    }
+  }
+
+  // 7. Determine overall status & emit session_done with full results
   const allSuccess = filledResults.every((r) => r.status === "success");
   const allError = filledResults.every((r) => r.status === "error");
   const status = allSuccess ? "success" : allError ? "error" : "partial";
   const totalDurationMs = Date.now() - startTime;
-
-  // Pick the last successful output as the final output
-  const lastSuccessResult = [...filledResults].reverse().find((r) => r.status === "success");
-  const finalOutput = lastSuccessResult?.output;
 
   emit({
     type: "session_done",

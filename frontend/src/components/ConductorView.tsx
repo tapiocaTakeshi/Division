@@ -1,5 +1,7 @@
 import { useOrchestraStore, ROLE_META } from '../stores/orchestraStore'
 import { AgentCard } from './AgentCard'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface ConductorViewProps {
   onRerunAgent?: (agentId: string) => void
@@ -115,19 +117,67 @@ export function ConductorView({ onRerunAgent }: ConductorViewProps) {
         </div>
       )}
 
-      {/* Final output */}
-      {session.finalOutput && (
-        <div className="glass-card p-5 border-conductor-success/30 glow-success">
-          <div className="flex items-center gap-2 mb-3">
-            <svg className="w-5 h-5 text-conductor-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <h3 className="text-sm font-bold text-conductor-success">最終出力</h3>
+      {/* Synthesis step */}
+      {(session.synthesisStatus || session.finalOutput) && (
+        <>
+          {/* Flow connector to synthesis */}
+          {waves.length > 0 && (
+            <div className="flex justify-center py-2">
+              <svg width="24" height="32" viewBox="0 0 24 32" className="text-conductor-accent/40">
+                <line x1="12" y1="0" x2="12" y2="24" stroke="currentColor" strokeWidth="2" className="flow-connector" />
+                <polygon points="6,24 12,32 18,24" fill="currentColor" />
+              </svg>
+            </div>
+          )}
+
+          <div className={`glass-card p-5 ${session.synthesisStatus === 'success' ? 'border-conductor-success/30 glow-success' : session.synthesisStatus === 'running' ? 'border-conductor-accent/30' : ''}`}>
+            <div className="flex items-center gap-3 mb-4">
+              <div
+                className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${session.synthesisStatus === 'running' ? 'animate-pulse-glow' : ''}`}
+                style={{ backgroundColor: `${session.synthesisRole === 'coder' ? ROLE_META.coding.color : ROLE_META.writing.color}20` }}
+              >
+                {session.synthesisRole === 'coder' ? ROLE_META.coding.icon : ROLE_META.writing.icon}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-white">
+                  {session.synthesisRole === 'coder' ? 'Coder' : 'Writer'} - 最終統合
+                </h3>
+                <p className="text-xs text-conductor-muted">
+                  {session.synthesisProvider && `${session.synthesisProvider}`}
+                  {session.synthesisModel && ` / ${session.synthesisModel}`}
+                </p>
+              </div>
+              {session.synthesisStatus === 'running' && (
+                <div className="flex items-center gap-2 text-xs text-conductor-accent-light">
+                  <LoadingDots />
+                  統合中...
+                </div>
+              )}
+              {session.synthesisStatus === 'success' && (
+                <svg className="w-5 h-5 text-conductor-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              )}
+            </div>
+
+            {/* Markdown output */}
+            {(session.synthesisOutput || session.finalOutput) && (
+              <div className="bg-white/5 rounded-lg p-4 text-sm text-white/80 leading-relaxed max-h-[600px] overflow-y-auto prose prose-invert prose-sm max-w-none
+                prose-headings:text-white prose-p:text-white/80 prose-strong:text-white
+                prose-code:text-conductor-accent-light prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                prose-pre:bg-black/40 prose-pre:border prose-pre:border-white/10
+                prose-a:text-conductor-accent-light prose-a:no-underline hover:prose-a:underline
+                prose-li:text-white/80 prose-th:text-white prose-td:text-white/70
+                prose-blockquote:border-conductor-accent/30 prose-blockquote:text-white/60
+                prose-hr:border-white/10
+              ">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {session.synthesisOutput || session.finalOutput || ''}
+                </ReactMarkdown>
+              </div>
+            )}
           </div>
-          <div className="bg-white/5 rounded-lg p-4 text-sm text-white/80 leading-relaxed max-h-64 overflow-y-auto font-mono whitespace-pre-wrap">
-            {session.finalOutput}
-          </div>
-        </div>
+        </>
       )}
     </div>
   )

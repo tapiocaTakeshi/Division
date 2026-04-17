@@ -31,6 +31,9 @@ interface OrchestraState {
   setLeaderOutput: (output: string) => void
   addAgents: (agents: AgentNode[]) => void
   setWaves: (waves: WaveGroup[]) => void
+  startSynthesis: (role: string, provider: string, model: string) => void
+  appendSynthesisChunk: (text: string) => void
+  completeSynthesis: (output: string) => void
   completeSession: (finalOutput: string, totalDurationMs: number) => void
   failSession: (error: string) => void
   resetSession: () => void
@@ -155,6 +158,27 @@ export const useOrchestraStore = create<OrchestraState>((set) => ({
     set((state) => ({
       session: state.session ? { ...state.session, waves } : null,
       metrics: { ...state.metrics, waveCount: waves.length },
+    })),
+
+  startSynthesis: (role, provider, model) =>
+    set((state) => ({
+      session: state.session
+        ? { ...state.session, synthesisStatus: 'running', synthesisRole: role, synthesisProvider: provider, synthesisModel: model, synthesisOutput: '' }
+        : null,
+    })),
+
+  appendSynthesisChunk: (text) =>
+    set((state) => ({
+      session: state.session
+        ? { ...state.session, synthesisOutput: (state.session.synthesisOutput ?? '') + text }
+        : null,
+    })),
+
+  completeSynthesis: (output) =>
+    set((state) => ({
+      session: state.session
+        ? { ...state.session, synthesisStatus: 'success', synthesisOutput: output }
+        : null,
     })),
 
   completeSession: (finalOutput, totalDurationMs) =>

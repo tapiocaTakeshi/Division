@@ -14,6 +14,18 @@ import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
 import { checkCredits, consumeCredits, estimateTokens } from "./credits";
 
+// --- Role Alias Mapping ---
+// Leader AI sometimes generates role slugs that differ from DB slugs.
+const ROLE_ALIASES: Record<string, string> = {
+  "deep-research": "research",
+  "planning": "planner",
+  "coding": "coder",
+};
+
+function normalizeRoleSlug(slug: string): string {
+  return ROLE_ALIASES[slug] || slug;
+}
+
 // --- Types ---
 
 export interface SubTask {
@@ -404,6 +416,7 @@ export async function runAgent(
 
   async function executeSubTaskNonStream(i: number): Promise<void> {
     const task = subTasks[i];
+    task.role = normalizeRoleSlug(task.role);
 
     // Find role
     const role = await prisma.role.findUnique({
@@ -946,6 +959,7 @@ async function runAgentStreamCore(
   /** Execute a single sub-task at the given index */
   async function executeSubTask(i: number): Promise<void> {
     const task = subTasks[i];
+    task.role = normalizeRoleSlug(task.role);
 
     // Find role
     const role = await prisma.role.findUnique({

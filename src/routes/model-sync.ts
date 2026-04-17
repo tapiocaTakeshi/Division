@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../middleware/async-handler";
-import { listAvailableModels, syncModels } from "../services/sync-models";
+import { listAvailableModels, listModelsForProvider, syncModels } from "../services/sync-models";
 
 const router = Router();
 
@@ -37,6 +37,32 @@ router.post(
   asyncHandler(async (_req: Request, res: Response) => {
     const result = await syncModels();
     res.json(result);
+  })
+);
+
+/**
+ * GET /api/models/provider/:providerId
+ * List available models for a specific provider (cached).
+ *
+ * Example:
+ *   GET /api/models/provider/openai
+ *   GET /api/models/provider/google
+ */
+router.get(
+  "/provider/:providerId",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { providerId } = req.params;
+    const result = await listModelsForProvider(providerId);
+    if (!result) {
+      res.status(404).json({ error: `Provider "${providerId}" not found` });
+      return;
+    }
+    res.json({
+      provider: result.provider,
+      apiType: result.apiType,
+      models: result.models.map((m) => ({ id: m.modelId, name: m.name })),
+      ...(result.error ? { error: result.error } : {}),
+    });
   })
 );
 

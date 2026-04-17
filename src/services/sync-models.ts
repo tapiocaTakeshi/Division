@@ -475,6 +475,8 @@ export async function syncModels(): Promise<SyncResult> {
     }
   }
 
+  clearModelCache();
+
   console.log(
     `[sync-models] Sync complete: ${totalDiscovered} discovered, ${totalAdded} added, ${totalUpdated} updated`
   );
@@ -498,6 +500,22 @@ export function syncModelsBackground(): void {
   });
 }
 
+// ===== In-Memory Cache =====
+
+interface CacheEntry {
+  data: ProviderModels;
+  expiresAt: number;
+}
+
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const modelCache = new Map<string, CacheEntry>();
+
+/** Clear the entire model cache (called after sync) */
+export function clearModelCache(): void {
+  modelCache.clear();
+  console.log("[sync-models] Model cache cleared");
+}
+
 // ===== List Available Models (read-only, no DB writes) =====
 
 export interface ProviderModels {
@@ -511,14 +529,51 @@ export interface ListModelsResult {
   timestamp: string;
   totalModels: number;
   providers: ProviderModels[];
+  cached?: boolean;
+}
+
+async function fetchProviderModels(config: ProviderFetchConfig): Promise<ProviderModels> {
+  const now = Date.now();
+  const cached = modelCache.get(config.apiType);
+  if (cached && cached.expiresAt > now) {
+    return cached.data;
+  }
+
+  const apiKey = process.env[config.envKey];
+  if (!apiKey) {
+    return {
+      provider: config.name,
+      apiType: config.apiType,
+      models: [],
+      error: `${config.envKey} not set`,
+    };
+  }
+
+  try {
+    const models = await config.fetcher(apiKey);
+    const result: ProviderModels = {
+      provider: config.name,
+      apiType: config.apiType,
+      models: models.sort((a, b) => a.name.localeCompare(b.name)),
+    };
+    modelCache.set(config.apiType, { data: result, expiresAt: now + CACHE_TTL_MS });
+    return result;
+  } catch (err) {
+    return {
+      provider: config.name,
+      apiType: config.apiType,
+      models: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 /**
  * Queries all provider APIs and returns the discovered models,
- * grouped by provider. This is a **read-only** operation — it
- * does NOT write anything to the database.
+ * grouped by provider. Results are cached per-provider for 1 hour.
+ * This is a **read-only** operation — it does NOT write to the database.
  *
- * @param providerFilter - Optional provider name to fetch from a single provider only
+ * @param providerFilter - Optional provider name/apiType to fetch from a single provider only
  */
 export async function listAvailableModels(
   providerFilter?: string
@@ -529,42 +584,26 @@ export async function listAvailableModels(
       )
     : PROVIDER_CONFIGS;
 
-  const providerResults: ProviderModels[] = [];
-  let totalModels = 0;
-
-  for (const config of targets) {
-    const apiKey = process.env[config.envKey];
-    if (!apiKey) {
-      providerResults.push({
-        provider: config.name,
-        apiType: config.apiType,
-        models: [],
-        error: `${config.envKey} not set`,
-      });
-      continue;
-    }
-
-    try {
-      const models = await config.fetcher(apiKey);
-      totalModels += models.length;
-      providerResults.push({
-        provider: config.name,
-        apiType: config.apiType,
-        models: models.sort((a, b) => a.name.localeCompare(b.name)),
-      });
-    } catch (err) {
-      providerResults.push({
-        provider: config.name,
-        apiType: config.apiType,
-        models: [],
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  const providerResults = await Promise.all(targets.map(fetchProviderModels));
+  const totalModels = providerResults.reduce((sum, p) => sum + p.models.length, 0);
 
   return {
     timestamp: new Date().toISOString(),
     totalModels,
     providers: providerResults,
   };
+}
+
+/**
+ * Get available models for a single provider by apiType.
+ * Uses cache, fast for repeated calls.
+ */
+export async function listModelsForProvider(
+  apiType: string
+): Promise<ProviderModels | null> {
+  const config = PROVIDER_CONFIGS.find(
+    (c) => c.apiType === apiType || c.name.toLowerCase() === apiType.toLowerCase()
+  );
+  if (!config) return null;
+  return fetchProviderModels(config);
 }

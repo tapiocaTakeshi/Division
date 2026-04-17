@@ -7,8 +7,18 @@
     },
     "rewrites": [
         {
+            "source": "/api/cron/sync-models",
+            "destination": "/api/cron/sync-models"
+        },
+        {
             "source": "/(.*)",
             "destination": "/api"
+        }
+    ],
+    "crons": [
+        {
+            "path": "/api/cron/sync-models",
+            "schedule": "0 4 * * *"
         }
     ]
 }

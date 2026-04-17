@@ -69,6 +69,18 @@ app.use("/api/generate", divisionAuth, generateRouter);
 app.use("/api/sse", divisionAuth, sseRouter);
 app.use("/mcp", divisionAuth, mcpRouter);
 
+// Vercel: trigger background model sync on first request (once per cold start)
+let vercelSyncTriggered = false;
+if (process.env.VERCEL) {
+  app.use((_req, _res, next) => {
+    if (!vercelSyncTriggered) {
+      vercelSyncTriggered = true;
+      syncModelsBackground();
+    }
+    next();
+  });
+}
+
 // Error handler
 app.use(
   (
@@ -87,7 +99,6 @@ if (!process.env.VERCEL) {
   const port = process.env.PORT || 3000;
   app.listen(port, () => {
     console.log(`Division API running on port ${port}`);
-    // Auto-sync models from provider APIs in the background
     syncModelsBackground();
   });
 }

@@ -243,6 +243,12 @@ export const ROLE_META: Record<RoleSlug, { label: string; color: string; icon: s
     icon: '🔍',
     strengths: ['情報収集', 'ファクトチェック', '最新データ'],
   },
+  'file-search': {
+    label: 'File Search',
+    color: '#0ea5e9',
+    icon: '📂',
+    strengths: ['ファイル検索', 'コード解析', '既存コード理解'],
+  },
   planning: {
     label: 'Planner',
     color: '#f59e0b',

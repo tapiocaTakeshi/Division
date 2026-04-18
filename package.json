@@ -8,7 +8,7 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "postinstall": "prisma generate",
-    "vercel-build": "export DATABASE_URL=\"${DATABASE_URL:-${division_POSTGRES_PRISMA_URL:-$division_POSTGRES_URL}}\" && export DIRECT_URL=\"${DIRECT_URL:-${division_POSTGRES_URL_NON_POOLING:-$division_POSTGRES_URL}}\" && prisma generate && (prisma migrate resolve --applied 20260415000000_init 2>/dev/null || true) && prisma migrate deploy",
+    "vercel-build": "export DATABASE_URL=\"${DATABASE_URL:-${division_POSTGRES_PRISMA_URL:-$division_POSTGRES_URL}}\" && export DIRECT_URL=\"${DIRECT_URL:-${division_POSTGRES_URL_NON_POOLING:-$division_POSTGRES_URL}}\" && prisma generate && (prisma migrate resolve --applied 20260415000000_init 2>/dev/null || true) && prisma migrate deploy && ts-node prisma/seed.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",

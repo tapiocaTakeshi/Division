@@ -507,7 +507,12 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — keeps real-time feel while avoiding rate limits
+const CACHE_TTL_MS = (() => {
+  const raw = process.env.MODEL_DISCOVERY_CACHE_TTL_MS;
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_CACHE_TTL_MS;
+})();
 const modelCache = new Map<string, CacheEntry>();
 
 /** Clear the entire model cache (called after sync) */
@@ -532,11 +537,16 @@ export interface ListModelsResult {
   cached?: boolean;
 }
 
-async function fetchProviderModels(config: ProviderFetchConfig): Promise<ProviderModels> {
+async function fetchProviderModels(
+  config: ProviderFetchConfig,
+  forceRefresh = false
+): Promise<ProviderModels> {
   const now = Date.now();
-  const cached = modelCache.get(config.apiType);
-  if (cached && cached.expiresAt > now) {
-    return cached.data;
+  if (!forceRefresh) {
+    const cached = modelCache.get(config.apiType);
+    if (cached && cached.expiresAt > now) {
+      return cached.data;
+    }
   }
 
   const apiKey = process.env[config.envKey];
@@ -570,13 +580,15 @@ async function fetchProviderModels(config: ProviderFetchConfig): Promise<Provide
 
 /**
  * Queries all provider APIs and returns the discovered models,
- * grouped by provider. Results are cached per-provider for 1 hour.
- * This is a **read-only** operation — it does NOT write to the database.
+ * grouped by provider. Results are cached per-provider (TTL configurable via
+ * MODEL_DISCOVERY_CACHE_TTL_MS, default 5 minutes). Read-only — no DB writes.
  *
  * @param providerFilter - Optional provider name/apiType to fetch from a single provider only
+ * @param forceRefresh   - If true, bypass cache and re-query every provider API
  */
 export async function listAvailableModels(
-  providerFilter?: string
+  providerFilter?: string,
+  forceRefresh = false
 ): Promise<ListModelsResult> {
   const targets = providerFilter
     ? PROVIDER_CONFIGS.filter(
@@ -584,7 +596,9 @@ export async function listAvailableModels(
       )
     : PROVIDER_CONFIGS;
 
-  const providerResults = await Promise.all(targets.map(fetchProviderModels));
+  const providerResults = await Promise.all(
+    targets.map((c) => fetchProviderModels(c, forceRefresh))
+  );
   const totalModels = providerResults.reduce((sum, p) => sum + p.models.length, 0);
 
   return {
@@ -596,14 +610,15 @@ export async function listAvailableModels(
 
 /**
  * Get available models for a single provider by apiType.
- * Uses cache, fast for repeated calls.
+ * Uses cache unless forceRefresh is true.
  */
 export async function listModelsForProvider(
-  apiType: string
+  apiType: string,
+  forceRefresh = false
 ): Promise<ProviderModels | null> {
   const config = PROVIDER_CONFIGS.find(
     (c) => c.apiType === apiType || c.name.toLowerCase() === apiType.toLowerCase()
   );
   if (!config) return null;
-  return fetchProviderModels(config);
+  return fetchProviderModels(config, forceRefresh);
 }

@@ -1,31 +1,29 @@
 import { useState, useRef } from 'react'
 import { useOrchestraStore, ROLE_META } from '../stores/orchestraStore'
+import { useAvailableModels } from '../hooks/useAvailableModels'
 import type { PipelineStep, RoleSlug } from '../types'
 
-const AVAILABLE_PROVIDERS = [
-  { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'Claude', roles: ['coding', 'writing', 'review', 'ideaman'] },
-  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'Claude', roles: ['coding', 'writing', 'review', 'planning', 'ideaman'] },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'Gemini', roles: ['planning', 'coding', 'writing'] },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'Gemini', roles: ['planning', 'writing'] },
-  { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'GPT', roles: ['coding', 'review', 'writing'] },
-  { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', provider: 'GPT', roles: ['coding', 'review'] },
-  { id: 'sonar-pro', name: 'Perplexity Sonar Pro', provider: 'Perplexity', roles: ['search'] },
-  { id: 'sonar-deep-research', name: 'Perplexity Deep Research', provider: 'Perplexity', roles: ['search'] },
-  { id: 'grok-4.1-fast', name: 'Grok 4.1 Fast', provider: 'Grok', roles: ['coding', 'writing'] },
-  { id: 'deepseek-r1', name: 'DeepSeek R1', provider: 'DeepSeek', roles: ['coding', 'planning'] },
-  { id: 'gpt-image-1', name: 'GPT Image 1', provider: 'GPT', roles: ['image'] },
-  { id: 'dall-e-3', name: 'DALL-E 3', provider: 'GPT', roles: ['image'] },
-  { id: 'imagen-3', name: 'Imagen 3', provider: 'Gemini', roles: ['image'] },
-]
+function formatRelative(date: Date | null): string {
+  if (!date) return '未取得'
+  const diffMs = Date.now() - date.getTime()
+  const sec = Math.floor(diffMs / 1000)
+  if (sec < 5) return 'たった今'
+  if (sec < 60) return `${sec}秒前`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}分前`
+  const hour = Math.floor(min / 60)
+  return `${hour}時間前`
+}
 
 export function PipelineBuilder() {
   const { pipelineSteps, addPipelineStep, removePipelineStep, reorderPipelineSteps, clearPipeline, loadTemplate, templates } = useOrchestraStore()
+  const { options: availableProviders, loading, error, lastUpdatedAt, refresh } = useAvailableModels()
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
   const stepCounter = useRef(pipelineSteps.length)
 
   const handleAddStep = (role: RoleSlug, modelId: string) => {
-    const provider = AVAILABLE_PROVIDERS.find((p) => p.id === modelId)
+    const provider = availableProviders.find((p) => p.id === modelId)
     if (!provider) return
 
     stepCounter.current++
@@ -53,17 +51,44 @@ export function PipelineBuilder() {
     <div className="flex gap-6 h-full animate-fade-in">
       {/* Left panel: Available models */}
       <div className="w-72 flex-shrink-0">
-        <div className="glass-card p-4 h-full">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-conductor-muted mb-4">
-            利用可能モデル
-          </h3>
+        <div className="glass-card p-4 h-full overflow-y-auto">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-conductor-muted">
+              利用可能モデル
+            </h3>
+            <button
+              onClick={() => refresh(true)}
+              disabled={loading}
+              className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-conductor-muted hover:bg-white/10 transition-colors disabled:opacity-50"
+              title="プロバイダAPIから再取得"
+            >
+              {loading ? '更新中…' : '↻ 更新'}
+            </button>
+          </div>
+          <div className="text-[10px] text-conductor-muted mb-3">
+            {error ? (
+              <span className="text-conductor-error">取得失敗: {error}</span>
+            ) : (
+              <>最終更新: {formatRelative(lastUpdatedAt)}</>
+            )}
+          </div>
+
+          {loading && availableProviders.length === 0 && (
+            <div className="text-[11px] text-conductor-muted py-4">モデルを取得中…</div>
+          )}
+          {!loading && availableProviders.length === 0 && !error && (
+            <div className="text-[11px] text-conductor-muted py-4">
+              利用可能なモデルがありません。プロバイダAPIキーを確認してください。
+            </div>
+          )}
 
           {/* Role filter sections */}
           {(Object.keys(ROLE_META) as RoleSlug[])
             .filter((r) => r !== 'leader')
             .map((role) => {
               const meta = ROLE_META[role]
-              const roleProviders = AVAILABLE_PROVIDERS.filter((p) => p.roles.includes(role))
+              const roleProviders = availableProviders.filter((p) => p.roles.includes(role))
+              if (roleProviders.length === 0) return null
 
               return (
                 <div key={role} className="mb-4">

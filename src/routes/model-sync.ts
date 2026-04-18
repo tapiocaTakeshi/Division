@@ -7,19 +7,24 @@ const router = Router();
 /**
  * GET /api/models/available
  * List all available models from provider APIs (read-only, no DB writes).
- * 
+ *
  * Query params:
  *   - provider (optional): Filter by provider name (openai, anthropic, google, xai, deepseek, mistral)
+ *   - refresh  (optional): "1" | "true" to bypass cache and re-query every provider API
  *
  * Example:
  *   GET /api/models/available
  *   GET /api/models/available?provider=google
+ *   GET /api/models/available?refresh=1
  */
 router.get(
   "/available",
   asyncHandler(async (req: Request, res: Response) => {
     const provider = req.query.provider as string | undefined;
-    const result = await listAvailableModels(provider);
+    const refreshParam = req.query.refresh as string | undefined;
+    const forceRefresh = refreshParam === "1" || refreshParam === "true";
+    const result = await listAvailableModels(provider, forceRefresh);
+    res.setHeader("Cache-Control", "no-store");
     res.json(result);
   })
 );
@@ -52,11 +57,14 @@ router.get(
   "/provider/:providerId",
   asyncHandler(async (req: Request, res: Response) => {
     const { providerId } = req.params;
-    const result = await listModelsForProvider(providerId);
+    const refreshParam = req.query.refresh as string | undefined;
+    const forceRefresh = refreshParam === "1" || refreshParam === "true";
+    const result = await listModelsForProvider(providerId, forceRefresh);
     if (!result) {
       res.status(404).json({ error: `Provider "${providerId}" not found` });
       return;
     }
+    res.setHeader("Cache-Control", "no-store");
     res.json({
       provider: result.provider,
       apiType: result.apiType,

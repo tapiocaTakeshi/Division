@@ -16,10 +16,17 @@ import { checkCredits, consumeCredits, estimateTokens } from "./credits";
 
 // --- Role Alias Mapping ---
 // Leader AI sometimes generates role slugs that differ from DB slugs.
+// Keys are casual aliases the Leader might emit; values are the canonical DB slugs.
 const ROLE_ALIASES: Record<string, string> = {
-  "deep-research": "research",
-  "planning": "planner",
-  "coding": "coder",
+  coder: "coding",
+  writer: "writing",
+  reviewer: "review",
+  researcher: "deep-research",
+  research: "deep-research",
+  planner: "planning",
+  designer: "design",
+  "idea-man": "ideaman",
+  ideagen: "ideaman",
 };
 
 function normalizeRoleSlug(slug: string): string {
@@ -69,6 +76,9 @@ export interface OrchestratorResult {
   leaderModel: string;
   tasks: SubTaskResult[];
   mindmap: string;
+  /** T3 synthesis output (Coder/Writer merge of T1+T2 results) */
+  synthesisOutput?: string;
+  /** T4 reviewer output — the user-visible final result */
   finalOutput?: string;
   finalCode?: string;
   totalDurationMs: number;
@@ -77,47 +87,51 @@ export interface OrchestratorResult {
 
 // --- Leader Prompt ---
 
-const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下の専門ロールに分解してください。
+const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下の**固定4段パイプライン**に沿って専門ロールへ分解してください。
 
-利用可能なロール:
-- search: ウェブ検索・情報収集（Perplexity担当）
-- deep-research: 徹底的な多角的調査・包括的分析・詳細レポート作成（Perplexity Deep Research担当）
-- file-search: プロジェクト内のファイル検索・コード解析・ファイル内容の読み取り・既存コードの理解（GPT担当）
-- planning: 企画・設計・戦略立案（Gemini担当）
-- coding: コード生成・デバッグ（Claude担当）
-- writing: 文章作成・ドキュメント（Claude担当）
-- review: レビュー・品質確認（GPT担当）
-- image: 画像生成・ビジュアルコンテンツ作成・イラスト（GPT Image担当）
-- ideaman: 創造的ブレインストーミング・アイデア出し・革新的コンセプト提案（Claude担当）
+パイプライン構造 (User → Leader → T1 → T2 → T3 → T4 → User):
+  T1 [調査・発想層]  … 並列実行
+    - ideaman      : 創造的ブレインストーミング・アイデア出し
+    - search       : ウェブ検索・情報収集（Perplexity）
+    - file-search  : プロジェクト内ファイル検索・既存コード理解
+    - deep-research: 徹底的な多角的調査・詳細レポート（Perplexity Deep Research）
+  T2 [設計・ビジュアル層]  … T1の出力(Markdown)を受けて並列実行
+    - design       : UI/UX設計・ワイヤーフレーム・デザインシステム
+    - image        : 画像生成・ビジュアルコンテンツ作成
+    - planning     : 戦略立案・アーキテクチャ設計・要件定義
+  T3 [統合層 / Coder or Writer]  … T2の出力(Markdown)を統合して最終成果物を生成（自動）
+  T4 [レビュー層 / Reviewer]     … T3の出力(Code or Text)をレビューして最終版を生成（自動）
+
+利用可能なロール (tasksに含めてよいもの): ideaman, search, file-search, deep-research, design, image, planning
+※ review / coding / writing は Leader の tasks に含めないでください。T3/T4は自動的に追加されます。
 
 ルール:
 1. 各タスクには0始まりのインデックスが暗黙的に付与されます（最初のタスクが0、次が1...）
 2. 他のタスクの結果が必要な場合は "dependsOn" で依存先のインデックスを指定してください
-3. dependsOnが空または省略されたタスクは他のタスクと並列実行されます
-4. 不要なロールは使わなくてOKです
-5. 各タスクのinputは、そのロールのAIに直接渡す具体的な指示にしてください
-6. 必ず以下のJSON形式のみで回答してください。挨拶や説明文など、JSONブロック以外のテキストは【絶対に】出力しないでください。
-7. タスクは最低5個以上生成してください。リクエストが複雑な場合は8〜15個程度に細分化してください
-8. 1つのタスクに複数の作業を詰め込まず、できるだけ細かく分割してください
-9. 調査・計画・実装・レビューなど各フェーズを独立したタスクにしてください
+3. **T1のタスクは dependsOn を空にしてください**（並列実行されます）
+4. **T2のタスクは必ず少なくとも1つのT1タスクを dependsOn に含めてください**
+5. 不要なロールは使わなくてOKです。ただしT1から最低1つ、T2から最低1つは含めてください。
+6. 各タスクのinputは、そのロールのAIに直接渡す具体的な指示にしてください
+7. 必ず以下のJSON形式のみで回答してください。挨拶や説明文など、JSONブロック以外のテキストは【絶対に】出力しないでください。
+8. タスクは T1 と T2 の合計で4〜10個程度にしてください。不要にタスクを増やさないでください。
+9. 1つのタスクに複数の作業を詰め込まず、できるだけ細かく分割してください
 10. 同じロールでも異なる観点・対象であれば別タスクに分けてください
 11. 各タスクには、そのタスクの性質に応じた "mode" を指定してください。
     - "chat" (デフォルト): 通常の文章生成等のテキストベースのタスク
-    - "computer_use": 実際にターミナル等でコードを実行・テストする必要があるタスク（例: codingやreview時等）
+    - "computer_use": 実際にターミナル等でコードを実行・テストする必要があるタスク
     - "function_calling": 検索やファイルの読み込み等、外部ツールを利用して情報収集するタスク（例: search等）
-12. 単一の層（すべて並列実行など）ではなく、必ず複数層（例: 基礎調査層→企画層→実装層→レビュー層）になるように dependsOn を用いて多段階のパイプライン計画を作成してください。
-13. "finalRole" を必ず指定してください。全エージェントの出力を最終的に統合する役割です。
+12. "finalRole" を必ず指定してください。T3(統合層)で使われる役割です。
     - "coder": コード生成が主な成果物の場合
     - "writer": ドキュメント・文章・レポートが主な成果物の場合
-    最終統合は自動的に行われるため、tasksに含める必要はありません。
 
 \`\`\`json
 {
   "tasks": [
-    { "role": "search", "mode": "function_calling", "input": "機能の実現可能性についての技術情報を検索", "reason": "プランの前提知識を得るため" },
-    { "role": "ideaman", "mode": "chat", "input": "検索結果を元に機能アイデアを複数提案", "reason": "クリエイティブな視点を取り入れるため", "dependsOn": [0] },
-    { "role": "planning", "mode": "chat", "input": "アイデアを元に具体的な要件定義と設計を作成", "reason": "実装の明確なゴールを設定するため", "dependsOn": [1] },
-    { "role": "coding", "mode": "computer_use", "input": "要件定義に沿ってプロトタイプを実装", "reason": "検証可能な形にするため", "dependsOn": [2] }
+    { "role": "search", "mode": "function_calling", "input": "機能の実現可能性についての技術情報を検索", "reason": "T1: 前提知識を得るため" },
+    { "role": "ideaman", "mode": "chat", "input": "リクエストに対する革新的なアプローチを複数案出す", "reason": "T1: 創造的視点を得るため" },
+    { "role": "file-search", "mode": "function_calling", "input": "既存コードベースで関連実装を検索", "reason": "T1: 既存資産を把握するため" },
+    { "role": "planning", "mode": "chat", "input": "調査結果とアイデアを元に要件定義とアーキテクチャを作成", "reason": "T2: 実装ゴールを設定するため", "dependsOn": [0, 1, 2] },
+    { "role": "design", "mode": "chat", "input": "UI/UX設計とユーザーフローを作成", "reason": "T2: ユーザー体験を具体化するため", "dependsOn": [0, 1] }
   ],
   "finalRole": "coder"
 }
@@ -125,9 +139,9 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 
 // --- Synthesis Prompt ---
 
-const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです。
-複数の専門AIエージェントが並列で作業した結果が以下に提供されます。
-これらの全出力を統合し、ユーザーの元のリクエストに対する**最終的な成果物**を生成してください。
+const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです (パイプラインT3: Coder or Writer)。
+T1(調査・発想)とT2(設計・ビジュアル)の各専門AIエージェントの出力が以下に提供されます。
+これらの全出力を統合し、ユーザーの元のリクエストに対する**最終的な成果物(Code or Text)**を生成してください。
 
 ルール:
 1. 必ず Markdown 形式で出力してください
@@ -136,6 +150,24 @@ const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです。
 4. 見出し・リスト・表などを適切に使い、読みやすく構造化してください
 5. 冗長な重複は排除し、簡潔で実用的な成果物にまとめてください
 6. ユーザーのリクエストに直接答える形で出力してください`;
+
+// --- Review Prompt (Tier 4) ---
+
+const REVIEW_SYSTEM_PROMPT = `あなたは優秀なレビュー担当AIです (パイプラインT4: Reviewer)。
+T3の統合担当AIが生成した成果物(Code or Text)が以下に提供されます。
+この成果物をレビューし、ユーザーに届ける**最終版(result)**を出力してください。
+
+手順:
+1. 論理的誤り・矛盾・不正確な記述・バグ・セキュリティ上の懸念を特定する
+2. 問題があれば修正を適用した最終版を出力する
+3. 問題がなければ成果物を微調整し、読みやすさ・完成度を高めた最終版を出力する
+
+出力フォーマット (Markdown):
+## レビュー
+- 検出した問題と対処 (箇条書き 3〜6点。問題なしの場合はその旨を短く記載)
+
+## 最終成果物
+<ここにユーザーに届ける最終版を配置。コードはコードブロック内に正しい言語タグを付ける>`;
 
 // --- API Key Resolution ---
 
@@ -631,12 +663,13 @@ export async function runAgent(
     }
   }
 
-  // 5. Synthesis step — collect all outputs and pass to Coder/Writer
+  // 5. Synthesis step (T3) — collect all outputs and pass to Coder/Writer
   const filledResults = results.filter(Boolean);
   const successfulOutputs = filledResults
     .filter((r) => r.status === "success" && r.output)
     .map((r) => `### ${r.role} (${r.provider}):\n${r.output}`);
 
+  let synthesisOutput: string | undefined;
   let finalOutput: string | undefined;
   let finalCode: string | undefined;
 
@@ -662,7 +695,7 @@ export async function runAgent(
       const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
       const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
 
-      log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName}`);
+      log(`[Agent] Synthesis step (T3): ${finalRole} → ${synthesisProvider.displayName}`);
       const synthesisResult = await executeTask({
         provider: synthesisProvider,
         config: { apiKey: synthesisApiKey },
@@ -672,14 +705,51 @@ export async function runAgent(
       });
 
       if (synthesisResult.status === "success") {
-        finalOutput = synthesisResult.output;
-        if (finalRole === "coder") finalCode = synthesisResult.output;
+        synthesisOutput = synthesisResult.output;
       } else {
-        finalOutput = successfulOutputs.join("\n\n---\n\n");
+        synthesisOutput = successfulOutputs.join("\n\n---\n\n");
       }
     } else {
-      finalOutput = successfulOutputs.join("\n\n---\n\n");
+      synthesisOutput = successfulOutputs.join("\n\n---\n\n");
     }
+  }
+
+  // 5b. Review step (T4) — Reviewer polishes the T3 synthesis into the user-visible result
+  if (synthesisOutput) {
+    const reviewRole = await prisma.role.findUnique({ where: { slug: "review" } });
+    let reviewProvider: typeof leaderProvider | null = null;
+    if (reviewRole) {
+      const reviewAssignment = await prisma.roleAssignment.findFirst({
+        where: { projectId: req.projectId, roleId: reviewRole.id },
+        include: { provider: true },
+        orderBy: { priority: "desc" },
+      });
+      if (reviewAssignment) {
+        const revConfig = reviewAssignment.config ? JSON.parse(reviewAssignment.config) : {};
+        const revModelId = (revConfig.model as string) || reviewAssignment.provider.modelId;
+        reviewProvider = { ...reviewAssignment.provider, modelId: revModelId };
+      }
+    }
+
+    if (reviewProvider) {
+      const reviewApiKey = resolveApiKey(reviewProvider.name, reviewProvider.apiType, req.apiKeys, req.authenticated);
+      const reviewInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## T3統合担当AIが生成した成果物(Code or Text):\n${synthesisOutput}`;
+
+      log(`[Agent] Review step (T4): review → ${reviewProvider.displayName}`);
+      const reviewResult = await executeTask({
+        provider: reviewProvider,
+        config: { apiKey: reviewApiKey },
+        input: reviewInput,
+        role: { slug: "review", name: reviewRole?.name || "Review" },
+        systemPrompt: REVIEW_SYSTEM_PROMPT,
+      });
+
+      finalOutput = reviewResult.status === "success" ? reviewResult.output : synthesisOutput;
+    } else {
+      finalOutput = synthesisOutput;
+    }
+
+    if (finalRole === "coder") finalCode = finalOutput;
   }
 
   // 6. Determine overall status
@@ -703,6 +773,7 @@ export async function runAgent(
     leaderModel: leaderModelId,
     tasks: filledResults,
     mindmap,
+    synthesisOutput,
     finalOutput,
     finalCode,
     totalDurationMs,
@@ -801,6 +872,9 @@ export interface StreamEventSessionDone {
   status: string;
   totalDurationMs: number;
   taskCount: number;
+  /** T3 synthesis output (Coder/Writer) */
+  synthesisOutput?: string;
+  /** T4 reviewer output — the user-visible final result */
   finalOutput?: string;
   results: Array<{
     role: string;
@@ -855,6 +929,27 @@ export interface StreamEventSynthesisDone {
   provider: string;
   model: string;
 }
+export interface StreamEventReviewStart {
+  type: "review_start";
+  id: string;
+  role: string;
+  provider: string;
+  model: string;
+}
+export interface StreamEventReviewChunk {
+  type: "review_chunk";
+  id: string;
+  text: string;
+}
+export interface StreamEventReviewDone {
+  type: "review_done";
+  id: string;
+  output: string;
+  durationMs: number;
+  role: string;
+  provider: string;
+  model: string;
+}
 
 export type StreamEvent =
   | StreamEventSessionStart
@@ -873,7 +968,10 @@ export type StreamEvent =
   | StreamEventWaveDone
   | StreamEventSynthesisStart
   | StreamEventSynthesisChunk
-  | StreamEventSynthesisDone;
+  | StreamEventSynthesisDone
+  | StreamEventReviewStart
+  | StreamEventReviewChunk
+  | StreamEventReviewDone;
 
 /**
  * Streaming orchestrator: run the full agent pipeline, emitting SSE events via the callback.
@@ -1278,12 +1376,23 @@ async function runAgentStreamCore(
     waveNum++;
   }
 
-  // 6. Synthesis step — collect all outputs and pass to Coder/Writer
+  // 6. Synthesis step (T3) — collect all outputs and pass to Coder/Writer
   const filledResults = taskResults.filter(Boolean);
   const successfulOutputs = filledResults
     .filter((r) => r.status === "success" && r.output)
     .map((r) => `### ${r.role} (${r.provider}):\n${r.output}`);
 
+  type ProviderRecord = {
+    id: string;
+    name: string;
+    displayName: string;
+    apiBaseUrl: string;
+    apiType: string;
+    modelId: string;
+    isEnabled: boolean;
+  };
+
+  let synthesisOutput: string | undefined;
   let finalOutput: string | undefined;
 
   if (successfulOutputs.length > 0) {
@@ -1293,15 +1402,7 @@ async function runAgentStreamCore(
       where: { slug: synthesisRoleSlug },
     });
 
-    let synthesisProvider: {
-      id: string;
-      name: string;
-      displayName: string;
-      apiBaseUrl: string;
-      apiType: string;
-      modelId: string;
-      isEnabled: boolean;
-    } | null = null;
+    let synthesisProvider: ProviderRecord | null = null;
 
     if (synthesisRole) {
       const synthesisAssignment = await prisma.roleAssignment.findFirst({
@@ -1347,34 +1448,90 @@ async function runAgentStreamCore(
       );
 
       const synthDurationMs = Date.now() - synthStart;
+      synthesisOutput =
+        synthesisResult.status === "success"
+          ? synthesisResult.output
+          : successfulOutputs.join("\n\n---\n\n");
 
-      if (synthesisResult.status === "success") {
-        finalOutput = synthesisResult.output;
-        emit({
-          type: "synthesis_done",
-          id: nextId(),
-          output: synthesisResult.output,
-          durationMs: synthDurationMs,
-          role: finalRole,
-          provider: synthesisProvider.displayName,
-          model: synthesisProvider.modelId,
-        });
-      } else {
-        // Synthesis failed — fall back to concatenated outputs
-        finalOutput = successfulOutputs.join("\n\n---\n\n");
-        emit({
-          type: "synthesis_done",
-          id: nextId(),
-          output: finalOutput,
-          durationMs: synthDurationMs,
-          role: finalRole,
-          provider: synthesisProvider.displayName,
-          model: synthesisProvider.modelId,
-        });
-      }
+      emit({
+        type: "synthesis_done",
+        id: nextId(),
+        output: synthesisOutput,
+        durationMs: synthDurationMs,
+        role: finalRole,
+        provider: synthesisProvider.displayName,
+        model: synthesisProvider.modelId,
+      });
     } else {
       // No synthesis provider assigned — fall back to concatenated outputs
-      finalOutput = successfulOutputs.join("\n\n---\n\n");
+      synthesisOutput = successfulOutputs.join("\n\n---\n\n");
+    }
+  }
+
+  // 6b. Review step (T4) — Reviewer polishes the T3 synthesis into the user-visible result
+  if (synthesisOutput) {
+    const reviewRole = await prisma.role.findUnique({ where: { slug: "review" } });
+    let reviewProvider: ProviderRecord | null = null;
+
+    if (reviewRole) {
+      const reviewAssignment = await prisma.roleAssignment.findFirst({
+        where: { projectId: req.projectId, roleId: reviewRole.id },
+        include: { provider: true },
+        orderBy: { priority: "desc" },
+      });
+      if (reviewAssignment) {
+        const revConfig = reviewAssignment.config ? JSON.parse(reviewAssignment.config) : {};
+        const revModelId = (revConfig.model as string) || reviewAssignment.provider.modelId;
+        reviewProvider = { ...reviewAssignment.provider, modelId: revModelId };
+      }
+    }
+
+    if (reviewProvider) {
+      const reviewApiKey = resolveApiKey(
+        reviewProvider.name,
+        reviewProvider.apiType,
+        req.apiKeys,
+        req.authenticated
+      );
+
+      const reviewInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## T3統合担当AIが生成した成果物(Code or Text):\n${synthesisOutput}`;
+
+      emit({
+        type: "review_start",
+        id: nextId(),
+        role: "review",
+        provider: reviewProvider.displayName,
+        model: reviewProvider.modelId,
+      });
+
+      const revStart = Date.now();
+      const reviewResult = await executeTaskStream(
+        {
+          provider: reviewProvider,
+          config: { apiKey: reviewApiKey },
+          input: reviewInput,
+          role: { slug: "review", name: reviewRole?.name || "Review" },
+          systemPrompt: REVIEW_SYSTEM_PROMPT,
+        },
+        (text) => emit({ type: "review_chunk", id: nextId(), text })
+      );
+
+      const revDurationMs = Date.now() - revStart;
+      finalOutput =
+        reviewResult.status === "success" ? reviewResult.output : synthesisOutput;
+
+      emit({
+        type: "review_done",
+        id: nextId(),
+        output: finalOutput,
+        durationMs: revDurationMs,
+        role: "review",
+        provider: reviewProvider.displayName,
+        model: reviewProvider.modelId,
+      });
+    } else {
+      // No reviewer provider assigned — synthesis output becomes the final
+      finalOutput = synthesisOutput;
     }
   }
 
@@ -1391,6 +1548,7 @@ async function runAgentStreamCore(
     status,
     totalDurationMs,
     taskCount: subTasks.length,
+    synthesisOutput,
     finalOutput,
     results: filledResults,
   });

@@ -165,6 +165,30 @@ const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
 import { logger } from "../utils/logger";
 import { executeNativeTool } from "./agent-tools";
 
+/** Newer Claude models (4.7+, sonnet 4.6+) use adaptive thinking */
+const ADAPTIVE_THINKING_MODELS = /opus-4-[7-9]|opus-4-\d{2}|sonnet-4-[6-9]|sonnet-4-\d{2}/;
+
+function buildAnthropicBody(
+  modelId: string,
+  maxTokens: number,
+  systemPrompt: string,
+  messages: Array<{ role: string; content: string }>
+): Record<string, unknown> {
+  const base: Record<string, unknown> = { model: modelId, max_tokens: maxTokens, system: systemPrompt, messages };
+
+  if (ADAPTIVE_THINKING_MODELS.test(modelId)) {
+    return base;
+  }
+
+  return {
+    ...base,
+    thinking: {
+      type: "enabled",
+      budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.6), 1024), 10000),
+    },
+  };
+}
+
 /**
  * Build the request body for each API type.
  * resolvedModelId must already be resolved before calling.
@@ -195,16 +219,7 @@ function buildRequestBody(
         "x-api-key": apiKey || "",
         "anthropic-version": "2023-06-01",
       },
-      body: {
-        model: resolvedModelId,
-        max_tokens: maxTokens,
-        system: systemPrompt,
-        messages,
-        thinking: {
-          type: "enabled",
-          budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.6), 1024), 10000),
-        },
-      },
+      body: buildAnthropicBody(resolvedModelId, maxTokens, systemPrompt, messages),
     };
   }
 

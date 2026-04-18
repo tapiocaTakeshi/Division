@@ -97,20 +97,42 @@ function resolveApiKeyFromConfig(
   return "";
 }
 
-/** Default model IDs per apiType, used when provider.modelId is empty or not set */
-const DEFAULT_MODELS: Record<string, string> = {
+import { resolveLatestModels, type LatestModel } from "./model-resolver";
+
+/**
+ * Static fallback model IDs per apiType.
+ * Used only when the DB lookup (resolveLatestModels) is unavailable.
+ */
+const STATIC_FALLBACK_MODELS: Record<string, string> = {
   anthropic: "claude-sonnet-4-5-20250929",
   google: "gemini-2.5-flash",
   openai: "gpt-4.1",
   perplexity: "sonar-pro",
-  xai: "grok-4.20",
-  deepseek: "deepseek-v4",
-  mistral: "mistral-3-large-latest",
+  xai: "grok-3",
+  deepseek: "deepseek-chat",
+  mistral: "mistral-large-latest",
   meta: "Llama-4-Maverick-17B-128E",
   qwen: "qwen3-235b-a22b",
   cohere: "command-r-plus",
   moonshot: "kimi-k2",
 };
+
+let _latestModelsCache: Map<string, LatestModel> | null = null;
+let _latestRefreshedAt = 0;
+const _REFRESH_INTERVAL = 5 * 60 * 1000; // 5 min
+
+async function getDefaultModel(apiType: string): Promise<string> {
+  const now = Date.now();
+  if (!_latestModelsCache || now - _latestRefreshedAt > _REFRESH_INTERVAL) {
+    try {
+      _latestModelsCache = await resolveLatestModels();
+      _latestRefreshedAt = now;
+    } catch {
+      // DB unreachable — use static fallback
+    }
+  }
+  return _latestModelsCache?.get(apiType)?.modelId ?? STATIC_FALLBACK_MODELS[apiType] ?? "";
+}
 
 /** Default base URLs when provider.apiBaseUrl is empty */
 const DEFAULT_BASE_URLS: Record<string, string> = {
@@ -144,11 +166,12 @@ import { logger } from "../utils/logger";
 import { executeNativeTool } from "./agent-tools";
 
 /**
- * Build the request body for each API type
+ * Build the request body for each API type.
+ * resolvedModelId must already be resolved before calling.
  */
 function buildRequestBody(
   apiType: string,
-  modelId: string,
+  resolvedModelId: string,
   input: string,
   systemPrompt: string,
   config?: Record<string, unknown>,
@@ -156,9 +179,6 @@ function buildRequestBody(
 ): { url: string; headers: Record<string, string>; body: unknown } | null {
   const apiKey = config?.apiKey as string | undefined;
   const maxTokens = (config?.maxTokens as number) || 4096;
-
-  // Fall back to the default model for this apiType when modelId is not set
-  const resolvedModelId = modelId || DEFAULT_MODELS[apiType] || modelId;
 
   if (apiType === "anthropic") {
     const messages: Array<{ role: string; content: string }> = [];
@@ -476,10 +496,11 @@ export async function executeTaskStream(
   const systemPrompt =
     req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
 
-  const modelId = (req.config?.model as string) || req.provider.modelId;
+  const configModel = (req.config?.model as string) || req.provider.modelId;
+  const resolvedModelId = configModel || (await getDefaultModel(req.provider.apiType));
   const requestSpec = buildRequestBody(
     req.provider.apiType,
-    modelId,
+    resolvedModelId,
     enrichedInput,
     systemPrompt,
     req.config || undefined,
@@ -528,7 +549,7 @@ export async function executeTaskStream(
 
     console.log(`\n[API] ──── Stream Request ────`);
     console.log(`[API]  POST ${fullUrl}`);
-    console.log(`[API]  Provider: ${req.provider.name} (${req.provider.modelId})`);
+    console.log(`[API]  Provider: ${req.provider.name} (${resolvedModelId})`);
     console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
     console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
     console.log(`[API]  Body: ${truncate(JSON.stringify(streamBody), 300)}`);
@@ -647,10 +668,11 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   const systemPrompt =
     req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
 
-  const modelId = (req.config?.model as string) || req.provider.modelId;
+  const configModel = (req.config?.model as string) || req.provider.modelId;
+  const resolvedModelId = configModel || (await getDefaultModel(req.provider.apiType));
   const requestSpec = buildRequestBody(
     req.provider.apiType,
-    modelId,
+    resolvedModelId,
     req.input,
     systemPrompt,
     req.config || undefined,
@@ -693,7 +715,7 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
 
     console.log(`\n[API] ──── Request ────`);
     console.log(`[API]  POST ${fullUrl}`);
-    console.log(`[API]  Provider: ${req.provider.name} (${req.provider.modelId})`);
+    console.log(`[API]  Provider: ${req.provider.name} (${resolvedModelId})`);
     console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
     console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
     console.log(`[API]  Body: ${truncate(JSON.stringify(requestSpec.body), 300)}`);

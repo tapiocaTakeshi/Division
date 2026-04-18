@@ -18,6 +18,7 @@
  */
 
 import { prisma } from "../db";
+import { clearLatestModelCache } from "./model-resolver";
 
 // ===== Types =====
 
@@ -476,6 +477,7 @@ export async function syncModels(): Promise<SyncResult> {
   }
 
   clearModelCache();
+  clearLatestModelCache();
 
   console.log(
     `[sync-models] Sync complete: ${totalDiscovered} discovered, ${totalAdded} added, ${totalUpdated} updated`

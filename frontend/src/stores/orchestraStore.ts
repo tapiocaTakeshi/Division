@@ -67,10 +67,10 @@ const defaultTemplates: PipelineTemplate[] = [
     icon: 'article',
     tags: ['コンテンツ', '記事', 'SEO'],
     steps: [
-      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'sonar-pro', dependsOn: [] },
-      { id: 's2', role: 'planning', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: ['s1'] },
-      { id: 's3', role: 'writing', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s2'] },
-      { id: 's4', role: 'review', provider: 'GPT', modelId: 'gpt-4.1', dependsOn: ['s3'] },
+      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'latest', dependsOn: [] },
+      { id: 's2', role: 'planning', provider: 'Gemini', modelId: 'latest', dependsOn: ['s1'] },
+      { id: 's3', role: 'writing', provider: 'Claude', modelId: 'latest', dependsOn: ['s2'] },
+      { id: 's4', role: 'review', provider: 'GPT', modelId: 'latest', dependsOn: ['s3'] },
     ],
   },
   {
@@ -80,10 +80,10 @@ const defaultTemplates: PipelineTemplate[] = [
     icon: 'code',
     tags: ['開発', 'コード', 'レビュー'],
     steps: [
-      { id: 's1', role: 'planning', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: [] },
-      { id: 's2', role: 'coding', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s1'] },
-      { id: 's3', role: 'review', provider: 'GPT', modelId: 'gpt-4.1', dependsOn: ['s2'] },
-      { id: 's4', role: 'coding', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s3'] },
+      { id: 's1', role: 'planning', provider: 'Gemini', modelId: 'latest', dependsOn: [] },
+      { id: 's2', role: 'coding', provider: 'Claude', modelId: 'latest', dependsOn: ['s1'] },
+      { id: 's3', role: 'review', provider: 'GPT', modelId: 'latest', dependsOn: ['s2'] },
+      { id: 's4', role: 'coding', provider: 'Claude', modelId: 'latest', dependsOn: ['s3'] },
     ],
   },
   {
@@ -93,10 +93,10 @@ const defaultTemplates: PipelineTemplate[] = [
     icon: 'research',
     tags: ['調査', '分析', '論文'],
     steps: [
-      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'sonar-pro', dependsOn: [] },
+      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'latest', dependsOn: [] },
       { id: 's2', role: 'search', provider: 'Perplexity', modelId: 'sonar-deep-research', dependsOn: [] },
-      { id: 's3', role: 'planning', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: ['s1', 's2'] },
-      { id: 's4', role: 'writing', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s3'] },
+      { id: 's3', role: 'planning', provider: 'Gemini', modelId: 'latest', dependsOn: ['s1', 's2'] },
+      { id: 's4', role: 'writing', provider: 'Claude', modelId: 'latest', dependsOn: ['s3'] },
     ],
   },
 ]

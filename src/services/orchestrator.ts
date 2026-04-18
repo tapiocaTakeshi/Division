@@ -13,6 +13,7 @@ import { executeTask, executeTaskStream } from "./ai-executor";
 import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
 import { checkCredits, consumeCredits, estimateTokens } from "./credits";
+import { getLatestModelId } from "./model-resolver";
 
 // --- Role Alias Mapping ---
 // Leader AI sometimes generates role slugs that differ from DB slugs.
@@ -180,6 +181,22 @@ const API_KEY_ALIASES: Record<string, string[]> = {
   xai: ["xai", "grok", "XAI_API_KEY"],
   deepseek: ["deepseek", "DEEPSEEK_API_KEY"],
 };
+
+/**
+ * Resolve model ID from config + provider.
+ * Supports "latest" keyword: dynamically looks up the best model for this apiType.
+ * Falls back: config.model → provider.modelId → dynamic latest
+ */
+async function resolveModelId(
+  config: Record<string, unknown> | undefined,
+  provider: { apiType: string; modelId: string }
+): Promise<string> {
+  const configModel = config?.model as string | undefined;
+  if (configModel && configModel !== "latest") return configModel;
+  if (configModel === "latest") return getLatestModelId(provider.apiType, provider.modelId);
+  if (provider.modelId) return provider.modelId;
+  return getLatestModelId(provider.apiType);
+}
 
 // --- Core Functions ---
 
@@ -369,9 +386,9 @@ export async function runAgent(
     );
   }
 
-  // Resolve model: config.model overrides provider.modelId
+  // Resolve model: config.model → "latest" → provider.modelId
   const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
-  const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
+  const leaderModelId = await resolveModelId(leaderConfig, leaderAssignment.provider);
   const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
 
   const leaderApiKey = resolveApiKey(
@@ -529,9 +546,8 @@ export async function runAgent(
         orderBy: { priority: "desc" },
       });
       if (assignment) {
-        // Apply config.model override, falling back to provider.modelId
         const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
-        const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
+        const taskModelId = await resolveModelId(taskConfig, assignment.provider);
         provider = { ...assignment.provider, modelId: taskModelId };
       }
     }
@@ -686,7 +702,7 @@ export async function runAgent(
       });
       if (synthesisAssignment) {
         const synthConfig = synthesisAssignment.config ? JSON.parse(synthesisAssignment.config) : {};
-        const synthModelId = (synthConfig.model as string) || synthesisAssignment.provider.modelId;
+        const synthModelId = await resolveModelId(synthConfig, synthesisAssignment.provider);
         synthesisProvider = { ...synthesisAssignment.provider, modelId: synthModelId };
       }
     }
@@ -695,7 +711,7 @@ export async function runAgent(
       const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
       const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
 
-      log(`[Agent] Synthesis step (T3): ${finalRole} → ${synthesisProvider.displayName}`);
+      log(`[Agent] Synthesis step (T3): ${finalRole} → ${synthesisProvider.displayName} (${synthesisProvider.modelId})`);
       const synthesisResult = await executeTask({
         provider: synthesisProvider,
         config: { apiKey: synthesisApiKey },
@@ -726,7 +742,7 @@ export async function runAgent(
       });
       if (reviewAssignment) {
         const revConfig = reviewAssignment.config ? JSON.parse(reviewAssignment.config) : {};
-        const revModelId = (revConfig.model as string) || reviewAssignment.provider.modelId;
+        const revModelId = await resolveModelId(revConfig, reviewAssignment.provider);
         reviewProvider = { ...reviewAssignment.provider, modelId: revModelId };
       }
     }
@@ -735,7 +751,7 @@ export async function runAgent(
       const reviewApiKey = resolveApiKey(reviewProvider.name, reviewProvider.apiType, req.apiKeys, req.authenticated);
       const reviewInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## T3統合担当AIが生成した成果物(Code or Text):\n${synthesisOutput}`;
 
-      log(`[Agent] Review step (T4): review → ${reviewProvider.displayName}`);
+      log(`[Agent] Review step (T4): review → ${reviewProvider.displayName} (${reviewProvider.modelId})`);
       const reviewResult = await executeTask({
         provider: reviewProvider,
         config: { apiKey: reviewApiKey },
@@ -1032,9 +1048,9 @@ async function runAgentStreamCore(
     return;
   }
 
-  // Resolve model: config.model overrides provider.modelId
+  // Resolve model: config.model → "latest" → provider.modelId
   const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
-  const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
+  const leaderModelId = await resolveModelId(leaderConfig, leaderAssignment.provider);
   const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
 
   const leaderApiKey = resolveApiKey(
@@ -1210,9 +1226,8 @@ async function runAgentStreamCore(
         orderBy: { priority: "desc" },
       });
       if (assignment) {
-        // Apply config.model override, falling back to provider.modelId
         const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
-        const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
+        const taskModelId = await resolveModelId(taskConfig, assignment.provider);
         provider = { ...assignment.provider, modelId: taskModelId };
       }
     }
@@ -1412,7 +1427,7 @@ async function runAgentStreamCore(
       });
       if (synthesisAssignment) {
         const synthConfig = synthesisAssignment.config ? JSON.parse(synthesisAssignment.config) : {};
-        const synthModelId = (synthConfig.model as string) || synthesisAssignment.provider.modelId;
+        const synthModelId = await resolveModelId(synthConfig, synthesisAssignment.provider);
         synthesisProvider = { ...synthesisAssignment.provider, modelId: synthModelId };
       }
     }
@@ -1481,7 +1496,7 @@ async function runAgentStreamCore(
       });
       if (reviewAssignment) {
         const revConfig = reviewAssignment.config ? JSON.parse(reviewAssignment.config) : {};
-        const revModelId = (revConfig.model as string) || reviewAssignment.provider.modelId;
+        const revModelId = await resolveModelId(revConfig, reviewAssignment.provider);
         reviewProvider = { ...reviewAssignment.provider, modelId: revModelId };
       }
     }

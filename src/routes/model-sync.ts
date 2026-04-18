@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../middleware/async-handler";
 import { listAvailableModels, listModelsForProvider, syncModels } from "../services/sync-models";
+import { getLatestModelsMap, clearLatestModelCache } from "../services/model-resolver";
 
 const router = Router();
 
@@ -30,6 +31,23 @@ router.get(
 );
 
 /**
+ * GET /api/models/latest
+ * Returns the recommended "latest" flagship model per apiType.
+ * Resolved dynamically from the DB (populated by sync).
+ * Cached for 5 minutes.
+ *
+ * Example response:
+ *   { openai: { modelId: "gpt-5.4", ... }, anthropic: { modelId: "claude-opus-4-7", ... }, ... }
+ */
+router.get(
+  "/latest",
+  asyncHandler(async (_req: Request, res: Response) => {
+    const latest = await getLatestModelsMap();
+    res.json(latest);
+  })
+);
+
+/**
  * POST /api/models/sync
  * Sync models from provider APIs to database.
  * Fetches latest models and upserts into the Provider table.
@@ -41,6 +59,7 @@ router.post(
   "/sync",
   asyncHandler(async (_req: Request, res: Response) => {
     const result = await syncModels();
+    clearLatestModelCache();
     res.json(result);
   })
 );

@@ -34,6 +34,9 @@ interface OrchestraState {
   startSynthesis: (role: string, provider: string, model: string) => void
   appendSynthesisChunk: (text: string) => void
   completeSynthesis: (output: string) => void
+  startReview: (provider: string, model: string) => void
+  appendReviewChunk: (text: string) => void
+  completeReview: (output: string) => void
   completeSession: (finalOutput: string, totalDurationMs: number) => void
   failSession: (error: string) => void
   resetSession: () => void
@@ -181,6 +184,27 @@ export const useOrchestraStore = create<OrchestraState>((set) => ({
         : null,
     })),
 
+  startReview: (provider, model) =>
+    set((state) => ({
+      session: state.session
+        ? { ...state.session, reviewStatus: 'running', reviewProvider: provider, reviewModel: model, reviewOutput: '' }
+        : null,
+    })),
+
+  appendReviewChunk: (text) =>
+    set((state) => ({
+      session: state.session
+        ? { ...state.session, reviewOutput: (state.session.reviewOutput ?? '') + text }
+        : null,
+    })),
+
+  completeReview: (output) =>
+    set((state) => ({
+      session: state.session
+        ? { ...state.session, reviewStatus: 'success', reviewOutput: output }
+        : null,
+    })),
+
   completeSession: (finalOutput, totalDurationMs) =>
     set((state) => ({
       session: state.session
@@ -278,5 +302,17 @@ export const ROLE_META: Record<RoleSlug, { label: string; color: string; icon: s
     color: '#f97316',
     icon: '💡',
     strengths: ['ブレスト', 'アイデア出し', '発想力'],
+  },
+  design: {
+    label: 'Designer',
+    color: '#d946ef',
+    icon: '🎨',
+    strengths: ['UI/UX', 'ワイヤーフレーム', 'デザインシステム'],
+  },
+  'deep-research': {
+    label: 'Deep Research',
+    color: '#0284c7',
+    icon: '🔬',
+    strengths: ['多角的調査', '包括的分析', '詳細レポート'],
   },
 }

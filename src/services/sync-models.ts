@@ -4,7 +4,7 @@
  * Fetches available models from each AI provider's API using the
  * provider's apiBaseUrl from DB + models endpoint path.
  *
- * URL construction:  provider.apiBaseUrl + MODELS_PATH[provider.id]
+ * URL construction:  provider.apiBaseUrl + provider.modelsEndpoint (from DB)
  *   - OpenAI:     apiBaseUrl + /v1/models
  *   - Anthropic:  apiBaseUrl + /v1/models
  *   - Google:     apiBaseUrl + /v1beta/models
@@ -49,11 +49,12 @@ export interface ProviderRecord {
   displayName: string;
   apiBaseUrl: string;
   apiType: string;
+  modelsEndpoint?: string;
 }
 
-// ===== Models Endpoint Paths (per provider id) =====
+// ===== Fallback Models Endpoint Paths (used when DB modelsEndpoint is empty) =====
 
-const MODELS_PATH: Record<string, string> = {
+const FALLBACK_MODELS_PATH: Record<string, string> = {
   openai: "/v1/models",
   anthropic: "/v1/models",
   google: "/v1beta/models",
@@ -109,9 +110,9 @@ function isOpenAIChatModel(id: string): boolean {
   return true;
 }
 
-async function fetchOpenAIModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
+async function fetchOpenAIModels(baseUrl: string, apiKey: string, modelsPath?: string): Promise<DiscoveredModel[]> {
   interface M { id: string; }
-  const url = `${baseUrl}${MODELS_PATH["openai"]}`;
+  const url = `${baseUrl}${modelsPath || FALLBACK_MODELS_PATH["openai"]}`;
   const data = await fetchJson<{ data: M[] }>(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
@@ -123,13 +124,13 @@ async function fetchOpenAIModels(baseUrl: string, apiKey: string): Promise<Disco
 
 // ===== Anthropic Parser =====
 
-async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
+async function fetchAnthropicModels(baseUrl: string, apiKey: string, modelsPath?: string): Promise<DiscoveredModel[]> {
   interface M { id: string; display_name: string; }
   interface R { data: M[]; has_more: boolean; last_id: string; }
 
   const all: M[] = [];
   let afterId: string | undefined;
-  const endpoint = `${baseUrl}${MODELS_PATH["anthropic"]}`;
+  const endpoint = `${baseUrl}${modelsPath || FALLBACK_MODELS_PATH["anthropic"]}`;
 
   do {
     const url = afterId
@@ -150,7 +151,7 @@ async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<Di
 
 // ===== Google (Gemini) Parser =====
 
-async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
+async function fetchGoogleModels(baseUrl: string, apiKey: string, modelsPath?: string): Promise<DiscoveredModel[]> {
   interface M {
     name: string;
     displayName: string;
@@ -160,7 +161,7 @@ async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<Disco
 
   const all: M[] = [];
   let pageToken: string | undefined;
-  const endpoint = `${baseUrl}${MODELS_PATH["google"]}`;
+  const endpoint = `${baseUrl}${modelsPath || FALLBACK_MODELS_PATH["google"]}`;
 
   do {
     const url = pageToken
@@ -190,9 +191,9 @@ async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<Disco
 
 // ===== xAI (Grok) Parser =====
 
-async function fetchXAIModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
+async function fetchXAIModels(baseUrl: string, apiKey: string, modelsPath?: string): Promise<DiscoveredModel[]> {
   interface M { id: string; }
-  const url = `${baseUrl}${MODELS_PATH["xai"]}`;
+  const url = `${baseUrl}${modelsPath || FALLBACK_MODELS_PATH["xai"]}`;
   const data = await fetchJson<{ data: M[] }>(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
@@ -204,9 +205,9 @@ async function fetchXAIModels(baseUrl: string, apiKey: string): Promise<Discover
 
 // ===== DeepSeek Parser =====
 
-async function fetchDeepSeekModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
+async function fetchDeepSeekModels(baseUrl: string, apiKey: string, modelsPath?: string): Promise<DiscoveredModel[]> {
   interface M { id: string; }
-  const url = `${baseUrl}${MODELS_PATH["deepseek"]}`;
+  const url = `${baseUrl}${modelsPath || FALLBACK_MODELS_PATH["deepseek"]}`;
   const data = await fetchJson<{ data: M[] }>(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
@@ -231,7 +232,7 @@ function getPerplexityModels(): DiscoveredModel[] {
 
 // ===== Fetcher Dispatch (provider.id → fetcher) =====
 
-type Fetcher = (baseUrl: string, apiKey: string) => Promise<DiscoveredModel[]>;
+type Fetcher = (baseUrl: string, apiKey: string, modelsPath?: string) => Promise<DiscoveredModel[]>;
 
 const FETCHER_MAP: Record<string, Fetcher> = {
   openai: fetchOpenAIModels,
@@ -259,7 +260,7 @@ export function clearModelCache(): void {
 
 /**
  * Fetch models from a single provider using its apiBaseUrl from DB.
- * URL = provider.apiBaseUrl + MODELS_PATH[provider.id]
+ * URL = provider.apiBaseUrl + provider.modelsEndpoint (fallback to FALLBACK_MODELS_PATH)
  * Results are cached in-memory for 1h.
  */
 export async function fetchModelsForProvider(provider: ProviderRecord): Promise<ProviderModels> {
@@ -275,7 +276,7 @@ export async function fetchModelsForProvider(provider: ProviderRecord): Promise<
   }
 
   const fetcher = FETCHER_MAP[provider.id];
-  const modelsPath = MODELS_PATH[provider.id];
+  const modelsPath = provider.modelsEndpoint || FALLBACK_MODELS_PATH[provider.id];
   if (!fetcher || !modelsPath) {
     return { provider: provider.name, apiType: provider.apiType, models: [], error: `No models fetcher for provider "${provider.id}"` };
   }
@@ -289,7 +290,7 @@ export async function fetchModelsForProvider(provider: ProviderRecord): Promise<
   const endpoint = `${provider.apiBaseUrl}${modelsPath}`;
 
   try {
-    const models = await fetcher(provider.apiBaseUrl, apiKey);
+    const models = await fetcher(provider.apiBaseUrl, apiKey, modelsPath);
     const result: ProviderModels = { provider: provider.name, apiType: provider.apiType, models, endpoint };
     modelCache.set(provider.id, { data: result, expiresAt: now + CACHE_TTL_MS });
     return result;

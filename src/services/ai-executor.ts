@@ -17,6 +17,7 @@ export interface ExecutionRequest {
     displayName: string;
     apiBaseUrl: string;
     apiType: string;
+    apiEndpoint?: string;
     modelId: string;
   };
   config?: Record<string, unknown>;
@@ -99,12 +100,12 @@ function resolveApiKeyFromConfig(
 
 /** Default model IDs per apiType, used when provider.modelId is empty or not set */
 const DEFAULT_MODELS: Record<string, string> = {
-  anthropic: "claude-sonnet-4-5-20250929",
-  google: "gemini-2.5-flash",
-  openai: "gpt-4.1",
+  anthropic: "claude-opus-4-7",
+  google: "gemini-2.5-pro",
+  openai: "gpt-5.4",
   perplexity: "sonar-pro",
-  xai: "grok-4.20",
-  deepseek: "deepseek-v4",
+  xai: "grok-4.20-reasoning",
+  deepseek: "deepseek-chat",
   mistral: "mistral-3-large-latest",
   meta: "Llama-4-Maverick-17B-128E",
   qwen: "qwen3-235b-a22b",
@@ -129,7 +130,6 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
 
 /** API types that use the OpenAI-compatible chat completions format */
 const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
-  openai: "/v1/chat/completions",
   perplexity: "/chat/completions",
   xai: "/v1/chat/completions",
   deepseek: "/chat/completions",
@@ -152,13 +152,55 @@ function buildRequestBody(
   input: string,
   systemPrompt: string,
   config?: Record<string, unknown>,
-  chatHistory?: ChatMessage[]
+  chatHistory?: ChatMessage[],
+  apiEndpoint?: string
 ): { url: string; headers: Record<string, string>; body: unknown } | null {
   const apiKey = config?.apiKey as string | undefined;
   const maxTokens = (config?.maxTokens as number) || 4096;
 
   // Fall back to the default model for this apiType when modelId is not set
   const resolvedModelId = modelId || DEFAULT_MODELS[apiType] || modelId;
+
+  /** Fallback endpoint paths per apiType (used when DB apiEndpoint is empty) */
+  const FALLBACK_ENDPOINTS: Record<string, string> = {
+    openai: "/v1/responses",
+    anthropic: "/v1/messages",
+    perplexity: "/chat/completions",
+    xai: "/v1/chat/completions",
+    deepseek: "/chat/completions",
+    mistral: "/v1/chat/completions",
+    meta: "/v1/chat/completions",
+    qwen: "/compatible-mode/v1/chat/completions",
+    cohere: "/v2/chat",
+    moonshot: "/v1/chat/completions",
+  };
+
+  // Resolve the endpoint: prefer DB value, fall back to hardcoded
+  const resolvedEndpoint = apiEndpoint || FALLBACK_ENDPOINTS[apiType] || "";
+
+  // OpenAI Responses API (/v1/responses)
+  if (apiType === "openai") {
+    const inputItems: Array<{ role: string; content: string }> = [];
+    if (chatHistory?.length) {
+      for (const msg of chatHistory) {
+        inputItems.push({ role: msg.role, content: msg.content });
+      }
+    }
+    inputItems.push({ role: "user", content: input });
+    return {
+      url: resolvedEndpoint,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey || ""}`,
+      },
+      body: {
+        model: resolvedModelId,
+        instructions: systemPrompt,
+        input: inputItems,
+        max_output_tokens: maxTokens,
+      },
+    };
+  }
 
   if (apiType === "anthropic") {
     const messages: Array<{ role: string; content: string }> = [];
@@ -169,7 +211,7 @@ function buildRequestBody(
     }
     messages.push({ role: "user", content: input });
     return {
-      url: "/v1/messages",
+      url: resolvedEndpoint,
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey || "",
@@ -189,6 +231,10 @@ function buildRequestBody(
   }
 
   if (apiType === "google") {
+    // Google endpoint requires model name interpolation
+    const googleEndpoint = resolvedEndpoint.includes("{model}")
+      ? resolvedEndpoint.replace("{model}", resolvedModelId)
+      : `/v1beta/models/${resolvedModelId}:generateContent`;
     const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
     if (chatHistory?.length) {
       for (const msg of chatHistory) {
@@ -200,7 +246,7 @@ function buildRequestBody(
     }
     contents.push({ role: "user", parts: [{ text: input }] });
     return {
-      url: `/v1beta/models/${resolvedModelId}:generateContent`,
+      url: googleEndpoint,
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": apiKey || "",
@@ -218,9 +264,8 @@ function buildRequestBody(
     };
   }
 
-  // OpenAI-compatible providers (openai, perplexity, xai, deepseek)
-  const endpoint = OPENAI_COMPATIBLE_TYPES[apiType];
-  if (endpoint) {
+  // OpenAI-compatible providers (perplexity, xai, deepseek, etc.)
+  if (OPENAI_COMPATIBLE_TYPES[apiType] || resolvedEndpoint) {
     const messages: Array<{ role: string; content: string }> = [
       { role: "system", content: systemPrompt },
     ];
@@ -231,7 +276,7 @@ function buildRequestBody(
     }
     messages.push({ role: "user", content: input });
     return {
-      url: endpoint,
+      url: resolvedEndpoint || OPENAI_COMPATIBLE_TYPES[apiType],
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey || ""}`,
@@ -258,6 +303,29 @@ interface ParsedResponse {
  */
 function parseResponse(apiType: string, data: unknown): ParsedResponse {
   const d = data as Record<string, unknown>;
+
+  // OpenAI Responses API: output[].content[].text
+  if (apiType === "openai") {
+    const output = d.output as Array<{
+      type: string;
+      content?: Array<{ type: string; text?: string }>;
+    }>;
+    const textParts: string[] = [];
+    if (output) {
+      for (const item of output) {
+        if (item.type === "message" && item.content) {
+          for (const c of item.content) {
+            if (c.type === "output_text" && c.text) {
+              textParts.push(c.text);
+            }
+          }
+        }
+      }
+    }
+    return {
+      output: textParts.join("") || (d as { output_text?: string }).output_text || JSON.stringify(data),
+    };
+  }
 
   if (apiType === "anthropic") {
     const content = d.content as Array<{ type: string; text?: string; thinking?: string }>;
@@ -324,8 +392,15 @@ function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
   try {
     const parsed = JSON.parse(data);
 
+    // OpenAI Responses API: event type in "type" field
+    if (apiType === "openai") {
+      if (parsed.type === "response.output_text.delta" && parsed.delta) {
+        return { text: parsed.delta, thinking: null, citations: null };
+      }
+      return { text: null, thinking: null, citations: null };
+    }
+
     if (apiType === "anthropic") {
-      // Anthropic: content_block_delta with delta.text or thinking delta
       if (parsed.type === "content_block_delta") {
         if (parsed.delta?.type === "thinking_delta" && parsed.delta?.thinking) {
           return { text: null, thinking: parsed.delta.thinking, citations: null };
@@ -338,7 +413,6 @@ function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
     }
 
     if (apiType === "google") {
-      // Google: candidates[0].content.parts[0].text (with optional thought flag)
       const part = parsed.candidates?.[0]?.content?.parts?.[0];
       if (part?.thought === true) {
         return { text: null, thinking: part.text || null, citations: null };
@@ -346,7 +420,7 @@ function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
       return { text: part?.text || null, thinking: null, citations: null };
     }
 
-    // OpenAI-compatible: choices[0].delta.content + citations
+    // OpenAI-compatible (Perplexity, xAI, DeepSeek etc.): choices[0].delta.content
     const content = parsed.choices?.[0]?.delta?.content;
     const citations = parsed.citations as string[] | undefined;
     return {
@@ -483,7 +557,8 @@ export async function executeTaskStream(
     enrichedInput,
     systemPrompt,
     req.config || undefined,
-    req.chatHistory
+    req.chatHistory,
+    req.provider.apiEndpoint
   );
 
   if (!requestSpec) {
@@ -507,7 +582,9 @@ export async function executeTaskStream(
   }
 
   // Update headers with the resolved API key
-  if (req.provider.apiType === "anthropic") {
+  if (req.provider.apiType === "openai") {
+    requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
+  } else if (req.provider.apiType === "anthropic") {
     requestSpec.headers["x-api-key"] = apiKey;
   } else if (req.provider.apiType === "google") {
     requestSpec.headers["x-goog-api-key"] = apiKey;
@@ -654,7 +731,8 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     req.input,
     systemPrompt,
     req.config || undefined,
-    req.chatHistory
+    req.chatHistory,
+    req.provider.apiEndpoint
   );
 
   if (!requestSpec) {
@@ -679,7 +757,9 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   }
 
   // Update headers with the resolved API key
-  if (req.provider.apiType === "anthropic") {
+  if (req.provider.apiType === "openai") {
+    requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
+  } else if (req.provider.apiType === "anthropic") {
     requestSpec.headers["x-api-key"] = apiKey;
   } else if (req.provider.apiType === "google") {
     requestSpec.headers["x-goog-api-key"] = apiKey;

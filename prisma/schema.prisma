@@ -11,16 +11,18 @@ datasource db {
 
 /// AI provider (e.g. OpenAI, Anthropic, Google, Perplexity, xAI, DeepSeek)
 model Provider {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  displayName String
-  apiBaseUrl  String
-  apiType     String   // "openai" | "anthropic" | "google" | "perplexity" | "xai" | "deepseek"
-  modelId     String   // default model ID for this provider
-  description String?
-  isEnabled   Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(uuid())
+  name           String   @unique
+  displayName    String
+  apiBaseUrl     String
+  apiType        String   // "openai" | "anthropic" | "google" | "perplexity" | "xai" | "deepseek"
+  apiEndpoint    String   @default("") // inference endpoint path, e.g. "/v1/responses", "/v1/messages"
+  modelsEndpoint String   @default("") // models list endpoint path, e.g. "/v1/models"
+  modelId        String   // default model ID for this provider
+  description    String?
+  isEnabled      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   assignments RoleAssignment[]
   models      Model[]

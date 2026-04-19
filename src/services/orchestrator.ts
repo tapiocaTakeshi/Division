@@ -473,6 +473,7 @@ export async function runAgent(
       displayName: string;
       apiBaseUrl: string;
       apiType: string;
+      apiEndpoint: string;
       modelId: string;
       isEnabled: boolean;
     } | null = null;
@@ -494,7 +495,6 @@ export async function runAgent(
         orderBy: { priority: "desc" },
       });
       if (assignment) {
-        // Apply config.model override, falling back to provider.modelId
         const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
         const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
         provider = { ...assignment.provider, modelId: taskModelId };
@@ -1101,6 +1101,7 @@ async function runAgentStreamCore(
       displayName: string;
       apiBaseUrl: string;
       apiType: string;
+      apiEndpoint: string;
       modelId: string;
       isEnabled: boolean;
     } | null = null;
@@ -1122,7 +1123,6 @@ async function runAgentStreamCore(
         orderBy: { priority: "desc" },
       });
       if (assignment) {
-        // Apply config.model override, falling back to provider.modelId
         const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
         const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
         provider = { ...assignment.provider, modelId: taskModelId };
@@ -1336,6 +1336,7 @@ async function runAgentStreamCore(
       displayName: string;
       apiBaseUrl: string;
       apiType: string;
+      apiEndpoint: string;
       modelId: string;
       isEnabled: boolean;
     } | null = null;

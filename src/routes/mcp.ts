@@ -12,7 +12,7 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { prisma } from "../db";
 import { runAgent, runAgentStream, StreamEvent } from "../services/orchestrator";
-import { syncModels, listAvailableModels } from "../services/sync-models";
+import { listAvailableModels, clearModelCache } from "../services/sync-models";
 
 const router = Router();
 
@@ -145,25 +145,20 @@ const TOOLS = [
     },
   },
   {
-    name: "division_sync_models",
-    description:
-      "Sync available AI models from provider APIs (OpenAI, Anthropic, Google, xAI, DeepSeek, Mistral). Fetches the latest model lists and updates the database. Requires provider API keys to be configured.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
     name: "division_list_available_models",
     description:
-      "List all available AI models directly from provider APIs (OpenAI, Anthropic, Google, xAI, DeepSeek, Mistral). This is a read-only operation — it does NOT update the database. Use division_sync_models to persist changes.",
+      "List all available AI models directly from provider APIs (OpenAI, Anthropic, Google, Perplexity, xAI, DeepSeek). Fetches in real-time with 1h cache.",
     inputSchema: {
       type: "object",
       properties: {
         provider: {
           type: "string",
           description:
-            "Optional. Filter by provider name (openai, anthropic, google, xai, deepseek, mistral). If omitted, lists from all providers.",
+            "Optional. Filter by provider (openai, anthropic, google, perplexity, xai, deepseek).",
+        },
+        refresh: {
+          type: "boolean",
+          description: "If true, clear cache and fetch fresh data.",
         },
       },
     },
@@ -531,30 +526,9 @@ async function handleSetAgent(args: Record<string, unknown>) {
   ];
 }
 
-async function handleSyncModels() {
-  const result = await syncModels();
-
-  const lines: string[] = [
-    `## Model Sync Results\n`,
-    `**Timestamp:** ${result.timestamp}`,
-    `**Total:** ${result.totalDiscovered} discovered, ${result.totalAdded} added, ${result.totalUpdated} updated\n`,
-  ];
-
-  for (const p of result.providers) {
-    if (p.error) {
-      lines.push(`### ⚠️ ${p.provider}\n- ${p.error}\n`);
-    } else {
-      lines.push(
-        `### ✅ ${p.provider}\n- Discovered: ${p.discovered} | Added: ${p.added} | Updated: ${p.updated} | Unchanged: ${p.skipped}\n`
-      );
-    }
-  }
-
-  return [{ type: "text", text: lines.join("\n") }];
-}
-
 async function handleListAvailableModels(args: Record<string, unknown>) {
   const providerFilter = args.provider as string | undefined;
+  if (args.refresh) clearModelCache();
   const result = await listAvailableModels(providerFilter);
 
   const lines: string[] = [
@@ -574,11 +548,8 @@ async function handleListAvailableModels(args: Record<string, unknown>) {
     }
 
     lines.push(`### ✅ ${p.provider} (${p.models.length} models)\n`);
-    lines.push(`| Name | Model ID | Description |`);
-    lines.push(`|------|----------|-------------|`);
     for (const m of p.models) {
-      const desc = m.description.length > 50 ? m.description.slice(0, 47) + "..." : m.description;
-      lines.push(`| ${m.name} | \`${m.modelId}\` | ${desc} |`);
+      lines.push(`- \`${m.modelId}\` — ${m.displayName}`);
     }
     lines.push("");
   }
@@ -702,9 +673,6 @@ async function handleJsonRpc(
             break;
           case "division_set_agent":
             content = await handleSetAgent(args);
-            break;
-          case "division_sync_models":
-            content = await handleSyncModels();
             break;
           case "division_list_available_models":
             content = await handleListAvailableModels(args);

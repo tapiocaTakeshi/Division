@@ -10,31 +10,26 @@
 
 Division APIは、複数のAIモデルを**役割ベース**で自動振り分けるオーケストレーションAPIです。
 
-Leader AI がユーザーのリクエストを分析し、**固定4段パイプライン**に沿ってサブタスクへ分解。T1(調査)→T2(設計)の結果を Coder/Writer が統合し、最後に Reviewer が最終版を生成します。
+Leader AI がユーザーのリクエストを分析し、「検索」「設計」「コーディング」「レビュー」などのサブタスクに分解。各タスクを最適なAIモデルに割り当てて並列実行し、全エージェントの出力を **Coder / Writer が統合**して最終成果物を Markdown で生成します。
 
 ```
 ユーザー: 「クイズアプリを作って」
          ↓
-    🧠 Leader (タスクを分析・分解 + finalRole を決定)
+    🧠 Leader AI (GPT-4.1)
+    タスクを分析・分解 + finalRole を決定
          ↓
-    T1 ┌──────────────────────────────────────────────┐
-       │  💡 Ideaman     → Claude     ┐              │
-       │  🔍 Search      → Perplexity ├─ 並列実行     │
-       │  📂 File Search → GPT        │              │
-       │  🔬 Deep Research → Perplexity ┘            │
-       └──────────────────────────────────────────────┘
-         ↓ Markdown
-    T2 ┌──────────────────────────────────────────────┐
-       │  🎨 Design     → Gemini      ┐              │
-       │  🖼  Image      → GPT Image   ├─ 並列実行     │
-       │  📐 Planning   → Gemini      ┘              │
-       └──────────────────────────────────────────────┘
-         ↓ Markdown
-    T3  ✍️ Writer / 💻 Coder   (統合ステップ: Code or Text を生成)
+    ┌──────────────────────────────────────────────┐
+    │  🔍 Search  → Perplexity     ┐              │
+    │  📐 Planning → Gemini        ├─ 並列実行     │
+    │  💡 Ideaman → Claude         ┘              │
+    │          ↓ (依存タスク)                       │
+    │  💻 Coding  → Claude                         │
+    │  🔎 Review  → Gemini                         │
+    └──────────────────────────────────────────────┘
+         ↓ 全出力を Markdown で集約
+    ✍️ Writer / 💻 Coder (合成ステップ)
          ↓
-    T4  🔎 Reviewer            (レビュー・最終版を生成)
-         ↓ result
-    ユーザーに最終成果物を Markdown で返却
+    最終成果物を Markdown で返却
 ```
 
 ## エンドポイント
@@ -77,13 +72,10 @@ curl -N -X POST https://api.division.he-ro.jp/api/agent/stream \
 | `task_done`        | サブタスク完了（出力含む）                                   |
 | `task_error`       | サブタスク失敗                                               |
 | `wave_done`        | 並列実行グループの完了                                       |
-| `synthesis_start`  | T3 合成ステップ開始（Coder/Writerが全出力を統合）            |
+| `synthesis_start`  | 合成ステップ開始（Coder/Writerが全出力を統合）               |
 | `synthesis_chunk`  | 合成AIからのストリーミングテキスト                           |
-| `synthesis_done`   | 合成完了（T3: Code or Text）                                  |
-| `review_start`     | T4 レビューステップ開始（Reviewerが最終版を生成）            |
-| `review_chunk`     | レビューAIからのストリーミングテキスト                       |
-| `review_done`      | レビュー完了（最終版Markdown出力 = ユーザーに届く result）   |
-| `session_done`     | 全タスク完了（`synthesisOutput` と `finalOutput` を含む）    |
+| `synthesis_done`   | 合成完了（最終Markdown出力）                                 |
+| `session_done`     | 全タスク完了（集計結果含む）                                 |
 | `heartbeat`        | 接続維持（15秒ごと）                                         |
 
 #### `POST /api/agent/run` — エージェント実行（非ストリーム）
@@ -152,18 +144,14 @@ curl -X POST https://api.division.he-ro.jp/api/agent/run \
 | `deep-research` | Perplexity Deep Research  | 徹底調査・包括的分析                         |
 | `image`         | GPT Image 1               | 画像生成・ビジュアルコンテンツ               |
 | `ideaman`       | Claude                    | アイデア発想・ブレインストーミング           |
-| `design`        | Gemini                    | UI/UX設計・ワイヤーフレーム・デザインシステム |
 
-### パイプライン段階
+### 合成ステップ (Synthesis)
 
-| 段階 | ロール例                                                   | 役割                                             |
-| ---- | ---------------------------------------------------------- | ------------------------------------------------ |
-| T1   | `ideaman`, `search`, `file-search`, `deep-research`       | 調査・発想（並列）                               |
-| T2   | `design`, `image`, `planning`                              | 設計・ビジュアル（並列 / T1の成果を受けて動作） |
-| T3   | `coding` (=coder) または `writing` (=writer)              | Leaderが指定した finalRole で T1+T2 を統合       |
-| T4   | `review`                                                   | T3成果物をレビューし最終版(result)を生成         |
+全エージェントの作業完了後、Leader が指定した `finalRole`（`coder` or `writer`）のAIが全出力を統合し、**Markdown形式の最終成果物**を生成します。
 
-T1・T2のみ Leader が `tasks[]` に列挙します。T3(合成) と T4(レビュー) は自動で付与されるため、Leaderが明示する必要はありません。
+```
+全エージェント出力 → Coder/Writer → 最終 Markdown
+```
 
 ## overrides（モデル切り替え）
 

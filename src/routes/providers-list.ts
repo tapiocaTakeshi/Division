@@ -6,17 +6,18 @@ const router = Router();
 
 /**
  * GET /api/models
- * List all available AI providers/models
+ * List all AI providers (6 providers only).
  */
 router.get("/", asyncHandler(async (_req, res) => {
   const providers = await prisma.provider.findMany({
+    where: { isEnabled: true },
     orderBy: { name: "asc" },
     select: {
+      id: true,
       name: true,
       displayName: true,
       apiType: true,
       modelId: true,
-      description: true,
     },
   });
   res.json({ providers });

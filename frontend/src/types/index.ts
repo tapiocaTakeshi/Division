@@ -1,18 +1,7 @@
 // ===== Agent & Task Types =====
 
 export type AgentStatus = 'idle' | 'running' | 'success' | 'error'
-export type RoleSlug =
-  | 'leader'
-  | 'coding'
-  | 'search'
-  | 'file-search'
-  | 'deep-research'
-  | 'planning'
-  | 'writing'
-  | 'review'
-  | 'image'
-  | 'ideaman'
-  | 'design'
+export type RoleSlug = 'leader' | 'coding' | 'search' | 'file-search' | 'planning' | 'writing' | 'review' | 'image' | 'ideaman'
 
 export interface AgentNode {
   id: string
@@ -49,10 +38,6 @@ export interface OrchestraSession {
   synthesisRole?: string
   synthesisProvider?: string
   synthesisModel?: string
-  reviewOutput?: string
-  reviewStatus?: AgentStatus
-  reviewProvider?: string
-  reviewModel?: string
   totalDurationMs?: number
   totalTokens?: number
   estimatedCost?: number
@@ -115,9 +100,6 @@ export type SSEEventType =
   | 'synthesis_start'
   | 'synthesis_chunk'
   | 'synthesis_done'
-  | 'review_start'
-  | 'review_chunk'
-  | 'review_done'
   | 'session_done'
   | 'heartbeat'
 

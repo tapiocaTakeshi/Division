@@ -21,22 +21,13 @@ async function main() {
   // ===== PROVIDERS (model-level granularity) =====
 
   // --- Anthropic (Claude) ---
-  const claudeOpus47 = await upsertProvider({
-    name: "claude-opus-4.7",
-    displayName: "Claude Opus 4.7 (Anthropic)",
-    apiBaseUrl: "https://api.anthropic.com",
-    apiType: "anthropic",
-    modelId: "claude-opus-4-7",
-    description: "Latest & most intelligent Claude — agents & deep reasoning",
-  });
-
   const claudeOpus46 = await upsertProvider({
     name: "claude-opus-4.6",
     displayName: "Claude Opus 4.6 (Anthropic)",
     apiBaseUrl: "https://api.anthropic.com",
     apiType: "anthropic",
     modelId: "claude-opus-4-6",
-    description: "Previous-gen flagship — agents & deep reasoning",
+    description: "Latest & most intelligent Claude — agents & deep reasoning",
   });
 
   const claudeOpus45 = await upsertProvider({
@@ -194,40 +185,13 @@ async function main() {
   });
 
   // --- OpenAI (GPT / o-series) ---
-  const gpt54 = await upsertProvider({
-    name: "gpt-5.4",
-    displayName: "GPT-5.4 (OpenAI)",
-    apiBaseUrl: "https://api.openai.com",
-    apiType: "openai",
-    modelId: "gpt-5.4",
-    description: "Latest flagship — deep reasoning, configurable thinking, multimodal",
-  });
-
-  const gpt54Mini = await upsertProvider({
-    name: "gpt-5.4-mini",
-    displayName: "GPT-5.4 Mini (OpenAI)",
-    apiBaseUrl: "https://api.openai.com",
-    apiType: "openai",
-    modelId: "gpt-5.4-mini",
-    description: "Fast & affordable — latest-gen mini model",
-  });
-
-  const gpt54Pro = await upsertProvider({
-    name: "gpt-5.4-pro",
-    displayName: "GPT-5.4 Pro (OpenAI)",
-    apiBaseUrl: "https://api.openai.com",
-    apiType: "openai",
-    modelId: "gpt-5.4-pro",
-    description: "Maximum reasoning — pro tier of GPT-5.4",
-  });
-
   const gpt52 = await upsertProvider({
     name: "gpt-5.2",
     displayName: "GPT-5.2 (OpenAI)",
     apiBaseUrl: "https://api.openai.com",
     apiType: "openai",
     modelId: "gpt-5.2",
-    description: "Previous-gen flagship — deep reasoning, configurable thinking",
+    description: "Latest flagship — deep reasoning, configurable thinking",
   });
 
   const gpt51 = await upsertProvider({
@@ -884,8 +848,8 @@ async function main() {
     displayName: "GPT (OpenAI)",
     apiBaseUrl: "https://api.openai.com",
     apiType: "openai",
-    modelId: "gpt-5.4",
-    description: "Alias → GPT-5.4",
+    modelId: "gpt-5.2",
+    description: "Alias → GPT-5.2",
   });
 
   const grok = await upsertProvider({
@@ -1050,20 +1014,20 @@ async function main() {
 
   // ===== ASSIGNMENTS (optimized defaults) =====
   const assignments = [
-    { role: coding, provider: claudeOpus47, label: "Coding         -> Claude Opus 4.7" },
+    { role: coding, provider: claudeSonnet46, label: "Coding         -> Claude Sonnet 4.6" },
     { role: search, provider: perplexitySonarPro, label: "Search         -> Perplexity Sonar Pro" },
     { role: planning, provider: gemini25Pro, label: "Planning       -> Gemini 2.5 Pro" },
-    { role: writing, provider: gpt54, label: "Writing        -> GPT-5.4" },
-    { role: review, provider: claudeOpus47, label: "Review         -> Claude Opus 4.7" },
-    { role: leader, provider: gpt54, label: "Leader         -> GPT-5.4" },
+    { role: writing, provider: claudeSonnet45, label: "Writing        -> Claude Sonnet 4.5" },
+    { role: review, provider: gpt41, label: "Review         -> GPT-4.1" },
+    { role: leader, provider: gemini25Flash, label: "Leader         -> Gemini 2.5 Flash" },
     { role: deepResearch, provider: perplexityDeepResearch, label: "Deep Research  -> Perplexity Deep Research" },
     { role: image, provider: gptImage1, label: "Image          -> GPT Image 1" },
-    { role: ideaman, provider: claudeSonnet46, label: "Idea Man       -> Claude Sonnet 4.6" },
+    { role: ideaman, provider: claudeSonnet45, label: "Idea Man       -> Claude Sonnet 4.5" },
     { role: design, provider: gemini3Flash, label: "Design         -> Gemini 3 Flash" },
   ];
 
   for (const a of assignments) {
-    const assignmentConfig = JSON.stringify({ model: "latest" });
+    const assignmentConfig = JSON.stringify({ model: a.provider.modelId });
     await prisma.roleAssignment.upsert({
       where: {
         projectId_roleId_providerId: {

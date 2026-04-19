@@ -230,18 +230,6 @@ function handleSSEEvent(
       store.completeSynthesis(event.output as string)
       break
 
-    case 'review_start':
-      store.startReview(event.provider as string, event.model as string)
-      break
-
-    case 'review_chunk':
-      store.appendReviewChunk(event.text as string)
-      break
-
-    case 'review_done':
-      store.completeReview(event.output as string)
-      break
-
     case 'session_done':
       store.completeSession(
         event.finalOutput as string,

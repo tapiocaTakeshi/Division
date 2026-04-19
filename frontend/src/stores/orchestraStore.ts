@@ -34,9 +34,6 @@ interface OrchestraState {
   startSynthesis: (role: string, provider: string, model: string) => void
   appendSynthesisChunk: (text: string) => void
   completeSynthesis: (output: string) => void
-  startReview: (provider: string, model: string) => void
-  appendReviewChunk: (text: string) => void
-  completeReview: (output: string) => void
   completeSession: (finalOutput: string, totalDurationMs: number) => void
   failSession: (error: string) => void
   resetSession: () => void
@@ -67,10 +64,10 @@ const defaultTemplates: PipelineTemplate[] = [
     icon: 'article',
     tags: ['コンテンツ', '記事', 'SEO'],
     steps: [
-      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'latest', dependsOn: [] },
-      { id: 's2', role: 'planning', provider: 'Gemini', modelId: 'latest', dependsOn: ['s1'] },
-      { id: 's3', role: 'writing', provider: 'Claude', modelId: 'latest', dependsOn: ['s2'] },
-      { id: 's4', role: 'review', provider: 'GPT', modelId: 'latest', dependsOn: ['s3'] },
+      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'sonar-pro', dependsOn: [] },
+      { id: 's2', role: 'planning', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: ['s1'] },
+      { id: 's3', role: 'writing', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s2'] },
+      { id: 's4', role: 'review', provider: 'GPT', modelId: 'gpt-4.1', dependsOn: ['s3'] },
     ],
   },
   {
@@ -80,10 +77,10 @@ const defaultTemplates: PipelineTemplate[] = [
     icon: 'code',
     tags: ['開発', 'コード', 'レビュー'],
     steps: [
-      { id: 's1', role: 'planning', provider: 'Gemini', modelId: 'latest', dependsOn: [] },
-      { id: 's2', role: 'coding', provider: 'Claude', modelId: 'latest', dependsOn: ['s1'] },
-      { id: 's3', role: 'review', provider: 'GPT', modelId: 'latest', dependsOn: ['s2'] },
-      { id: 's4', role: 'coding', provider: 'Claude', modelId: 'latest', dependsOn: ['s3'] },
+      { id: 's1', role: 'planning', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: [] },
+      { id: 's2', role: 'coding', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s1'] },
+      { id: 's3', role: 'review', provider: 'GPT', modelId: 'gpt-4.1', dependsOn: ['s2'] },
+      { id: 's4', role: 'coding', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s3'] },
     ],
   },
   {
@@ -93,10 +90,10 @@ const defaultTemplates: PipelineTemplate[] = [
     icon: 'research',
     tags: ['調査', '分析', '論文'],
     steps: [
-      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'latest', dependsOn: [] },
+      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'sonar-pro', dependsOn: [] },
       { id: 's2', role: 'search', provider: 'Perplexity', modelId: 'sonar-deep-research', dependsOn: [] },
-      { id: 's3', role: 'planning', provider: 'Gemini', modelId: 'latest', dependsOn: ['s1', 's2'] },
-      { id: 's4', role: 'writing', provider: 'Claude', modelId: 'latest', dependsOn: ['s3'] },
+      { id: 's3', role: 'planning', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: ['s1', 's2'] },
+      { id: 's4', role: 'writing', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s3'] },
     ],
   },
 ]
@@ -181,27 +178,6 @@ export const useOrchestraStore = create<OrchestraState>((set) => ({
     set((state) => ({
       session: state.session
         ? { ...state.session, synthesisStatus: 'success', synthesisOutput: output }
-        : null,
-    })),
-
-  startReview: (provider, model) =>
-    set((state) => ({
-      session: state.session
-        ? { ...state.session, reviewStatus: 'running', reviewProvider: provider, reviewModel: model, reviewOutput: '' }
-        : null,
-    })),
-
-  appendReviewChunk: (text) =>
-    set((state) => ({
-      session: state.session
-        ? { ...state.session, reviewOutput: (state.session.reviewOutput ?? '') + text }
-        : null,
-    })),
-
-  completeReview: (output) =>
-    set((state) => ({
-      session: state.session
-        ? { ...state.session, reviewStatus: 'success', reviewOutput: output }
         : null,
     })),
 
@@ -302,17 +278,5 @@ export const ROLE_META: Record<RoleSlug, { label: string; color: string; icon: s
     color: '#f97316',
     icon: '💡',
     strengths: ['ブレスト', 'アイデア出し', '発想力'],
-  },
-  design: {
-    label: 'Designer',
-    color: '#d946ef',
-    icon: '🎨',
-    strengths: ['UI/UX', 'ワイヤーフレーム', 'デザインシステム'],
-  },
-  'deep-research': {
-    label: 'Deep Research',
-    color: '#0284c7',
-    icon: '🔬',
-    strengths: ['多角的調査', '包括的分析', '詳細レポート'],
   },
 }

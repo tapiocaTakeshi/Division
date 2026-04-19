@@ -28,13 +28,15 @@ model Provider {
 
 /// Available AI model fetched from provider APIs
 model Model {
-  id          String   @id @default(uuid())
-  providerId  String
-  modelId     String   // ID passed to the provider API (e.g. "gpt-5.4", "claude-opus-4-7")
-  displayName String
-  isEnabled   Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                  String   @id @default(uuid())
+  providerId          String
+  modelId             String
+  displayName         String
+  isEnabled           Boolean  @default(true)
+  inputCostPerMToken  Decimal? @db.Decimal(10, 4)
+  outputCostPerMToken Decimal? @db.Decimal(10, 4)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
 

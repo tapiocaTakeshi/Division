@@ -15,6 +15,7 @@ import { taskCreateRouter } from "./routes/task-create";
 import { apiKeyRouter } from "./routes/api-keys";
 import { knockRouter } from "./routes/knock";
 import { previewRouter } from "./routes/preview";
+import { webhookRouter } from "./routes/webhook";
 import { divisionAuth } from "./middleware/auth";
 const app = express();
 
@@ -56,6 +57,7 @@ app.use("/api/tasks", divisionAuth, taskCreateRouter);
 app.use("/api/models", providersListRouter);
 app.use("/api/models", modelSyncRouter);
 app.use("/api/preview", previewRouter);
+app.use("/api/webhook", webhookRouter);
 
 // API key management (requires Clerk auth)
 app.use("/api/api-keys", apiKeyRouter);

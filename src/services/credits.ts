@@ -1,147 +1,238 @@
 /**
- * Credit Service
+ * Usage & Cost Service
  *
- * Handles credit check and consumption by calling the division-hp
- * (division.he-ro.jp) credit API endpoints.
+ * Tracks per-call token usage and calculates costs using the Model table's
+ * inputCostPerMToken / outputCostPerMToken. Each call is logged to UsageLog
+ * and a webhook is fired to notify external billing systems.
  *
  * Flow:
- *   1. Before AI request → POST /api/credits/check  (残高確認)
- *   2. After AI request  → POST /api/credits/consume (クレジット消費)
+ *   1. AI call completes → recordUsage() called
+ *   2. Look up cost data from Model table
+ *   3. Calculate cost: tokens * costPerMToken / 1_000_000
+ *   4. Insert into UsageLog
+ *   5. Fire webhook (async, non-blocking)
  */
 
+import { prisma } from "../db";
 import { logger } from "../utils/logger";
+import { Decimal } from "@prisma/client/runtime/library";
 
-const CREDIT_API_BASE =
-  process.env.CREDIT_API_URL || "https://division.he-ro.jp";
-const WEBHOOK_SECRET =
-  process.env.DIVISION_WEBHOOK_SECRET || process.env.DIVISION_API_KEY || "";
+const WEBHOOK_URL = process.env.USAGE_WEBHOOK_URL || process.env.CREDIT_API_URL || "";
+const WEBHOOK_SECRET = process.env.DIVISION_WEBHOOK_SECRET || process.env.DIVISION_API_KEY || "";
 
-interface CreditCheckResult {
-  userId: string;
-  plan: string;
-  creditBalance: number;
-  canAfford: boolean;
-  estimatedCost: number;
+// ===== Types =====
+
+export interface UsageRecord {
+  userId?: string;
+  projectId?: string;
+  sessionId?: string;
+  providerId: string;
+  modelId: string;
+  role?: string;
+  inputTokens: number;
+  outputTokens: number;
 }
 
-interface CreditConsumeResult {
-  success: boolean;
-  creditsConsumed: number;
-  remainingBalance: number;
-  totalUsed: number;
+export interface UsageCost {
+  inputCostUsd: number;
+  outputCostUsd: number;
+  totalCostUsd: number;
 }
+
+export interface RecordUsageResult {
+  id: string;
+  cost: UsageCost;
+  webhookStatus: string;
+}
+
+export interface WebhookPayload {
+  event: "usage.recorded";
+  usageId: string;
+  userId?: string;
+  projectId?: string;
+  sessionId?: string;
+  providerId: string;
+  modelId: string;
+  role?: string;
+  inputTokens: number;
+  outputTokens: number;
+  inputCostUsd: number;
+  outputCostUsd: number;
+  totalCostUsd: number;
+  timestamp: string;
+}
+
+// ===== Cost Calculation =====
 
 /**
- * Check if a user has enough credits to process a request.
- * Returns null if credit system is not configured or request fails
- * (graceful degradation — don't block requests if credit service is down).
+ * Look up cost rates from the Model table and calculate USD cost.
  */
-export async function checkCredits(
-  userId: string,
-  estimatedTokens?: number
-): Promise<CreditCheckResult | null> {
-  if (!WEBHOOK_SECRET) {
-    logger.warn("[Credits] DIVISION_WEBHOOK_SECRET not set — skipping credit check");
-    return null;
+async function calculateCost(
+  providerId: string,
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number
+): Promise<UsageCost> {
+  const model = await prisma.model.findFirst({
+    where: {
+      OR: [
+        { providerId, modelId },
+        { providerId, modelId: { startsWith: modelId.split("-").slice(0, 2).join("-") } },
+      ],
+    },
+    select: { inputCostPerMToken: true, outputCostPerMToken: true },
+  });
+
+  if (!model || !model.inputCostPerMToken || !model.outputCostPerMToken) {
+    logger.warn(`[Usage] No cost data for ${providerId}/${modelId}, using zero cost`);
+    return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0 };
+  }
+
+  const inputRate = Number(model.inputCostPerMToken);
+  const outputRate = Number(model.outputCostPerMToken);
+
+  const inputCostUsd = (inputTokens * inputRate) / 1_000_000;
+  const outputCostUsd = (outputTokens * outputRate) / 1_000_000;
+  const totalCostUsd = inputCostUsd + outputCostUsd;
+
+  return { inputCostUsd, outputCostUsd, totalCostUsd };
+}
+
+// ===== Webhook =====
+
+async function fireWebhook(payload: WebhookPayload): Promise<{ status: string; response?: string }> {
+  if (!WEBHOOK_URL) {
+    return { status: "skipped", response: "No USAGE_WEBHOOK_URL configured" };
   }
 
   try {
-    const res = await fetch(`${CREDIT_API_BASE}/api/credits/check`, {
+    const res = await fetch(`${WEBHOOK_URL}/api/webhook/usage`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${WEBHOOK_SECRET}`,
+        ...(WEBHOOK_SECRET ? { Authorization: `Bearer ${WEBHOOK_SECRET}` } : {}),
       },
-      body: JSON.stringify({ userId, estimatedTokens }),
-      signal: AbortSignal.timeout(5000), // 5s timeout
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
     });
 
+    const body = await res.text().catch(() => "");
+
     if (!res.ok) {
-      logger.warn(`[Credits] Check failed: ${res.status} ${res.statusText}`);
-      return null;
+      logger.warn(`[Usage] Webhook failed: ${res.status} ${body.slice(0, 200)}`);
+      return { status: "failed", response: `${res.status}: ${body.slice(0, 200)}` };
     }
 
-    return (await res.json()) as CreditCheckResult;
+    return { status: "sent", response: body.slice(0, 500) };
   } catch (err) {
-    logger.error("[Credits] Check request failed:", err);
-    return null; // Graceful degradation
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(`[Usage] Webhook error: ${msg}`);
+    return { status: "error", response: msg };
   }
 }
+
+// ===== Main API =====
 
 /**
- * Consume credits after a successful AI provider call.
- * Returns null if credit system is not configured or request fails.
+ * Record usage after an AI call completes.
+ * Calculates cost from Model table, saves to UsageLog, fires webhook.
  */
-export async function consumeCredits(
-  userId: string,
-  tokensUsed: number,
-  model: string,
-  provider: string,
-  requestId?: string
-): Promise<CreditConsumeResult | null> {
-  if (!WEBHOOK_SECRET) {
-    logger.warn("[Credits] DIVISION_WEBHOOK_SECRET not set — skipping credit consumption");
-    return null;
-  }
+export async function recordUsage(record: UsageRecord): Promise<RecordUsageResult> {
+  const cost = await calculateCost(
+    record.providerId,
+    record.modelId,
+    record.inputTokens,
+    record.outputTokens
+  );
 
-  try {
-    const res = await fetch(`${CREDIT_API_BASE}/api/credits/consume`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${WEBHOOK_SECRET}`,
-      },
-      body: JSON.stringify({
-        userId,
-        tokensUsed,
-        model,
-        provider,
-        requestId,
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
+  const usageLog = await prisma.usageLog.create({
+    data: {
+      userId: record.userId,
+      projectId: record.projectId,
+      sessionId: record.sessionId,
+      providerId: record.providerId,
+      modelId: record.modelId,
+      role: record.role,
+      inputTokens: record.inputTokens,
+      outputTokens: record.outputTokens,
+      inputCostUsd: new Decimal(cost.inputCostUsd.toFixed(6)),
+      outputCostUsd: new Decimal(cost.outputCostUsd.toFixed(6)),
+      totalCostUsd: new Decimal(cost.totalCostUsd.toFixed(6)),
+      webhookStatus: "pending",
+    },
+  });
 
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      logger.warn(`[Credits] Consume failed: ${res.status}`, errorData);
+  logger.info(
+    `[Usage] ${record.providerId}/${record.modelId}: ${record.inputTokens}in/${record.outputTokens}out = $${cost.totalCostUsd.toFixed(6)}`
+  );
 
-      // If 402 (insufficient credits), throw to stop processing
-      if (res.status === 402) {
-        throw new Error(
-          `Insufficient credits. Balance: ${(errorData as { currentBalance?: number }).currentBalance ?? 0}, Required: ${(errorData as { required?: number }).required ?? 0}`
-        );
-      }
-      return null;
+  // Fire webhook async (don't block the response)
+  const webhookPayload: WebhookPayload = {
+    event: "usage.recorded",
+    usageId: usageLog.id,
+    userId: record.userId,
+    projectId: record.projectId,
+    sessionId: record.sessionId,
+    providerId: record.providerId,
+    modelId: record.modelId,
+    role: record.role,
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    inputCostUsd: cost.inputCostUsd,
+    outputCostUsd: cost.outputCostUsd,
+    totalCostUsd: cost.totalCostUsd,
+    timestamp: usageLog.createdAt.toISOString(),
+  };
+
+  fireWebhook(webhookPayload).then(async (result) => {
+    try {
+      await prisma.usageLog.update({
+        where: { id: usageLog.id },
+        data: {
+          webhookStatus: result.status,
+          webhookResponse: result.response?.slice(0, 1000),
+        },
+      });
+    } catch (e) {
+      logger.error(`[Usage] Failed to update webhook status: ${e}`);
     }
+  });
 
-    const result = (await res.json()) as CreditConsumeResult;
-    logger.info(
-      `[Credits] Consumed: ${result.creditsConsumed} credits (${tokensUsed} tokens, ${model}), remaining: ${result.remainingBalance}`
-    );
-    return result;
-  } catch (err) {
-    if (err instanceof Error && err.message.startsWith("Insufficient credits")) {
-      throw err; // Re-throw insufficient credits error
-    }
-    logger.error("[Credits] Consume request failed:", err);
-    return null; // Graceful degradation for network errors
-  }
+  return { id: usageLog.id, cost, webhookStatus: "pending" };
 }
+
+// ===== Legacy compatibility =====
 
 /**
  * Estimate token count from input text.
- * Simple heuristic: ~4 chars per token for English, ~2 chars for Japanese.
- * Multiply by 2 for estimated output tokens.
  */
 export function estimateTokens(input: string): number {
-  // Detect if input is primarily Japanese
   const japaneseChars = (input.match(/[\u3000-\u9fff\uff00-\uffef]/g) || []).length;
   const isJapanese = japaneseChars > input.length * 0.3;
-
   const charsPerToken = isJapanese ? 2 : 4;
   const inputTokens = Math.ceil(input.length / charsPerToken);
-  // Estimate output as 1.5x input tokens
-  const estimatedOutputTokens = Math.ceil(inputTokens * 1.5);
+  return inputTokens + Math.ceil(inputTokens * 1.5);
+}
 
-  return inputTokens + estimatedOutputTokens;
+/**
+ * @deprecated Use recordUsage() instead. Kept for backward compatibility.
+ */
+export async function checkCredits(
+  _userId: string,
+  _estimatedTokens?: number
+): Promise<null> {
+  return null;
+}
+
+/**
+ * @deprecated Use recordUsage() instead. Kept for backward compatibility.
+ */
+export async function consumeCredits(
+  _userId: string,
+  _tokensUsed: number,
+  _model: string,
+  _provider: string,
+  _requestId?: string
+): Promise<null> {
+  return null;
 }

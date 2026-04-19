@@ -12,7 +12,7 @@ import { prisma } from "../db";
 import { executeTask, executeTaskStream } from "./ai-executor";
 import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
-import { checkCredits, consumeCredits, estimateTokens } from "./credits";
+import { recordUsage, estimateTokens } from "./credits";
 
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
@@ -374,28 +374,6 @@ export async function runAgent(
   log(`[Agent] Leader: ${leaderProvider.displayName} (${leaderModelId})`);
   logger.info(`[Agent] Starting session`, { sessionId, projectId: req.projectId });
 
-  // --- Credit check before processing ---
-  if (req.userId && req.authenticated) {
-    const estimatedTokensForSession = estimateTokens(req.input) * 5; // Rough estimate for multi-task session
-    const creditCheck = await checkCredits(req.userId, estimatedTokensForSession);
-    if (creditCheck && !creditCheck.canAfford) {
-      log(`[Agent] Insufficient credits: balance=${creditCheck.creditBalance}, estimated=${creditCheck.estimatedCost}`);
-      return {
-        sessionId,
-        input: req.input,
-        leaderProvider: leaderProvider.displayName,
-        leaderModel: leaderModelId,
-        tasks: [],
-        mindmap: "",
-        totalDurationMs: Date.now() - startTime,
-        status: "error",
-      };
-    }
-    if (creditCheck) {
-      log(`[Agent] Credit check OK: balance=${creditCheck.creditBalance}`);
-    }
-  }
-
   const leaderResult = await executeTask({
     provider: leaderProvider,
     config: { apiKey: leaderApiKey },
@@ -589,21 +567,24 @@ export async function runAgent(
     };
     taskOutputs[i] = result.output;
 
-    // --- Credit consumption after each task ---
-    if (req.userId && req.authenticated && result.status === "success") {
+    // Record usage & cost (webhook fires async)
+    if (result.status === "success") {
       const inputTokens = Math.ceil(enrichedInput.length / 3);
       const outputTokens = Math.ceil((result.output || "").length / 3);
-      const totalTokens = inputTokens + outputTokens;
       try {
-        await consumeCredits(
-          req.userId,
-          totalTokens,
-          provider.modelId,
-          provider.name,
-          sessionId
-        );
-      } catch (creditErr) {
-        log(`[Agent] Credit error: ${creditErr instanceof Error ? creditErr.message : String(creditErr)}`);
+        const usage = await recordUsage({
+          userId: req.userId,
+          projectId: req.projectId,
+          sessionId,
+          providerId: provider.id,
+          modelId: provider.modelId,
+          role: task.role,
+          inputTokens,
+          outputTokens,
+        });
+        log(`[Agent] Cost: [${task.role}] $${usage.cost.totalCostUsd.toFixed(6)}`);
+      } catch (usageErr) {
+        log(`[Agent] Usage error: ${usageErr instanceof Error ? usageErr.message : String(usageErr)}`);
       }
     }
 
@@ -1273,6 +1254,22 @@ async function runAgentStreamCore(
       previewUrl,
     };
     taskOutputs[i] = result.output;
+
+    // Record usage & cost (webhook fires async)
+    if (result.status === "success") {
+      const inputTokens = Math.ceil(enrichedInput.length / 3);
+      const outputTokens = Math.ceil((result.output || "").length / 3);
+      recordUsage({
+        userId: req.userId,
+        projectId: req.projectId,
+        sessionId,
+        providerId: provider.id,
+        modelId: provider.modelId,
+        role: task.role,
+        inputTokens,
+        outputTokens,
+      }).catch(() => {});
+    }
   }
 
   // --- Dependency-aware parallel scheduler ---

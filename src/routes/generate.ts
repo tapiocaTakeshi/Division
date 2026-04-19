@@ -13,6 +13,7 @@ import { z } from "zod";
 import { prisma } from "../db";
 import { executeTask, executeTaskStream } from "../services/ai-executor";
 import { asyncHandler } from "../middleware/async-handler";
+import { recordUsage } from "../services/credits";
 
 export const generateRouter = Router();
 
@@ -103,12 +104,28 @@ generateRouter.post(
       systemPrompt,
     });
 
+    let costUsd: number | undefined;
+    if (result.status === "success") {
+      const inputTokens = Math.ceil(input.length / 3);
+      const outputTokens = Math.ceil((result.output || "").length / 3);
+      const usage = await recordUsage({
+        userId: res.locals.userId,
+        providerId: provider.id,
+        modelId: provider.modelId,
+        role: "generate",
+        inputTokens,
+        outputTokens,
+      });
+      costUsd = usage.cost.totalCostUsd;
+    }
+
     res.json({
       provider: provider.displayName,
       model: provider.modelId,
       output: result.output,
       status: result.status,
       durationMs: result.durationMs,
+      ...(costUsd !== undefined ? { costUsd } : {}),
       ...(result.errorMsg ? { error: result.errorMsg } : {}),
     });
   })
@@ -192,10 +209,22 @@ generateRouter.post(
       );
 
       if (result.status === "success") {
+        const inputTokens = Math.ceil(input.length / 3);
+        const outputTokens = Math.ceil((result.output || "").length / 3);
+        const usage = await recordUsage({
+          userId: res.locals.userId,
+          providerId: provider.id,
+          modelId: provider.modelId,
+          role: "generate",
+          inputTokens,
+          outputTokens,
+        }).catch(() => null);
+
         sendEvent("done", {
           type: "done",
           status: "success",
           durationMs: result.durationMs,
+          ...(usage ? { costUsd: usage.cost.totalCostUsd } : {}),
           ...(result.thinking ? { thinking: result.thinking } : {}),
           ...(result.citations ? { citations: result.citations } : {}),
         });

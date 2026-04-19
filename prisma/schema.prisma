@@ -9,13 +9,13 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-/// AI provider (e.g. Claude, Gemini, Perplexity, GPT, etc.)
+/// AI provider (e.g. OpenAI, Anthropic, Google, Perplexity, xAI, DeepSeek)
 model Provider {
   id          String   @id @default(uuid())
   name        String   @unique
   displayName String
   apiBaseUrl  String
-  apiType     String   // "openai" | "anthropic" | "google" | "custom"
+  apiType     String   // "openai" | "anthropic" | "google" | "perplexity" | "xai" | "deepseek"
   modelId     String   // default model ID for this provider
   description String?
   isEnabled   Boolean  @default(true)
@@ -23,6 +23,23 @@ model Provider {
   updatedAt   DateTime @updatedAt
 
   assignments RoleAssignment[]
+  models      Model[]
+}
+
+/// Available AI model fetched from provider APIs
+model Model {
+  id          String   @id @default(uuid())
+  providerId  String
+  modelId     String   // ID passed to the provider API (e.g. "gpt-5.4", "claude-opus-4-7")
+  displayName String
+  isEnabled   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, modelId])
+  @@index([providerId])
 }
 
 /// A role/task category (e.g. coding, search, planning, writing)

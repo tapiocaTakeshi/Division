@@ -12,7 +12,7 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { prisma } from "../db";
 import { runAgent, runAgentStream, StreamEvent } from "../services/orchestrator";
-import { listAvailableModels, clearModelCache } from "../services/sync-models";
+import { listAvailableModels, clearModelCache, syncModelsToDb } from "../services/sync-models";
 
 const router = Router();
 
@@ -161,6 +161,15 @@ const TOOLS = [
           description: "If true, clear cache and fetch fresh data.",
         },
       },
+    },
+  },
+  {
+    name: "division_sync_models",
+    description:
+      "Sync models from provider APIs to database. Fetches latest available models and stores them in the Model table.",
+    inputSchema: {
+      type: "object",
+      properties: {},
     },
   },
 ];
@@ -557,6 +566,26 @@ async function handleListAvailableModels(args: Record<string, unknown>) {
   return [{ type: "text", text: lines.join("\n") }];
 }
 
+async function handleSyncModels() {
+  const result = await syncModelsToDb();
+
+  const lines: string[] = [
+    `## Model Sync Results\n`,
+    `**Timestamp:** ${result.timestamp}`,
+    `**Total synced:** ${result.totalSynced} models\n`,
+  ];
+
+  for (const p of result.providers) {
+    if (p.error) {
+      lines.push(`### ⚠️ ${p.provider}\n- ${p.error}\n`);
+    } else {
+      lines.push(`### ✅ ${p.provider}\n- Synced: ${p.synced} | Removed: ${p.removed}\n`);
+    }
+  }
+
+  return [{ type: "text", text: lines.join("\n") }];
+}
+
 // ===== JSON-RPC Handler =====
 
 interface JsonRpcRequest {
@@ -676,6 +705,9 @@ async function handleJsonRpc(
             break;
           case "division_list_available_models":
             content = await handleListAvailableModels(args);
+            break;
+          case "division_sync_models":
+            content = await handleSyncModels();
             break;
           default:
             return {

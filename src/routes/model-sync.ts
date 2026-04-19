@@ -1,6 +1,12 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../middleware/async-handler";
-import { listAvailableModels, listModelsForProvider, clearModelCache } from "../services/sync-models";
+import { prisma } from "../db";
+import {
+  listAvailableModels,
+  listModelsForProvider,
+  clearModelCache,
+  syncModelsToDb,
+} from "../services/sync-models";
 
 const router = Router();
 
@@ -21,8 +27,20 @@ router.get(
 );
 
 /**
+ * POST /api/models/sync
+ * Fetch latest models from all provider APIs and save to DB.
+ */
+router.post(
+  "/sync",
+  asyncHandler(async (_req: Request, res: Response) => {
+    const result = await syncModelsToDb();
+    res.json(result);
+  })
+);
+
+/**
  * POST /api/models/refresh
- * Clear the in-memory model cache so next request fetches fresh data.
+ * Clear the in-memory cache and re-fetch from APIs.
  */
 router.post(
   "/refresh",
@@ -35,22 +53,54 @@ router.post(
 
 /**
  * GET /api/models/provider/:providerId
- * List available models for a specific provider (cached).
+ * List models for a specific provider from DB.
  */
 router.get(
   "/provider/:providerId",
   asyncHandler(async (req: Request, res: Response) => {
     const { providerId } = req.params;
-    const result = await listModelsForProvider(providerId);
-    if (!result) {
+
+    const provider = await prisma.provider.findFirst({
+      where: {
+        OR: [
+          { id: providerId },
+          { apiType: providerId },
+          { name: { equals: providerId, mode: "insensitive" } },
+        ],
+      },
+    });
+
+    if (!provider) {
       res.status(404).json({ error: `Provider "${providerId}" not found` });
       return;
     }
+
+    const models = await prisma.model.findMany({
+      where: { providerId: provider.id, isEnabled: true },
+      orderBy: { modelId: "asc" },
+      select: { modelId: true, displayName: true },
+    });
+
+    // If DB is empty for this provider, fall back to real-time fetch
+    if (models.length === 0) {
+      const realtime = await listModelsForProvider(provider.apiType);
+      if (realtime) {
+        res.json({
+          provider: provider.name,
+          apiType: provider.apiType,
+          models: realtime.models,
+          source: "api",
+          ...(realtime.error ? { error: realtime.error } : {}),
+        });
+        return;
+      }
+    }
+
     res.json({
-      provider: result.provider,
-      apiType: result.apiType,
-      models: result.models,
-      ...(result.error ? { error: result.error } : {}),
+      provider: provider.name,
+      apiType: provider.apiType,
+      models,
+      source: "db",
     });
   })
 );

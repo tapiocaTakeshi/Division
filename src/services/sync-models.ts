@@ -1,8 +1,8 @@
 /**
- * Model Discovery Service
+ * Model Sync & Discovery Service
  *
- * Fetches available models from each AI provider's List Models API
- * in real-time (with in-memory caching). No database writes.
+ * Fetches available models from each AI provider's API and stores
+ * them in the Model table. Also provides real-time listing with cache.
  *
  * Supported providers:
  *   - OpenAI:     GET https://api.openai.com/v1/models
@@ -13,12 +13,12 @@
  *   - Perplexity: (static list — no public List Models API)
  */
 
+import { prisma } from "../db";
+
 // ===== Types =====
 
 export interface DiscoveredModel {
-  /** The model ID to pass to the provider API */
   modelId: string;
-  /** Human-readable display name */
   displayName: string;
 }
 
@@ -33,6 +33,12 @@ export interface ListModelsResult {
   timestamp: string;
   totalModels: number;
   providers: ProviderModels[];
+}
+
+export interface SyncResult {
+  timestamp: string;
+  totalSynced: number;
+  providers: { provider: string; synced: number; removed: number; error?: string }[];
 }
 
 // ===== Helpers =====
@@ -204,6 +210,16 @@ const PROVIDER_CONFIGS: ProviderFetchConfig[] = [
   { name: "DeepSeek", apiType: "deepseek", envKey: "DEEPSEEK_API_KEY", fetcher: fetchDeepSeekModels },
 ];
 
+// Provider ID mapping (apiType → DB provider ID)
+const PROVIDER_ID_MAP: Record<string, string> = {
+  openai: "openai",
+  anthropic: "anthropic",
+  google: "google",
+  perplexity: "perplexity",
+  xai: "xai",
+  deepseek: "deepseek",
+};
+
 // ===== In-Memory Cache =====
 
 interface CacheEntry {
@@ -218,7 +234,84 @@ export function clearModelCache(): void {
   modelCache.clear();
 }
 
-// ===== Public API =====
+// ===== Sync: API → DB =====
+
+/**
+ * Fetch models from all provider APIs and upsert into the Model table.
+ * Removes models that are no longer available from the API.
+ */
+export async function syncModelsToDb(): Promise<SyncResult> {
+  const results: SyncResult["providers"] = [];
+  let totalSynced = 0;
+
+  // Sync API-based providers
+  for (const config of PROVIDER_CONFIGS) {
+    const providerId = PROVIDER_ID_MAP[config.apiType];
+    if (!providerId) continue;
+
+    const apiKey = process.env[config.envKey];
+    if (!apiKey) {
+      results.push({ provider: config.name, synced: 0, removed: 0, error: `${config.envKey} not set` });
+      continue;
+    }
+
+    try {
+      const models = await config.fetcher(apiKey);
+      const apiModelIds = new Set(models.map((m) => m.modelId));
+
+      // Upsert all discovered models
+      for (const m of models) {
+        await prisma.model.upsert({
+          where: { providerId_modelId: { providerId, modelId: m.modelId } },
+          update: { displayName: m.displayName, isEnabled: true, updatedAt: new Date() },
+          create: { providerId, modelId: m.modelId, displayName: m.displayName },
+        });
+      }
+
+      // Disable models no longer returned by the API
+      const existing = await prisma.model.findMany({
+        where: { providerId, isEnabled: true },
+        select: { id: true, modelId: true },
+      });
+      const toDisable = existing.filter((e) => !apiModelIds.has(e.modelId));
+      if (toDisable.length > 0) {
+        await prisma.model.updateMany({
+          where: { id: { in: toDisable.map((d) => d.id) } },
+          data: { isEnabled: false },
+        });
+      }
+
+      totalSynced += models.length;
+      results.push({ provider: config.name, synced: models.length, removed: toDisable.length });
+      console.log(`[sync-models] ${config.name}: ${models.length} synced, ${toDisable.length} disabled`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[sync-models] ${config.name} failed: ${msg}`);
+      results.push({ provider: config.name, synced: 0, removed: 0, error: msg });
+    }
+  }
+
+  // Sync Perplexity (static)
+  const perplexityId = PROVIDER_ID_MAP["perplexity"];
+  if (perplexityId) {
+    const models = getPerplexityModels();
+    for (const m of models) {
+      await prisma.model.upsert({
+        where: { providerId_modelId: { providerId: perplexityId, modelId: m.modelId } },
+        update: { displayName: m.displayName, isEnabled: true, updatedAt: new Date() },
+        create: { providerId: perplexityId, modelId: m.modelId, displayName: m.displayName },
+      });
+    }
+    totalSynced += models.length;
+    results.push({ provider: "Perplexity", synced: models.length, removed: 0 });
+  }
+
+  clearModelCache();
+
+  return { timestamp: new Date().toISOString(), totalSynced, providers: results };
+}
+
+// ===== Real-time Fetch (with cache) =====
 
 async function fetchProviderModels(config: ProviderFetchConfig): Promise<ProviderModels> {
   const now = Date.now();
@@ -229,97 +322,50 @@ async function fetchProviderModels(config: ProviderFetchConfig): Promise<Provide
 
   const apiKey = process.env[config.envKey];
   if (!apiKey) {
-    return {
-      provider: config.name,
-      apiType: config.apiType,
-      models: [],
-      error: `${config.envKey} not set`,
-    };
+    return { provider: config.name, apiType: config.apiType, models: [], error: `${config.envKey} not set` };
   }
 
   try {
     const models = await config.fetcher(apiKey);
-    const result: ProviderModels = {
-      provider: config.name,
-      apiType: config.apiType,
-      models,
-    };
+    const result: ProviderModels = { provider: config.name, apiType: config.apiType, models };
     modelCache.set(config.apiType, { data: result, expiresAt: now + CACHE_TTL_MS });
     return result;
   } catch (err) {
-    return {
-      provider: config.name,
-      apiType: config.apiType,
-      models: [],
-      error: err instanceof Error ? err.message : String(err),
-    };
+    return { provider: config.name, apiType: config.apiType, models: [], error: err instanceof Error ? err.message : String(err) };
   }
 }
 
 /**
  * List available models from all provider APIs (real-time, cached 1h).
- * Optionally filter by a single provider.
  */
-export async function listAvailableModels(
-  providerFilter?: string
-): Promise<ListModelsResult> {
-  // Perplexity is handled separately (static list)
-  const perplexityResult: ProviderModels = {
-    provider: "Perplexity",
-    apiType: "perplexity",
-    models: getPerplexityModels(),
-  };
+export async function listAvailableModels(providerFilter?: string): Promise<ListModelsResult> {
+  const perplexityResult: ProviderModels = { provider: "Perplexity", apiType: "perplexity", models: getPerplexityModels() };
 
   if (providerFilter) {
     const lower = providerFilter.toLowerCase();
     if (lower === "perplexity") {
-      return {
-        timestamp: new Date().toISOString(),
-        totalModels: perplexityResult.models.length,
-        providers: [perplexityResult],
-      };
+      return { timestamp: new Date().toISOString(), totalModels: perplexityResult.models.length, providers: [perplexityResult] };
     }
-    const config = PROVIDER_CONFIGS.find(
-      (c) => c.name.toLowerCase() === lower || c.apiType === lower
-    );
-    if (!config) {
-      return { timestamp: new Date().toISOString(), totalModels: 0, providers: [] };
-    }
+    const config = PROVIDER_CONFIGS.find((c) => c.name.toLowerCase() === lower || c.apiType === lower);
+    if (!config) return { timestamp: new Date().toISOString(), totalModels: 0, providers: [] };
     const result = await fetchProviderModels(config);
-    return {
-      timestamp: new Date().toISOString(),
-      totalModels: result.models.length,
-      providers: [result],
-    };
+    return { timestamp: new Date().toISOString(), totalModels: result.models.length, providers: [result] };
   }
 
   const apiResults = await Promise.all(PROVIDER_CONFIGS.map(fetchProviderModels));
   const allProviders = [...apiResults, perplexityResult];
   const totalModels = allProviders.reduce((sum, p) => sum + p.models.length, 0);
-
-  return {
-    timestamp: new Date().toISOString(),
-    totalModels,
-    providers: allProviders,
-  };
+  return { timestamp: new Date().toISOString(), totalModels, providers: allProviders };
 }
 
 /**
  * Get available models for a single provider by apiType.
  */
-export async function listModelsForProvider(
-  apiType: string
-): Promise<ProviderModels | null> {
+export async function listModelsForProvider(apiType: string): Promise<ProviderModels | null> {
   if (apiType.toLowerCase() === "perplexity") {
-    return {
-      provider: "Perplexity",
-      apiType: "perplexity",
-      models: getPerplexityModels(),
-    };
+    return { provider: "Perplexity", apiType: "perplexity", models: getPerplexityModels() };
   }
-  const config = PROVIDER_CONFIGS.find(
-    (c) => c.apiType === apiType || c.name.toLowerCase() === apiType.toLowerCase()
-  );
+  const config = PROVIDER_CONFIGS.find((c) => c.apiType === apiType || c.name.toLowerCase() === apiType.toLowerCase());
   if (!config) return null;
   return fetchProviderModels(config);
 }

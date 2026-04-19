@@ -14,6 +14,7 @@ import { sseRouter } from "./routes/sse";
 import { taskCreateRouter } from "./routes/task-create";
 import { apiKeyRouter } from "./routes/api-keys";
 import { knockRouter } from "./routes/knock";
+import { previewRouter } from "./routes/preview";
 import { divisionAuth } from "./middleware/auth";
 const app = express();
 
@@ -54,6 +55,7 @@ app.use("/api/tasks", divisionAuth, taskRouter);
 app.use("/api/tasks", divisionAuth, taskCreateRouter);
 app.use("/api/models", providersListRouter);
 app.use("/api/models", modelSyncRouter);
+app.use("/api/preview", previewRouter);
 
 // API key management (requires Clerk auth)
 app.use("/api/api-keys", apiKeyRouter);

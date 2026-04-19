@@ -205,6 +205,7 @@ function handleSSEEvent(
         tokenCount: event.tokenCount as number | undefined,
         thinking: event.thinking as string | undefined,
         citations: event.citations as string[] | undefined,
+        previewUrl: event.previewUrl as string | undefined,
       })
       break
 

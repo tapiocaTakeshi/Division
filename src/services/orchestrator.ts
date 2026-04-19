@@ -15,11 +15,28 @@ import { logger } from "../utils/logger";
 import { checkCredits, consumeCredits, estimateTokens } from "./credits";
 
 // --- Role Alias Mapping ---
-// Leader AI sometimes generates role slugs that differ from DB slugs.
 const ROLE_ALIASES: Record<string, string> = {
   "deep-research": "research",
   "planning": "planner",
   "coding": "coder",
+};
+
+// --- Role-Specific System Prompts ---
+const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
+  design: `あなたは優秀なUIデザイナー兼フロントエンドエンジニアです。
+リクエストに基づいて、**完全に自己完結した単一のHTMLファイル**を生成してください。
+
+ルール:
+1. 出力は <!DOCTYPE html> から </html> まで、完全なHTMLドキュメントにしてください
+2. CSSは <style> タグ内にインラインで記述してください（外部ファイル参照禁止）
+3. JavaScriptは <script> タグ内にインラインで記述してください（外部ファイル参照禁止）
+4. モダンで美しいデザインにしてください（グラデーション、シャドウ、アニメーション等を活用）
+5. レスポンシブデザイン対応にしてください
+6. 必ず \`\`\`html で囲んで出力してください
+7. 外部CDN（Google Fonts, Font Awesome, Tailwind CDN等）は使用して構いません
+8. インタラクティブな要素（ホバー効果、クリックイベント等）を積極的に入れてください
+9. ダークモード対応も考慮してください
+10. HTMLの前後に説明テキストを入れず、HTMLコードブロックのみを出力してください`,
 };
 
 function normalizeRoleSlug(slug: string): string {
@@ -46,6 +63,7 @@ export interface SubTaskResult extends SubTask {
   durationMs: number;
   thinking?: string;
   citations?: string[];
+  previewUrl?: string;
 }
 
 export interface OrchestratorRequest {
@@ -87,6 +105,7 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 - coding: コード生成・デバッグ（Claude担当）
 - writing: 文章作成・ドキュメント（Claude担当）
 - review: レビュー・品質確認（GPT担当）
+- design: UI/UXデザイン・Webページ・HTML/CSS生成・ランディングページ・プロトタイプ作成（Gemini担当。完全に自己完結したHTMLファイルを生成する）
 - image: 画像生成・ビジュアルコンテンツ作成・イラスト（GPT Image担当）
 - ideaman: 創造的ブレインストーミング・アイデア出し・革新的コンセプト提案（Claude担当）
 
@@ -541,12 +560,14 @@ export async function runAgent(
       `[Agent] Executing: [${task.role}] → ${provider.displayName}`
     );
 
+    const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
     const result = await executeTask({
       provider,
       config: { apiKey },
       input: enrichedInput,
       role: { slug: role.slug, name: role.name },
       mode: task.mode,
+      ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
     });
 
     if (result.status === "success") {
@@ -570,7 +591,6 @@ export async function runAgent(
 
     // --- Credit consumption after each task ---
     if (req.userId && req.authenticated && result.status === "success") {
-      // Estimate tokens from input + output length
       const inputTokens = Math.ceil(enrichedInput.length / 3);
       const outputTokens = Math.ceil((result.output || "").length / 3);
       const totalTokens = inputTokens + outputTokens;
@@ -588,7 +608,7 @@ export async function runAgent(
     }
 
     // Log to DB
-    await prisma.taskLog.create({
+    const taskLog = await prisma.taskLog.create({
       data: {
         projectId: req.projectId,
         roleId: role.id,
@@ -600,6 +620,12 @@ export async function runAgent(
         durationMs: result.durationMs,
       },
     });
+
+    // Attach preview URL for design role
+    if (task.role === "design" && result.status === "success" && result.output) {
+      const baseUrl = process.env.DIVISION_API_URL || "https://api.division.he-ro.jp";
+      results[i].previewUrl = `${baseUrl}/api/preview/${taskLog.id}`;
+    }
   }
 
   // Dependency-aware parallel scheduler
@@ -785,6 +811,7 @@ export interface StreamEventTaskDone {
   durationMs: number;
   thinking?: string;
   citations?: string[];
+  previewUrl?: string;
 }
 export interface StreamEventTaskError {
   type: "task_error";
@@ -811,6 +838,7 @@ export interface StreamEventSessionDone {
     durationMs: number;
     thinking?: string;
     citations?: string[];
+    previewUrl?: string;
   }>;
 }
 export interface StreamEventHeartbeat {
@@ -1053,6 +1081,7 @@ async function runAgentStreamCore(
     durationMs: number;
     thinking?: string;
     citations?: string[];
+    previewUrl?: string;
   }> = new Array(subTasks.length);
 
   // Track completion state per task
@@ -1170,6 +1199,7 @@ async function runAgentStreamCore(
       mode: task.mode,
     });
 
+    const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
     const result = await executeTaskStream(
       {
         provider,
@@ -1177,10 +1207,32 @@ async function runAgentStreamCore(
         input: enrichedInput,
         role: { slug: role.slug, name: role.name },
         mode: task.mode,
+        ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
       },
       (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
       (text) => emit({ type: "task_thinking_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text })
     );
+
+    // Log to DB
+    const taskLog = await prisma.taskLog.create({
+      data: {
+        projectId: req.projectId,
+        roleId: role.id,
+        providerId: provider.id,
+        input: enrichedInput,
+        output: result.output || null,
+        status: result.status,
+        errorMsg: result.errorMsg || null,
+        durationMs: result.durationMs,
+      },
+    });
+
+    // Build preview URL for design role
+    let previewUrl: string | undefined;
+    if (task.role === "design" && result.status === "success" && result.output) {
+      const baseUrl = process.env.DIVISION_API_URL || "https://api.division.he-ro.jp";
+      previewUrl = `${baseUrl}/api/preview/${taskLog.id}`;
+    }
 
     if (result.status === "success") {
       emit({
@@ -1196,6 +1248,7 @@ async function runAgentStreamCore(
         durationMs: result.durationMs,
         thinking: result.thinking,
         citations: result.citations,
+        previewUrl,
       });
     } else {
       emit({
@@ -1217,22 +1270,9 @@ async function runAgentStreamCore(
       durationMs: result.durationMs,
       thinking: result.thinking,
       citations: result.citations,
+      previewUrl,
     };
     taskOutputs[i] = result.output;
-
-    // Log to DB
-    await prisma.taskLog.create({
-      data: {
-        projectId: req.projectId,
-        roleId: role.id,
-        providerId: provider.id,
-        input: enrichedInput,
-        output: result.output || null,
-        status: result.status,
-        errorMsg: result.errorMsg || null,
-        durationMs: result.durationMs,
-      },
-    });
   }
 
   // --- Dependency-aware parallel scheduler ---

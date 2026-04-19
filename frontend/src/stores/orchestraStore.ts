@@ -279,4 +279,10 @@ export const ROLE_META: Record<RoleSlug, { label: string; color: string; icon: s
     icon: '💡',
     strengths: ['ブレスト', 'アイデア出し', '発想力'],
   },
+  design: {
+    label: 'Designer',
+    color: '#e879f9',
+    icon: '🎨',
+    strengths: ['UI/UX', 'HTML生成', 'ビジュアル'],
+  },
 }

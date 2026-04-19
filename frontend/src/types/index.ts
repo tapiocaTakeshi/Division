@@ -1,7 +1,7 @@
 // ===== Agent & Task Types =====
 
 export type AgentStatus = 'idle' | 'running' | 'success' | 'error'
-export type RoleSlug = 'leader' | 'coding' | 'search' | 'file-search' | 'planning' | 'writing' | 'review' | 'image' | 'ideaman'
+export type RoleSlug = 'leader' | 'coding' | 'search' | 'file-search' | 'planning' | 'writing' | 'review' | 'image' | 'ideaman' | 'design'
 
 export interface AgentNode {
   id: string
@@ -17,6 +17,7 @@ export interface AgentNode {
   durationMs?: number
   tokenCount?: number
   dependsOn: string[]
+  previewUrl?: string
 }
 
 export interface WaveGroup {

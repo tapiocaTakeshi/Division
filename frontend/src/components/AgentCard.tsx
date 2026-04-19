@@ -10,10 +10,11 @@ interface AgentCardProps {
 }
 
 export function AgentCard({ agent, onRerun, onChangeProvider, compact }: AgentCardProps) {
-  const meta = ROLE_META[agent.role]
+  const meta = ROLE_META[agent.role] || ROLE_META.design
   const statusStyles = getStatusStyles(agent.status)
   const [showThinking, setShowThinking] = useState(false)
   const [showCitations, setShowCitations] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
 
   return (
     <div
@@ -148,6 +149,45 @@ export function AgentCard({ agent, onRerun, onChangeProvider, compact }: AgentCa
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* HTML Preview for design role */}
+      {!compact && agent.previewUrl && agent.status === 'success' && (
+        <div className="mb-3">
+          <button
+            onClick={() => setShowPreview((v) => !v)}
+            className="flex items-center gap-1.5 text-[10px] font-medium text-fuchsia-400/80 hover:text-fuchsia-400 transition-colors mb-1"
+          >
+            <svg
+              className={`w-3 h-3 transition-transform ${showPreview ? 'rotate-90' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            HTML Preview
+          </button>
+          {showPreview && (
+            <div className="rounded-lg overflow-hidden border border-fuchsia-500/20 bg-white">
+              <iframe
+                src={agent.previewUrl}
+                className="w-full h-[400px] border-0"
+                title="Design Preview"
+                sandbox="allow-scripts allow-same-origin"
+              />
+            </div>
+          )}
+          <a
+            href={agent.previewUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 mt-1 text-[10px] text-fuchsia-400/70 hover:text-fuchsia-400 transition-colors"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+            新しいタブで開く
+          </a>
         </div>
       )}
 

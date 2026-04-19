@@ -53,12 +53,17 @@ router.post(
 
 /**
  * GET /api/models/provider/:providerId
- * List models for a specific provider from DB.
+ * List models for a specific provider in real-time from the provider's API.
+ * Results are cached in-memory (1h) for performance.
+ *
+ * Query params:
+ *   - refresh (optional): "true" to bypass cache and force a fresh fetch
  */
 router.get(
   "/provider/:providerId",
   asyncHandler(async (req: Request, res: Response) => {
     const { providerId } = req.params;
+    const forceRefresh = req.query.refresh === "true";
 
     const provider = await prisma.provider.findFirst({
       where: {
@@ -75,32 +80,23 @@ router.get(
       return;
     }
 
-    const models = await prisma.model.findMany({
-      where: { providerId: provider.id, isEnabled: true },
-      orderBy: { modelId: "asc" },
-      select: { modelId: true, displayName: true },
-    });
+    if (forceRefresh) {
+      clearModelCache();
+    }
 
-    // If DB is empty for this provider, fall back to real-time fetch
-    if (models.length === 0) {
-      const realtime = await listModelsForProvider(provider.apiType);
-      if (realtime) {
-        res.json({
-          provider: provider.name,
-          apiType: provider.apiType,
-          models: realtime.models,
-          source: "api",
-          ...(realtime.error ? { error: realtime.error } : {}),
-        });
-        return;
-      }
+    const result = await listModelsForProvider(provider.apiType);
+
+    if (!result) {
+      res.status(404).json({ error: `No fetcher configured for apiType "${provider.apiType}"` });
+      return;
     }
 
     res.json({
       provider: provider.name,
       apiType: provider.apiType,
-      models,
-      source: "db",
+      models: result.models,
+      source: "api",
+      ...(result.error ? { error: result.error } : {}),
     });
   })
 );

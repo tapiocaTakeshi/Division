@@ -65,15 +65,18 @@ router.get(
     const { providerId } = req.params;
     const forceRefresh = req.query.refresh === "true";
 
-    const provider = await prisma.provider.findFirst({
-      where: {
-        OR: [
-          { id: providerId },
-          { apiType: providerId },
-          { name: { equals: providerId, mode: "insensitive" } },
-        ],
-      },
-    });
+    // id exact match first, then fallback to apiType / name
+    let provider = await prisma.provider.findUnique({ where: { id: providerId } });
+    if (!provider) {
+      provider = await prisma.provider.findFirst({
+        where: {
+          OR: [
+            { apiType: providerId },
+            { name: { equals: providerId, mode: "insensitive" } },
+          ],
+        },
+      });
+    }
 
     if (!provider) {
       res.status(404).json({ error: `Provider "${providerId}" not found` });

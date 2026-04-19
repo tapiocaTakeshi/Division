@@ -3,7 +3,7 @@ import { asyncHandler } from "../middleware/async-handler";
 import { prisma } from "../db";
 import {
   listAvailableModels,
-  listModelsForProvider,
+  fetchModelsForProvider,
   clearModelCache,
   syncModelsToDb,
 } from "../services/sync-models";
@@ -53,7 +53,7 @@ router.post(
 
 /**
  * GET /api/models/provider/:providerId
- * List models for a specific provider in real-time from the provider's API.
+ * List models in real-time: provider.apiBaseUrl + modelsEndpoint
  * Results are cached in-memory (1h) for performance.
  *
  * Query params:
@@ -84,17 +84,14 @@ router.get(
       clearModelCache();
     }
 
-    const result = await listModelsForProvider(provider.apiType);
-
-    if (!result) {
-      res.status(404).json({ error: `No fetcher configured for apiType "${provider.apiType}"` });
-      return;
-    }
+    const result = await fetchModelsForProvider(provider);
 
     res.json({
       provider: provider.name,
+      apiBaseUrl: provider.apiBaseUrl,
       apiType: provider.apiType,
       models: result.models,
+      endpoint: result.endpoint,
       source: "api",
       ...(result.error ? { error: result.error } : {}),
     });

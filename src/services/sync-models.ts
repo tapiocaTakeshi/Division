@@ -1,15 +1,15 @@
 /**
  * Model Sync & Discovery Service
  *
- * Fetches available models from each AI provider's API and stores
- * them in the Model table. Also provides real-time listing with cache.
+ * Fetches available models from each AI provider's API using the
+ * provider's apiBaseUrl from DB + models endpoint path.
  *
- * Supported providers:
- *   - OpenAI:     GET https://api.openai.com/v1/models
- *   - Anthropic:  GET https://api.anthropic.com/v1/models
- *   - Google:     GET https://generativelanguage.googleapis.com/v1beta/models
- *   - xAI:       GET https://api.x.ai/v1/models
- *   - DeepSeek:   GET https://api.deepseek.com/models
+ * URL construction:  provider.apiBaseUrl + MODELS_PATH[provider.id]
+ *   - OpenAI:     apiBaseUrl + /v1/models
+ *   - Anthropic:  apiBaseUrl + /v1/models
+ *   - Google:     apiBaseUrl + /v1beta/models
+ *   - xAI:        apiBaseUrl + /v1/models
+ *   - DeepSeek:   apiBaseUrl + /models
  *   - Perplexity: (static list — no public List Models API)
  */
 
@@ -26,6 +26,7 @@ export interface ProviderModels {
   provider: string;
   apiType: string;
   models: DiscoveredModel[];
+  endpoint?: string;
   error?: string;
 }
 
@@ -40,6 +41,36 @@ export interface SyncResult {
   totalSynced: number;
   providers: { provider: string; synced: number; removed: number; error?: string }[];
 }
+
+/** DB Provider record (subset) */
+export interface ProviderRecord {
+  id: string;
+  name: string;
+  displayName: string;
+  apiBaseUrl: string;
+  apiType: string;
+}
+
+// ===== Models Endpoint Paths (per provider id) =====
+
+const MODELS_PATH: Record<string, string> = {
+  openai: "/v1/models",
+  anthropic: "/v1/models",
+  google: "/v1beta/models",
+  xai: "/v1/models",
+  deepseek: "/models",
+};
+
+// ===== Env Key Mapping (per provider id) =====
+
+const ENV_KEYS: Record<string, string> = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GOOGLE_API_KEY",
+  xai: "XAI_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
+  perplexity: "PERPLEXITY_API_KEY",
+};
 
 // ===== Helpers =====
 
@@ -62,7 +93,7 @@ async function fetchJson<T>(
   }
 }
 
-// ===== OpenAI =====
+// ===== OpenAI-compatible Parser =====
 
 const OPENAI_BLACKLIST = [
   "dall-e", "tts-", "whisper", "text-embedding", "text-moderation",
@@ -78,9 +109,10 @@ function isOpenAIChatModel(id: string): boolean {
   return true;
 }
 
-async function fetchOpenAIModels(apiKey: string): Promise<DiscoveredModel[]> {
-  interface M { id: string; owned_by: string; }
-  const data = await fetchJson<{ data: M[] }>("https://api.openai.com/v1/models", {
+async function fetchOpenAIModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
+  interface M { id: string; }
+  const url = `${baseUrl}${MODELS_PATH["openai"]}`;
+  const data = await fetchJson<{ data: M[] }>(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   return data.data
@@ -89,19 +121,20 @@ async function fetchOpenAIModels(apiKey: string): Promise<DiscoveredModel[]> {
     .sort((a, b) => a.modelId.localeCompare(b.modelId));
 }
 
-// ===== Anthropic =====
+// ===== Anthropic Parser =====
 
-async function fetchAnthropicModels(apiKey: string): Promise<DiscoveredModel[]> {
+async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
   interface M { id: string; display_name: string; }
   interface R { data: M[]; has_more: boolean; last_id: string; }
 
   const all: M[] = [];
   let afterId: string | undefined;
+  const endpoint = `${baseUrl}${MODELS_PATH["anthropic"]}`;
 
   do {
     const url = afterId
-      ? `https://api.anthropic.com/v1/models?limit=100&after_id=${afterId}`
-      : "https://api.anthropic.com/v1/models?limit=100";
+      ? `${endpoint}?limit=100&after_id=${afterId}`
+      : `${endpoint}?limit=100`;
     const data = await fetchJson<R>(url, {
       headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     });
@@ -115,9 +148,9 @@ async function fetchAnthropicModels(apiKey: string): Promise<DiscoveredModel[]> 
     .sort((a, b) => a.modelId.localeCompare(b.modelId));
 }
 
-// ===== Google (Gemini) =====
+// ===== Google (Gemini) Parser =====
 
-async function fetchGoogleModels(apiKey: string): Promise<DiscoveredModel[]> {
+async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
   interface M {
     name: string;
     displayName: string;
@@ -127,11 +160,12 @@ async function fetchGoogleModels(apiKey: string): Promise<DiscoveredModel[]> {
 
   const all: M[] = [];
   let pageToken: string | undefined;
+  const endpoint = `${baseUrl}${MODELS_PATH["google"]}`;
 
   do {
     const url = pageToken
-      ? `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100&pageToken=${pageToken}`
-      : `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100`;
+      ? `${endpoint}?key=${apiKey}&pageSize=100&pageToken=${pageToken}`
+      : `${endpoint}?key=${apiKey}&pageSize=100`;
     const data = await fetchJson<R>(url, {});
     all.push(...data.models);
     pageToken = data.nextPageToken;
@@ -154,11 +188,12 @@ async function fetchGoogleModels(apiKey: string): Promise<DiscoveredModel[]> {
     .sort((a, b) => a.modelId.localeCompare(b.modelId));
 }
 
-// ===== xAI (Grok) =====
+// ===== xAI (Grok) Parser =====
 
-async function fetchXAIModels(apiKey: string): Promise<DiscoveredModel[]> {
+async function fetchXAIModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
   interface M { id: string; }
-  const data = await fetchJson<{ data: M[] }>("https://api.x.ai/v1/models", {
+  const url = `${baseUrl}${MODELS_PATH["xai"]}`;
+  const data = await fetchJson<{ data: M[] }>(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   return data.data
@@ -167,11 +202,12 @@ async function fetchXAIModels(apiKey: string): Promise<DiscoveredModel[]> {
     .sort((a, b) => a.modelId.localeCompare(b.modelId));
 }
 
-// ===== DeepSeek =====
+// ===== DeepSeek Parser =====
 
-async function fetchDeepSeekModels(apiKey: string): Promise<DiscoveredModel[]> {
+async function fetchDeepSeekModels(baseUrl: string, apiKey: string): Promise<DiscoveredModel[]> {
   interface M { id: string; }
-  const data = await fetchJson<{ data: M[] }>("https://api.deepseek.com/models", {
+  const url = `${baseUrl}${MODELS_PATH["deepseek"]}`;
+  const data = await fetchJson<{ data: M[] }>(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   return data.data
@@ -193,31 +229,16 @@ function getPerplexityModels(): DiscoveredModel[] {
   ];
 }
 
-// ===== Provider Configuration =====
+// ===== Fetcher Dispatch (provider.id → fetcher) =====
 
-interface ProviderFetchConfig {
-  name: string;
-  apiType: string;
-  envKey: string;
-  fetcher: (apiKey: string) => Promise<DiscoveredModel[]>;
-}
+type Fetcher = (baseUrl: string, apiKey: string) => Promise<DiscoveredModel[]>;
 
-const PROVIDER_CONFIGS: ProviderFetchConfig[] = [
-  { name: "OpenAI", apiType: "openai", envKey: "OPENAI_API_KEY", fetcher: fetchOpenAIModels },
-  { name: "Anthropic", apiType: "anthropic", envKey: "ANTHROPIC_API_KEY", fetcher: fetchAnthropicModels },
-  { name: "Google", apiType: "google", envKey: "GOOGLE_API_KEY", fetcher: fetchGoogleModels },
-  { name: "xAI", apiType: "xai", envKey: "XAI_API_KEY", fetcher: fetchXAIModels },
-  { name: "DeepSeek", apiType: "deepseek", envKey: "DEEPSEEK_API_KEY", fetcher: fetchDeepSeekModels },
-];
-
-// Provider ID mapping (apiType → DB provider ID)
-const PROVIDER_ID_MAP: Record<string, string> = {
-  openai: "openai",
-  anthropic: "anthropic",
-  google: "google",
-  perplexity: "perplexity",
-  xai: "xai",
-  deepseek: "deepseek",
+const FETCHER_MAP: Record<string, Fetcher> = {
+  openai: fetchOpenAIModels,
+  anthropic: fetchAnthropicModels,
+  google: fetchGoogleModels,
+  xai: fetchXAIModels,
+  deepseek: fetchDeepSeekModels,
 };
 
 // ===== In-Memory Cache =====
@@ -234,43 +255,101 @@ export function clearModelCache(): void {
   modelCache.clear();
 }
 
+// ===== Core: Fetch models using DB provider record =====
+
+/**
+ * Fetch models from a single provider using its apiBaseUrl from DB.
+ * URL = provider.apiBaseUrl + MODELS_PATH[provider.id]
+ * Results are cached in-memory for 1h.
+ */
+export async function fetchModelsForProvider(provider: ProviderRecord): Promise<ProviderModels> {
+  // Perplexity has no models API
+  if (provider.id === "perplexity") {
+    return { provider: provider.name, apiType: provider.apiType, models: getPerplexityModels() };
+  }
+
+  const now = Date.now();
+  const cached = modelCache.get(provider.id);
+  if (cached && cached.expiresAt > now) {
+    return cached.data;
+  }
+
+  const fetcher = FETCHER_MAP[provider.id];
+  const modelsPath = MODELS_PATH[provider.id];
+  if (!fetcher || !modelsPath) {
+    return { provider: provider.name, apiType: provider.apiType, models: [], error: `No models fetcher for provider "${provider.id}"` };
+  }
+
+  const envKey = ENV_KEYS[provider.id];
+  const apiKey = envKey ? process.env[envKey] : undefined;
+  if (!apiKey) {
+    return { provider: provider.name, apiType: provider.apiType, models: [], error: `${envKey || "API_KEY"} not set` };
+  }
+
+  const endpoint = `${provider.apiBaseUrl}${modelsPath}`;
+
+  try {
+    const models = await fetcher(provider.apiBaseUrl, apiKey);
+    const result: ProviderModels = { provider: provider.name, apiType: provider.apiType, models, endpoint };
+    modelCache.set(provider.id, { data: result, expiresAt: now + CACHE_TTL_MS });
+    return result;
+  } catch (err) {
+    return { provider: provider.name, apiType: provider.apiType, models: [], endpoint, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ===== Sync: API → DB =====
 
 /**
  * Fetch models from all provider APIs and upsert into the Model table.
- * Removes models that are no longer available from the API.
  */
 export async function syncModelsToDb(): Promise<SyncResult> {
+  const providers = await prisma.provider.findMany({ where: { isEnabled: true } });
   const results: SyncResult["providers"] = [];
   let totalSynced = 0;
 
-  // Sync API-based providers
-  for (const config of PROVIDER_CONFIGS) {
-    const providerId = PROVIDER_ID_MAP[config.apiType];
-    if (!providerId) continue;
+  for (const provider of providers) {
+    if (provider.id === "perplexity") {
+      const models = getPerplexityModels();
+      for (const m of models) {
+        await prisma.model.upsert({
+          where: { providerId_modelId: { providerId: provider.id, modelId: m.modelId } },
+          update: { displayName: m.displayName, isEnabled: true, updatedAt: new Date() },
+          create: { providerId: provider.id, modelId: m.modelId, displayName: m.displayName },
+        });
+      }
+      totalSynced += models.length;
+      results.push({ provider: provider.name, synced: models.length, removed: 0 });
+      continue;
+    }
 
-    const apiKey = process.env[config.envKey];
+    const fetcher = FETCHER_MAP[provider.id];
+    if (!fetcher) {
+      results.push({ provider: provider.name, synced: 0, removed: 0, error: `No fetcher for ${provider.id}` });
+      continue;
+    }
+
+    const envKey = ENV_KEYS[provider.id];
+    const apiKey = envKey ? process.env[envKey] : undefined;
     if (!apiKey) {
-      results.push({ provider: config.name, synced: 0, removed: 0, error: `${config.envKey} not set` });
+      results.push({ provider: provider.name, synced: 0, removed: 0, error: `${envKey || "API_KEY"} not set` });
       continue;
     }
 
     try {
-      const models = await config.fetcher(apiKey);
+      const models = await fetcher(provider.apiBaseUrl, apiKey);
       const apiModelIds = new Set(models.map((m) => m.modelId));
 
-      // Upsert all discovered models
       for (const m of models) {
         await prisma.model.upsert({
-          where: { providerId_modelId: { providerId, modelId: m.modelId } },
+          where: { providerId_modelId: { providerId: provider.id, modelId: m.modelId } },
           update: { displayName: m.displayName, isEnabled: true, updatedAt: new Date() },
-          create: { providerId, modelId: m.modelId, displayName: m.displayName },
+          create: { providerId: provider.id, modelId: m.modelId, displayName: m.displayName },
         });
       }
 
-      // Disable models no longer returned by the API
       const existing = await prisma.model.findMany({
-        where: { providerId, isEnabled: true },
+        where: { providerId: provider.id, isEnabled: true },
         select: { id: true, modelId: true },
       });
       const toDisable = existing.filter((e) => !apiModelIds.has(e.modelId));
@@ -282,90 +361,55 @@ export async function syncModelsToDb(): Promise<SyncResult> {
       }
 
       totalSynced += models.length;
-      results.push({ provider: config.name, synced: models.length, removed: toDisable.length });
-      console.log(`[sync-models] ${config.name}: ${models.length} synced, ${toDisable.length} disabled`);
+      results.push({ provider: provider.name, synced: models.length, removed: toDisable.length });
+      console.log(`[sync-models] ${provider.name}: ${models.length} synced, ${toDisable.length} disabled`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[sync-models] ${config.name} failed: ${msg}`);
-      results.push({ provider: config.name, synced: 0, removed: 0, error: msg });
+      console.error(`[sync-models] ${provider.name} failed: ${msg}`);
+      results.push({ provider: provider.name, synced: 0, removed: 0, error: msg });
     }
-  }
-
-  // Sync Perplexity (static)
-  const perplexityId = PROVIDER_ID_MAP["perplexity"];
-  if (perplexityId) {
-    const models = getPerplexityModels();
-    for (const m of models) {
-      await prisma.model.upsert({
-        where: { providerId_modelId: { providerId: perplexityId, modelId: m.modelId } },
-        update: { displayName: m.displayName, isEnabled: true, updatedAt: new Date() },
-        create: { providerId: perplexityId, modelId: m.modelId, displayName: m.displayName },
-      });
-    }
-    totalSynced += models.length;
-    results.push({ provider: "Perplexity", synced: models.length, removed: 0 });
   }
 
   clearModelCache();
-
   return { timestamp: new Date().toISOString(), totalSynced, providers: results };
 }
 
-// ===== Real-time Fetch (with cache) =====
-
-async function fetchProviderModels(config: ProviderFetchConfig): Promise<ProviderModels> {
-  const now = Date.now();
-  const cached = modelCache.get(config.apiType);
-  if (cached && cached.expiresAt > now) {
-    return cached.data;
-  }
-
-  const apiKey = process.env[config.envKey];
-  if (!apiKey) {
-    return { provider: config.name, apiType: config.apiType, models: [], error: `${config.envKey} not set` };
-  }
-
-  try {
-    const models = await config.fetcher(apiKey);
-    const result: ProviderModels = { provider: config.name, apiType: config.apiType, models };
-    modelCache.set(config.apiType, { data: result, expiresAt: now + CACHE_TTL_MS });
-    return result;
-  } catch (err) {
-    return { provider: config.name, apiType: config.apiType, models: [], error: err instanceof Error ? err.message : String(err) };
-  }
-}
+// ===== Real-time listing (all providers) =====
 
 /**
  * List available models from all provider APIs (real-time, cached 1h).
  */
 export async function listAvailableModels(providerFilter?: string): Promise<ListModelsResult> {
-  const perplexityResult: ProviderModels = { provider: "Perplexity", apiType: "perplexity", models: getPerplexityModels() };
+  const providers = await prisma.provider.findMany({ where: { isEnabled: true } });
 
   if (providerFilter) {
     const lower = providerFilter.toLowerCase();
-    if (lower === "perplexity") {
-      return { timestamp: new Date().toISOString(), totalModels: perplexityResult.models.length, providers: [perplexityResult] };
-    }
-    const config = PROVIDER_CONFIGS.find((c) => c.name.toLowerCase() === lower || c.apiType === lower);
-    if (!config) return { timestamp: new Date().toISOString(), totalModels: 0, providers: [] };
-    const result = await fetchProviderModels(config);
+    const provider = providers.find(
+      (p) => p.id === lower || p.apiType === lower || p.name.toLowerCase() === lower
+    );
+    if (!provider) return { timestamp: new Date().toISOString(), totalModels: 0, providers: [] };
+    const result = await fetchModelsForProvider(provider);
     return { timestamp: new Date().toISOString(), totalModels: result.models.length, providers: [result] };
   }
 
-  const apiResults = await Promise.all(PROVIDER_CONFIGS.map(fetchProviderModels));
-  const allProviders = [...apiResults, perplexityResult];
-  const totalModels = allProviders.reduce((sum, p) => sum + p.models.length, 0);
-  return { timestamp: new Date().toISOString(), totalModels, providers: allProviders };
+  const results = await Promise.all(providers.map((p) => fetchModelsForProvider(p)));
+  const totalModels = results.reduce((sum, r) => sum + r.models.length, 0);
+  return { timestamp: new Date().toISOString(), totalModels, providers: results };
 }
 
 /**
  * Get available models for a single provider by apiType.
  */
 export async function listModelsForProvider(apiType: string): Promise<ProviderModels | null> {
-  if (apiType.toLowerCase() === "perplexity") {
-    return { provider: "Perplexity", apiType: "perplexity", models: getPerplexityModels() };
-  }
-  const config = PROVIDER_CONFIGS.find((c) => c.apiType === apiType || c.name.toLowerCase() === apiType.toLowerCase());
-  if (!config) return null;
-  return fetchProviderModels(config);
+  const provider = await prisma.provider.findFirst({
+    where: {
+      OR: [
+        { id: apiType },
+        { apiType },
+        { name: { equals: apiType, mode: "insensitive" } },
+      ],
+    },
+  });
+  if (!provider) return null;
+  return fetchModelsForProvider(provider);
 }

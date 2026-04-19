@@ -106,7 +106,12 @@ async function fireWebhook(payload: WebhookPayload): Promise<{ status: string; r
   }
 
   try {
-    const res = await fetch(`${WEBHOOK_URL}/api/webhook/usage`, {
+    // If URL contains /functions/ (Supabase Edge Function), use as-is; otherwise append path
+    const url = WEBHOOK_URL.includes("/functions/")
+      ? WEBHOOK_URL
+      : `${WEBHOOK_URL}/api/webhook/usage`;
+
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

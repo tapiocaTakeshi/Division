@@ -156,7 +156,7 @@ function buildRequestBody(
   apiEndpoint?: string
 ): { url: string; headers: Record<string, string>; body: unknown } | null {
   const apiKey = config?.apiKey as string | undefined;
-  const maxTokens = (config?.maxTokens as number) || 4096;
+  const maxTokens = (config?.maxTokens as number) || 16384;
 
   // Fall back to the default model for this apiType when modelId is not set
   const resolvedModelId = modelId || DEFAULT_MODELS[apiType] || modelId;
@@ -224,7 +224,7 @@ function buildRequestBody(
         messages,
         thinking: {
           type: "enabled",
-          budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.6), 1024), 10000),
+          budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.5), 1024), 32768),
         },
       },
     };
@@ -258,7 +258,7 @@ function buildRequestBody(
         contents,
         generationConfig: {
           maxOutputTokens: maxTokens,
-          thinkingConfig: { thinkingBudget: Math.min(Math.floor(maxTokens * 0.6), 8192) },
+          thinkingConfig: { thinkingBudget: Math.min(Math.floor(maxTokens * 0.5), 32768) },
         },
       },
     };

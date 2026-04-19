@@ -21,6 +21,22 @@ const ROLE_ALIASES: Record<string, string> = {
   "coding": "coder",
 };
 
+// --- Role-Specific Max Tokens (override default 4096) ---
+// OpenAI: max 128k, Anthropic: max 128k, Gemini: max 65k
+const ROLE_MAX_TOKENS: Record<string, number> = {
+  design: 65536,
+  coder: 65536,
+  coding: 65536,
+  writing: 32768,
+  planning: 32768,
+  review: 32768,
+  search: 16384,
+  research: 32768,
+  "deep-research": 65536,
+  "file-search": 16384,
+  ideaman: 32768,
+};
+
 // --- Role-Specific System Prompts ---
 const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
   design: `あなたは優秀なUIデザイナー兼フロントエンドエンジニアです。
@@ -539,9 +555,10 @@ export async function runAgent(
     );
 
     const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
+    const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const result = await executeTask({
       provider,
-      config: { apiKey },
+      config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
       input: enrichedInput,
       role: { slug: role.slug, name: role.name },
       mode: task.mode,
@@ -1181,10 +1198,11 @@ async function runAgentStreamCore(
     });
 
     const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
+    const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const result = await executeTaskStream(
       {
         provider,
-        config: { apiKey },
+        config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
         input: enrichedInput,
         role: { slug: role.slug, name: role.name },
         mode: task.mode,

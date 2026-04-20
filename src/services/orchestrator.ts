@@ -14,6 +14,18 @@ import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
 import { recordUsage, estimateTokens } from "./credits";
 
+/** Provider shape used throughout the orchestrator (apiEndpoint is optional for Prisma compat) */
+interface OrchestratorProvider {
+  id: string;
+  name: string;
+  displayName: string;
+  apiBaseUrl: string;
+  apiType: string;
+  apiEndpoint?: string;
+  modelId: string;
+  isEnabled: boolean;
+}
+
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
   "deep-research": "researcher",
@@ -28,8 +40,9 @@ const ROLE_ALIASES: Record<string, string> = {
   "image": "imager",
 };
 
-// --- Role-Specific Max Tokens (override default 4096) ---
-// OpenAI: max 128k, Anthropic: max 128k, Gemini: max 65k
+// --- Role-Specific Max Tokens ---
+// High-output roles (designer, coder, writer) keep large limits.
+// Other roles get reduced output to leave more room for input context.
 const ROLE_MAX_TOKENS: Record<string, number> = {
   designer: 32768,
   coder: 32768,
@@ -413,7 +426,7 @@ export async function runAgent(
   // Resolve model: config.model overrides provider.modelId
   const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
   const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
-  const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
+  const leaderProvider: OrchestratorProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
 
   const leaderApiKey = resolveApiKey(
     leaderAssignment.provider.name,
@@ -521,16 +534,7 @@ export async function runAgent(
     taskRoleNames[i] = role.name;
 
     // Find assignment (check overrides first, then DB)
-    let provider: {
-      id: string;
-      name: string;
-      displayName: string;
-      apiBaseUrl: string;
-      apiType: string;
-      apiEndpoint: string;
-      modelId: string;
-      isEnabled: boolean;
-    } | null = null;
+    let provider: OrchestratorProvider | null = null;
 
     const overrideProviderName = req.overrides?.[task.role];
     if (overrideProviderName) {
@@ -727,7 +731,7 @@ export async function runAgent(
     const synthesisRoleSlug = normalizeRoleSlug(finalRole);
     const synthesisRole = await prisma.role.findUnique({ where: { slug: synthesisRoleSlug } });
 
-    let synthesisProvider: typeof leaderProvider | null = null;
+    let synthesisProvider: OrchestratorProvider | null = null;
     if (synthesisRole) {
       let synthesisAssignment = await prisma.roleAssignment.findFirst({
         where: { projectId: req.projectId, roleId: synthesisRole.id },
@@ -1038,7 +1042,7 @@ async function runAgentStreamCore(
   // Resolve model: config.model overrides provider.modelId
   const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
   const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
-  const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
+  const leaderProvider: OrchestratorProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
 
   const leaderApiKey = resolveApiKey(
     leaderAssignment.provider.name,
@@ -1187,16 +1191,7 @@ async function runAgentStreamCore(
     taskRoleNames[i] = role.name;
 
     // Find provider (check overrides first, then DB)
-    let provider: {
-      id: string;
-      name: string;
-      displayName: string;
-      apiBaseUrl: string;
-      apiType: string;
-      apiEndpoint: string;
-      modelId: string;
-      isEnabled: boolean;
-    } | null = null;
+    let provider: OrchestratorProvider | null = null;
 
     const overrideProviderName = req.overrides?.[task.role];
     if (overrideProviderName) {
@@ -1446,16 +1441,7 @@ async function runAgentStreamCore(
       where: { slug: synthesisRoleSlug },
     });
 
-    let synthesisProvider: {
-      id: string;
-      name: string;
-      displayName: string;
-      apiBaseUrl: string;
-      apiType: string;
-      apiEndpoint: string;
-      modelId: string;
-      isEnabled: boolean;
-    } | null = null;
+    let synthesisProvider: OrchestratorProvider | null = null;
 
     if (synthesisRole) {
       // Try project-specific assignment first, then any assignment for this role

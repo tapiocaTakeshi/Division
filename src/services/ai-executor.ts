@@ -156,7 +156,7 @@ function buildRequestBody(
   apiEndpoint?: string
 ): { url: string; headers: Record<string, string>; body: unknown } | null {
   const apiKey = config?.apiKey as string | undefined;
-  const maxTokens = (config?.maxTokens as number) || 16384;
+  const maxTokens = (config?.maxTokens as number) || 8192;
 
   // Fall back to the default model for this apiType when modelId is not set
   const resolvedModelId = modelId || DEFAULT_MODELS[apiType] || modelId;

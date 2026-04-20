@@ -13,6 +13,20 @@ const executeTaskSchema = z.object({
   config: z.record(z.unknown()).optional(),
 });
 
+const ROLE_MAX_TOKENS: Record<string, number> = {
+  designer: 65536,
+  coder: 65536,
+  writer: 32768,
+  planner: 8192,
+  reviewer: 8192,
+  searcher: 4096,
+  researcher: 8192,
+  "file-searcher": 4096,
+  ideaman: 8192,
+  leader: 4096,
+  imager: 4096,
+};
+
 /**
  * Resolve a role slug to its canonical form.
  * First checks the DB directly; if not found, tries known aliases.
@@ -87,9 +101,14 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
     return;
   }
 
-  // Merge saved config with request-time config
+  // Merge saved config with request-time config + role-specific maxTokens
   const savedConfig = assignment.config ? JSON.parse(assignment.config) : {};
-  const mergedConfig = { ...savedConfig, ...config };
+  const roleMaxTokens = ROLE_MAX_TOKENS[role.slug];
+  const mergedConfig = {
+    ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}),
+    ...savedConfig,
+    ...config,
+  };
 
   // Execute
   const result = await executeTask({

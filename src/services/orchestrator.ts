@@ -1509,6 +1509,13 @@ async function runAgentStreamCore(
         model: synthesisProvider.modelId,
       });
     } else {
+      logger.error(`[Synthesis] Failed: ${synthesisResult.errorMsg}`, {
+        role: finalRole,
+        provider: synthesisProvider.displayName,
+        model: synthesisProvider.modelId,
+        apiType: synthesisProvider.apiType,
+        apiBaseUrl: synthesisProvider.apiBaseUrl,
+      });
       finalOutput = successfulOutputs.join("\n\n---\n\n");
       emit({
         type: "synthesis_done",

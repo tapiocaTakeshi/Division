@@ -15,7 +15,7 @@ function resolvePath(p: string): string {
 
 function isPathSafe(p: string): boolean {
   const resolved = resolvePath(p);
-  return resolved.startsWith(WORKSPACE_ROOT);
+  return resolved.startsWith(WORKSPACE_ROOT) || resolved.startsWith("/tmp/") || resolved === "/tmp";
 }
 
 export const NATIVE_TOOLS = [

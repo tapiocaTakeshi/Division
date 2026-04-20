@@ -2,7 +2,7 @@
     "version": 2,
     "functions": {
         "api/**/*.ts": {
-            "maxDuration": 300
+            "maxDuration": 800
         }
     },
     "rewrites": [

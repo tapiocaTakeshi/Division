@@ -668,7 +668,7 @@ export async function executeCoderLoop(
       log(`Tool: ${toolName} → ${JSON.stringify(toolArgs).slice(0, 200)}`);
 
       const toolResult = await executeNativeTool(toolName, toolArgs);
-      const truncatedResult = toolResult.length > 15000 ? toolResult.slice(0, 15000) + "\n...[truncated]" : toolResult;
+      const truncatedResult = toolResult.length > 40000 ? toolResult.slice(0, 40000) + "\n...[truncated]" : toolResult;
       log(`Result: ${truncatedResult.slice(0, 300)}${truncatedResult.length > 300 ? "..." : ""}`);
 
       chatHistory.push({ role: "user", content: currentInput });

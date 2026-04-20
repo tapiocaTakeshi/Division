@@ -39,7 +39,7 @@ const TOOLS = [
           type: "object",
           additionalProperties: { type: "string" },
           description:
-            "Override AI for roles. Keys: coding/search/planning/writing/review. Values: model names (e.g. claude-opus-4.6, gemini-3-pro, gpt-5.2, grok-4.1-fast, deepseek-r1)",
+            "Override AI for roles. Keys: coder/searcher/planner/writer/reviewer. Values: model names (e.g. claude-opus-4.6, gemini-3-pro, gpt-5.2, grok-4.1-fast, deepseek-r1)",
         },
         divisionApiKey: {
           type: "string",
@@ -79,7 +79,7 @@ const TOOLS = [
           type: "object",
           additionalProperties: { type: "string" },
           description:
-            "Override AI for roles. Keys: coding/search/planning/writing/review. Values: model names (e.g. claude-opus-4.6, gemini-3-pro, gpt-5.2)",
+            "Override AI for roles. Keys: coder/searcher/planner/writer/reviewer. Values: model names (e.g. claude-opus-4.6, gemini-3-pro, gpt-5.2)",
         },
         divisionApiKey: {
           type: "string",
@@ -128,7 +128,7 @@ const TOOLS = [
         role: {
           type: "string",
           description:
-            "Role slug to assign (e.g. leader, coding, search, planning, writing, review, image, ideaman, deep-research)",
+            "Role slug to assign (e.g. leader, coder, searcher, planner, writer, reviewer, imager, ideaman, designer, file-searcher, researcher)",
         },
         provider: {
           type: "string",
@@ -641,8 +641,8 @@ async function handleJsonRpc(
             agents: {
               description: "Multi-agent orchestration with role-based task routing",
               availableRoles: [
-                "leader", "coding", "search", "planning", "writing",
-                "review", "image", "ideaman", "deep-research",
+                "leader", "coder", "searcher", "planner", "writer",
+                "reviewer", "imager", "ideaman", "designer", "file-searcher", "researcher",
               ],
               managementTools: ["division_list_agents", "division_set_agent"],
             },
@@ -811,8 +811,8 @@ router.get("/", (_req: Request, res: Response) => {
     agents: {
       description: "Multi-agent orchestration with role-based task routing",
       availableRoles: [
-        "leader", "coding", "search", "planning", "writing",
-        "review", "image", "ideaman", "deep-research",
+        "leader", "coder", "searcher", "planner", "writer",
+        "reviewer", "imager", "ideaman", "designer", "file-searcher", "researcher",
       ],
       managementTools: ["division_list_agents", "division_set_agent"],
     },

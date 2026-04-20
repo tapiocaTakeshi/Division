@@ -1,7 +1,7 @@
 // ===== Agent & Task Types =====
 
 export type AgentStatus = 'idle' | 'running' | 'success' | 'error'
-export type RoleSlug = 'leader' | 'coding' | 'search' | 'file-search' | 'planning' | 'writing' | 'review' | 'image' | 'ideaman' | 'design'
+export type RoleSlug = 'leader' | 'coder' | 'searcher' | 'file-searcher' | 'planner' | 'writer' | 'reviewer' | 'imager' | 'ideaman' | 'designer'
 
 export interface AgentNode {
   id: string

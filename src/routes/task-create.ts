@@ -33,21 +33,21 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 
 【Layer 1 — 調査・発想】並列実行（dependsOn: []）
 - ideaman: 創造的ブレインストーミング・アイデア出し
-- search: ウェブ検索・情報収集
-- file-search: プロジェクト内ファイル検索・コード解析
-- research / deep-research: 調査・分析・レポート
+- searcher: ウェブ検索・情報収集
+- file-searcher: プロジェクト内ファイル検索・コード解析
+- researcher: 調査・分析・レポート
 
 【Layer 2 — 設計・デザイン】Layer 1に依存
-- design: UI/UXデザイン・HTML/CSS生成・プロトタイプ
-- image: 画像生成・ビジュアルコンテンツ
-- planning: 企画・設計・アーキテクチャ
+- designer: UI/UXデザイン・HTML/CSS生成・プロトタイプ
+- imager: 画像生成・ビジュアルコンテンツ
+- planner: 企画・設計・アーキテクチャ
 
 【Layer 3 — 実装・執筆】Layer 2に依存
-- coding: コード生成・実装・デバッグ
-- writing: 文章作成・ドキュメント
+- coder: コード生成・実装・デバッグ
+- writer: 文章作成・ドキュメント
 
 【Layer 4 — レビュー】Layer 3に依存
-- review: 品質確認・レビュー・改善提案
+- reviewer: 品質確認・レビュー・改善提案
 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます
@@ -60,22 +60,22 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 8. 1タスクに複数作業を詰め込まず細かく分割
 9. 同じロールでも異なる観点なら別タスクに分ける
 10. 各タスクに "mode" を指定:
-    - "chat": テキスト生成タスク（デフォルト。search, research 等 Web検索ロールもこれ）
-    - "computer_use": コード実行・テストが必要なタスク（coding ロール用）
-    - "function_calling": ローカルファイル検索のみ（file-search ロール専用）
-    ※ search / research ロールは Perplexity が Web 検索するため mode="chat" にすること
+    - "chat": テキスト生成タスク（デフォルト。searcher, researcher 等 Web検索ロールもこれ）
+    - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
+    - "function_calling": ローカルファイル検索のみ（file-searcher ロール専用）
+    ※ searcher / researcher ロールは Perplexity が Web 検索するため mode="chat" にすること
 
 \`\`\`json
 {
   "tasks": [
     { "role": "ideaman", "mode": "chat", "title": "アイデア提案", "description": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [] },
-    { "role": "search", "mode": "chat", "title": "技術調査", "description": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
-    { "role": "file-search", "mode": "function_calling", "title": "既存コード調査", "description": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装を把握するため", "dependsOn": [] },
-    { "role": "research", "mode": "chat", "title": "技術トレンド調査", "description": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [] },
-    { "role": "design", "mode": "chat", "title": "UIデザイン作成", "description": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "planning", "mode": "chat", "title": "設計・要件定義", "description": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "coding", "mode": "computer_use", "title": "実装", "description": "設計とデザインに沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [4, 5] },
-    { "role": "review", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案", "reason": "品質保証のため", "dependsOn": [6] }
+    { "role": "searcher", "mode": "chat", "title": "技術調査", "description": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
+    { "role": "file-searcher", "mode": "function_calling", "title": "既存コード調査", "description": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装を把握するため", "dependsOn": [] },
+    { "role": "researcher", "mode": "chat", "title": "技術トレンド調査", "description": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [] },
+    { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "coder", "mode": "computer_use", "title": "実装", "description": "設計とデザインに沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [4, 5] },
+    { "role": "reviewer", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案", "reason": "品質保証のため", "dependsOn": [6] }
   ]
 }
 \`\`\``;

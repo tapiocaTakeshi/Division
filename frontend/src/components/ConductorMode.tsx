@@ -181,7 +181,7 @@ export function ConductorMode() {
 }
 
 function AgentOrb({ agent, x, y }: { agent: AgentNode; x: number; y: number }) {
-  const meta = ROLE_META[agent.role as RoleSlug] ?? ROLE_META.coding
+  const meta = ROLE_META[agent.role as RoleSlug] ?? ROLE_META.coder
   const orbRadius = 24
 
   const statusColor =

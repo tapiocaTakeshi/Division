@@ -134,9 +134,9 @@ export function ConductorView({ onRerunAgent }: ConductorViewProps) {
             <div className="flex items-center gap-3 mb-4">
               <div
                 className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${session.synthesisStatus === 'running' ? 'animate-pulse-glow' : ''}`}
-                style={{ backgroundColor: `${session.synthesisRole === 'coder' ? ROLE_META.coding.color : ROLE_META.writing.color}20` }}
+                style={{ backgroundColor: `${session.synthesisRole === 'coder' ? ROLE_META.coder.color : ROLE_META.writer.color}20` }}
               >
-                {session.synthesisRole === 'coder' ? ROLE_META.coding.icon : ROLE_META.writing.icon}
+                {session.synthesisRole === 'coder' ? ROLE_META.coder.icon : ROLE_META.writer.icon}
               </div>
               <div className="flex-1">
                 <h3 className="text-sm font-bold text-white">

@@ -562,7 +562,7 @@ async function gatherToolContext(req: ExecutionRequest): Promise<string> {
       const toolName = parsed.tool as string;
 
       if (!FILE_SEARCH_TOOLS.has(toolName)) {
-        logger.warn(`[Tool Loop] Tool "${toolName}" not allowed for file-search role`);
+        logger.warn(`[Tool Loop] Tool "${toolName}" not allowed for file-searcher role`);
         chatHistory.push({ role: "user", content: currentInput });
         chatHistory.push({ role: "assistant", content: result.output });
         currentInput = `Error: Tool "${toolName}" is not available. You can only use: ${[...FILE_SEARCH_TOOLS].join(", ")}. Try again.`;
@@ -709,7 +709,7 @@ export async function executeTaskStream(
   // For file-search role, perform a multi-turn tool loop to gather local file context.
   // Note: "search" role uses Perplexity web search and should NOT enter the tool loop.
   let enrichedInput = req.input;
-  if (req.role.slug === "file-search") {
+  if (req.role.slug === "file-searcher") {
     try {
       enrichedInput = await gatherToolContext(req);
     } catch (err) {

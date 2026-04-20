@@ -64,7 +64,7 @@ export function AgentTemplates() {
             {/* Pipeline preview */}
             <div className="space-y-2 mb-4">
               {template.steps.map((step, i) => {
-                const meta = ROLE_META[step.role as RoleSlug] ?? ROLE_META.coding
+                const meta = ROLE_META[step.role as RoleSlug] ?? ROLE_META.coder
                 return (
                   <div key={step.id} className="flex items-center gap-2">
                     {/* Step number */}

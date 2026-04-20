@@ -60,7 +60,7 @@ function rolesForModel(apiType: string, modelId: string): RoleSlug[] {
 
   // Image generation models
   if (/image|imagen|dall-?e|dalle|flux|stable-diffusion|sdxl/.test(id)) {
-    roles.add('image')
+    roles.add('imager')
     return [...roles]
   }
 
@@ -69,7 +69,7 @@ function rolesForModel(apiType: string, modelId: string): RoleSlug[] {
 
   // Search-first providers
   if (apiType === 'perplexity' || /sonar|research/.test(id)) {
-    roles.add('search')
+    roles.add('searcher')
   }
 
   // Small / fast / flash / mini variants are reasonable reviewers
@@ -78,22 +78,22 @@ function rolesForModel(apiType: string, modelId: string): RoleSlug[] {
   const isLarge = /opus|ultra|pro|large|max|reasoning|r1|o1|o3|o4|deep-think|deep_think/.test(id)
 
   // Coding-capable defaults (most modern chat models code well)
-  roles.add('coding')
-  roles.add('writing')
-  roles.add('review')
+  roles.add('coder')
+  roles.add('writer')
+  roles.add('reviewer')
 
   if (isLarge) {
-    roles.add('planning')
+    roles.add('planner')
     roles.add('ideaman')
   }
   if (isSmall) {
-    roles.add('review')
+    roles.add('reviewer')
   }
 
   // Code-specialist models
   if (/code|codex|coder|codestral/.test(id)) {
-    roles.add('coding')
-    roles.add('review')
+    roles.add('coder')
+    roles.add('reviewer')
   }
 
   return [...roles]

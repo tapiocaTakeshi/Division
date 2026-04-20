@@ -16,30 +16,38 @@ import { recordUsage, estimateTokens } from "./credits";
 
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
-  "deep-research": "research",
+  "deep-research": "researcher",
   "planning": "planner",
   "coding": "coder",
+  "design": "designer",
+  "search": "searcher",
+  "file-search": "file-searcher",
+  "research": "researcher",
+  "review": "reviewer",
+  "writing": "writer",
+  "image": "imager",
 };
 
 // --- Role-Specific Max Tokens (override default 4096) ---
 // OpenAI: max 128k, Anthropic: max 128k, Gemini: max 65k
 const ROLE_MAX_TOKENS: Record<string, number> = {
-  design: 65536,
+  designer: 65536,
   coder: 65536,
   coding: 65536,
-  writing: 32768,
+  writer: 32768,
+  planner: 32768,
   planning: 32768,
-  review: 32768,
-  search: 16384,
-  research: 32768,
+  reviewer: 32768,
+  searcher: 16384,
+  researcher: 32768,
   "deep-research": 65536,
-  "file-search": 16384,
+  "file-searcher": 16384,
   ideaman: 32768,
 };
 
 // --- Role-Specific System Prompts ---
 const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
-  design: `あなたは優秀なUIデザイナー兼フロントエンドエンジニアです。
+  designer: `あなたは優秀なUIデザイナー兼フロントエンドエンジニアです。
 リクエストに基づいて、**完全に自己完結した単一のHTMLファイル**を生成してください。
 
 ルール:
@@ -117,26 +125,26 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 
 【Layer 1 — 調査・発想】並列実行（dependsOn: []）
 - ideaman: 創造的ブレインストーミング・アイデア出し・革新的コンセプト提案（Claude担当）
-- search: ウェブ検索・情報収集（Perplexity担当）
-- file-search: プロジェクト内ファイル検索・コード解析・既存コード理解（GPT担当）
-- research / deep-research: 調査・分析・レポート（Perplexity Deep Research担当）
+- searcher: ウェブ検索・情報収集（Perplexity担当）
+- file-searcher: プロジェクト内ファイル検索・コード解析・既存コード理解（GPT担当）
+- researcher: 調査・分析・レポート（Perplexity Deep Research担当）
 
 【Layer 2 — 設計・デザイン】Layer 1に依存（dependsOn で Layer 1 のタスクを参照）
-- design: UI/UXデザイン・HTML/CSS生成・ランディングページ・プロトタイプ（Gemini担当。完全に自己完結したHTMLを生成）
-- image: 画像生成・ビジュアルコンテンツ・イラスト（GPT Image担当）
-- planning: 企画・設計・アーキテクチャ・戦略立案（Gemini担当）
+- designer: UI/UXデザイン・HTML/CSS生成・ランディングページ・プロトタイプ（Gemini担当。完全に自己完結したHTMLを生成）
+- imager: 画像生成・ビジュアルコンテンツ・イラスト（GPT Image担当）
+- planner: 企画・設計・アーキテクチャ・戦略立案（Gemini担当）
 
 【Layer 3 — 実装・執筆】Layer 2に依存
-- coding: コード生成・実装・デバッグ（Claude担当）
-- writing: 文章作成・ドキュメント（Claude担当）
+- coder: コード生成・実装・デバッグ（Claude担当）
+- writer: 文章作成・ドキュメント（Claude担当）
 
 【Layer 4 — レビュー】Layer 3に依存
-- review: 品質確認・レビュー・改善提案（GPT担当）
+- reviewer: 品質確認・レビュー・改善提案（GPT担当）
 
-【最終統合】review 完了後に自動実行（tasksに含めない）
+【最終統合】reviewer 完了後に自動実行（tasksに含めない）
 
 ## 利用可能なロール一覧
-ideaman, search, file-search, research, deep-research, design, image, planning, coding, writing, review
+ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, writer, reviewer
 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます（0, 1, 2...）
@@ -148,10 +156,10 @@ ideaman, search, file-search, research, deep-research, design, image, planning, 
 7. 1タスクに複数作業を詰め込まず細かく分割
 8. 同じロールでも異なる観点なら別タスクに分ける
 9. 各タスクに "mode" を指定:
-   - "chat": テキスト生成タスク（デフォルト。search, research 等 Web検索ロールもこれ）
-   - "computer_use": コード実行・テストが必要なタスク（coding ロール用）
-   - "function_calling": ローカルファイル検索のみ（file-search ロール専用）
-   ※ search / research ロールは Perplexity が Web 検索するため mode="chat" にすること
+   - "chat": テキスト生成タスク（デフォルト。searcher, researcher 等 Web検索ロールもこれ）
+   - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
+   - "function_calling": ローカルファイル検索のみ（file-searcher ロール専用）
+   ※ searcher / researcher ロールは Perplexity が Web 検索するため mode="chat" にすること
 10. "finalRole" を必ず指定:
     - "coder": コードが主な成果物の場合
     - "writer": ドキュメント・文章が主な成果物の場合
@@ -160,13 +168,13 @@ ideaman, search, file-search, research, deep-research, design, image, planning, 
 {
   "tasks": [
     { "role": "ideaman", "mode": "chat", "input": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため" },
-    { "role": "search", "mode": "chat", "input": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため" },
-    { "role": "file-search", "mode": "function_calling", "input": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装の把握のため" },
-    { "role": "research", "mode": "chat", "input": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため" },
-    { "role": "design", "mode": "chat", "input": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "planning", "mode": "chat", "input": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "coding", "mode": "computer_use", "input": "設計とデザインに沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [4, 5] },
-    { "role": "review", "mode": "chat", "input": "実装結果の品質確認と改善提案", "reason": "品質保証のため", "dependsOn": [6] }
+    { "role": "searcher", "mode": "chat", "input": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため" },
+    { "role": "file-searcher", "mode": "function_calling", "input": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装の把握のため" },
+    { "role": "researcher", "mode": "chat", "input": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため" },
+    { "role": "designer", "mode": "chat", "input": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "planner", "mode": "chat", "input": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "coder", "mode": "computer_use", "input": "設計とデザインに沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [4, 5] },
+    { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案", "reason": "品質保証のため", "dependsOn": [6] }
   ],
   "finalRole": "coder"
 }
@@ -584,7 +592,7 @@ export async function runAgent(
 
     const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
-    const isCoderRole = task.role === "coding" || task.role === "coder" || task.mode === "computer_use";
+    const isCoderRole = task.role === "coder" || task.mode === "computer_use";
 
     const result = isCoderRole
       ? await executeCoderLoop(
@@ -661,8 +669,8 @@ export async function runAgent(
       },
     });
 
-    // Attach preview URL for design role
-    if (task.role === "design" && result.status === "success" && result.output) {
+    // Attach preview URL for designer role
+    if (task.role === "designer" && result.status === "success" && result.output) {
       const baseUrl = process.env.DIVISION_API_URL || "https://api.division.he-ro.jp";
       results[i].previewUrl = `${baseUrl}/api/preview/${taskLog.id}`;
     }
@@ -1265,7 +1273,7 @@ async function runAgentStreamCore(
 
     const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
-    const isCoderRole = task.role === "coding" || task.role === "coder" || task.mode === "computer_use";
+    const isCoderRole = task.role === "coder" || task.mode === "computer_use";
 
     const result = isCoderRole
       ? await executeCoderLoop(
@@ -1308,7 +1316,7 @@ async function runAgentStreamCore(
 
     // Build preview URL for design role
     let previewUrl: string | undefined;
-    if (task.role === "design" && result.status === "success" && result.output) {
+    if (task.role === "designer" && result.status === "success" && result.output) {
       const baseUrl = process.env.DIVISION_API_URL || "https://api.division.he-ro.jp";
       previewUrl = `${baseUrl}/api/preview/${taskLog.id}`;
     }

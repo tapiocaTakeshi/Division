@@ -64,10 +64,10 @@ const defaultTemplates: PipelineTemplate[] = [
     icon: 'article',
     tags: ['コンテンツ', '記事', 'SEO'],
     steps: [
-      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'sonar-pro', dependsOn: [] },
-      { id: 's2', role: 'planning', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: ['s1'] },
-      { id: 's3', role: 'writing', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s2'] },
-      { id: 's4', role: 'review', provider: 'GPT', modelId: 'gpt-4.1', dependsOn: ['s3'] },
+      { id: 's1', role: 'searcher', provider: 'Perplexity', modelId: 'sonar-pro', dependsOn: [] },
+      { id: 's2', role: 'planner', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: ['s1'] },
+      { id: 's3', role: 'writer', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s2'] },
+      { id: 's4', role: 'reviewer', provider: 'GPT', modelId: 'gpt-4.1', dependsOn: ['s3'] },
     ],
   },
   {
@@ -77,10 +77,10 @@ const defaultTemplates: PipelineTemplate[] = [
     icon: 'code',
     tags: ['開発', 'コード', 'レビュー'],
     steps: [
-      { id: 's1', role: 'planning', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: [] },
-      { id: 's2', role: 'coding', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s1'] },
-      { id: 's3', role: 'review', provider: 'GPT', modelId: 'gpt-4.1', dependsOn: ['s2'] },
-      { id: 's4', role: 'coding', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s3'] },
+      { id: 's1', role: 'planner', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: [] },
+      { id: 's2', role: 'coder', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s1'] },
+      { id: 's3', role: 'reviewer', provider: 'GPT', modelId: 'gpt-4.1', dependsOn: ['s2'] },
+      { id: 's4', role: 'coder', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s3'] },
     ],
   },
   {
@@ -90,10 +90,10 @@ const defaultTemplates: PipelineTemplate[] = [
     icon: 'research',
     tags: ['調査', '分析', '論文'],
     steps: [
-      { id: 's1', role: 'search', provider: 'Perplexity', modelId: 'sonar-pro', dependsOn: [] },
-      { id: 's2', role: 'search', provider: 'Perplexity', modelId: 'sonar-deep-research', dependsOn: [] },
-      { id: 's3', role: 'planning', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: ['s1', 's2'] },
-      { id: 's4', role: 'writing', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s3'] },
+      { id: 's1', role: 'searcher', provider: 'Perplexity', modelId: 'sonar-pro', dependsOn: [] },
+      { id: 's2', role: 'searcher', provider: 'Perplexity', modelId: 'sonar-deep-research', dependsOn: [] },
+      { id: 's3', role: 'planner', provider: 'Gemini', modelId: 'gemini-2.5-pro', dependsOn: ['s1', 's2'] },
+      { id: 's4', role: 'writer', provider: 'Claude', modelId: 'claude-sonnet-4-5-20250514', dependsOn: ['s3'] },
     ],
   },
 ]
@@ -231,44 +231,44 @@ export const ROLE_META: Record<RoleSlug, { label: string; color: string; icon: s
     icon: '🎼',
     strengths: ['タスク分解', '全体統括', '最適化'],
   },
-  coding: {
+  coder: {
     label: 'Coder',
     color: '#22c55e',
     icon: '💻',
     strengths: ['コード生成', 'デバッグ', 'リファクタ'],
   },
-  search: {
-    label: 'Researcher',
+  searcher: {
+    label: 'Searcher',
     color: '#3b82f6',
     icon: '🔍',
     strengths: ['情報収集', 'ファクトチェック', '最新データ'],
   },
-  'file-search': {
-    label: 'File Search',
+  'file-searcher': {
+    label: 'File Searcher',
     color: '#0ea5e9',
     icon: '📂',
     strengths: ['ファイル検索', 'コード解析', '既存コード理解'],
   },
-  planning: {
+  planner: {
     label: 'Planner',
     color: '#f59e0b',
     icon: '📐',
     strengths: ['設計', 'アーキテクチャ', '戦略立案'],
   },
-  writing: {
+  writer: {
     label: 'Writer',
     color: '#ec4899',
     icon: '✍️',
     strengths: ['長文生成', 'コピー', '要約'],
   },
-  review: {
+  reviewer: {
     label: 'Reviewer',
     color: '#8b5cf6',
     icon: '🔎',
     strengths: ['品質検証', 'バグ発見', '改善提案'],
   },
-  image: {
-    label: 'Image',
+  imager: {
+    label: 'Imager',
     color: '#14b8a6',
     icon: '🎨',
     strengths: ['画像生成', 'イラスト', 'ビジュアル'],
@@ -279,7 +279,7 @@ export const ROLE_META: Record<RoleSlug, { label: string; color: string; icon: s
     icon: '💡',
     strengths: ['ブレスト', 'アイデア出し', '発想力'],
   },
-  design: {
+  designer: {
     label: 'Designer',
     color: '#e879f9',
     icon: '🎨',

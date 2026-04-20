@@ -10,7 +10,7 @@ interface AgentCardProps {
 }
 
 export function AgentCard({ agent, onRerun, onChangeProvider, compact }: AgentCardProps) {
-  const meta = ROLE_META[agent.role] || ROLE_META.design
+  const meta = ROLE_META[agent.role] || ROLE_META.designer
   const statusStyles = getStatusStyles(agent.status)
   const [showThinking, setShowThinking] = useState(false)
   const [showCitations, setShowCitations] = useState(false)

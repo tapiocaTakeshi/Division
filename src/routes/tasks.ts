@@ -13,6 +13,34 @@ const executeTaskSchema = z.object({
   config: z.record(z.unknown()).optional(),
 });
 
+/**
+ * Resolve a role slug to its canonical form.
+ * First checks the DB directly; if not found, tries known aliases.
+ */
+async function resolveRole(slug: string) {
+  const direct = await prisma.role.findUnique({ where: { slug } });
+  if (direct) return direct;
+
+  const ROLE_ALIASES: Record<string, string> = {
+    "deep-research": "researcher",
+    "planning": "planner",
+    "coding": "coder",
+    "design": "designer",
+    "search": "searcher",
+    "file-search": "file-searcher",
+    "research": "researcher",
+    "review": "reviewer",
+    "writing": "writer",
+    "image": "imager",
+  };
+
+  const canonical = ROLE_ALIASES[slug];
+  if (canonical) {
+    return prisma.role.findUnique({ where: { slug: canonical } });
+  }
+  return null;
+}
+
 // Execute a task: route to the AI assigned to the given role in the project
 taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => {
   const parsed = executeTaskSchema.safeParse(req.body);
@@ -25,10 +53,15 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
 
   const { projectId, roleSlug, input, config } = parsed.data;
 
-  // Find the role by slug
-  const role = await prisma.role.findUnique({ where: { slug: roleSlug } });
+  // Find the role by slug (supports aliases for backward compatibility)
+  const role = await resolveRole(roleSlug);
   if (!role) {
-    res.status(404).json({ error: `Role not found: ${roleSlug}` });
+    const allRoles = await prisma.role.findMany({ select: { slug: true, name: true }, orderBy: { slug: "asc" } });
+    const available = allRoles.map((r) => `${r.slug} (${r.name})`).join(", ");
+    res.status(404).json({
+      error: `Role not found: ${roleSlug}`,
+      availableRoles: available,
+    });
     return;
   }
 
@@ -95,9 +128,7 @@ taskRouter.get("/logs", asyncHandler(async (req: Request, res: Response) => {
   const where: Record<string, unknown> = {};
   if (projectId) where.projectId = String(projectId);
   if (roleSlug) {
-    const role = await prisma.role.findUnique({
-      where: { slug: String(roleSlug) },
-    });
+    const role = await resolveRole(String(roleSlug));
     if (role) where.roleId = role.id;
   }
 

@@ -45,6 +45,15 @@ const ROLE_MAX_TOKENS: Record<string, number> = {
   ideaman: 16384,
 };
 
+// --- Synthesis Max Tokens (used when coder/writer is the final synthesizer) ---
+// Regular task invocations use ROLE_MAX_TOKENS (reduced). When coder or writer
+// acts as the synthesizer, they get a larger window so they can fully
+// incorporate every upstream agent output into the final answer.
+const ROLE_SYNTHESIS_MAX_TOKENS: Record<string, number> = {
+  coder: 65536,
+  writer: 65536,
+};
+
 // --- Role-Specific System Prompts ---
 const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
   designer: `あなたは優秀なUIデザイナー兼フロントエンドエンジニアです。
@@ -748,9 +757,10 @@ export async function runAgent(
     const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
 
     log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName}`);
+    const synthesisMaxTokens = ROLE_SYNTHESIS_MAX_TOKENS[synthesisRoleSlug];
     const synthesisResult = await executeTask({
       provider: synthesisProvider,
-      config: { apiKey: synthesisApiKey },
+      config: { apiKey: synthesisApiKey, ...(synthesisMaxTokens ? { maxTokens: synthesisMaxTokens } : {}) },
       input: synthesisInput,
       role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
       systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
@@ -1492,10 +1502,11 @@ async function runAgentStreamCore(
     });
 
     const synthStart = Date.now();
+    const synthesisMaxTokens = ROLE_SYNTHESIS_MAX_TOKENS[synthesisRoleSlug];
     const synthesisResult = await executeTaskStream(
       {
         provider: synthesisProvider,
-        config: { apiKey: synthesisApiKey },
+        config: { apiKey: synthesisApiKey, ...(synthesisMaxTokens ? { maxTokens: synthesisMaxTokens } : {}) },
         input: synthesisInput,
         role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
         systemPrompt: SYNTHESIS_SYSTEM_PROMPT,

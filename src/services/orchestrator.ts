@@ -64,6 +64,36 @@ const ROLE_SYNTHESIS_MAX_TOKENS: Record<string, number> = {
   writer: 65536,
 };
 
+/**
+ * Truncate each agent output so the combined synthesis input stays within
+ * a safe character budget (~400k chars ≈ ~100k tokens). Longest outputs
+ * are trimmed first while shorter ones are kept intact.
+ */
+const MAX_SYNTHESIS_CHARS = 400_000;
+
+function buildSynthesisInput(
+  userRequest: string,
+  agentOutputs: string[],
+): string {
+  const header = `## ユーザーの元のリクエスト:\n${userRequest}\n\n## 各エージェントの作業結果:\n`;
+  const headerLen = header.length;
+  const budget = MAX_SYNTHESIS_CHARS - headerLen;
+
+  const totalLen = agentOutputs.reduce((s, o) => s + o.length, 0);
+  if (totalLen <= budget) {
+    return header + agentOutputs.join("\n\n");
+  }
+
+  const perAgent = Math.floor(budget / agentOutputs.length);
+  const truncated = agentOutputs.map((o) => {
+    if (o.length <= perAgent) return o;
+    return o.slice(0, perAgent) + "\n\n...[出力が長いため省略されました]";
+  });
+
+  logger.warn(`[Synthesis] Input truncated: ${totalLen} → ${truncated.reduce((s, o) => s + o.length, 0)} chars`);
+  return header + truncated.join("\n\n");
+}
+
 // --- Role-Specific System Prompts ---
 const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
   designer: `あなたは優秀なUIデザイナー兼フロントエンドエンジニアです。
@@ -755,9 +785,9 @@ export async function runAgent(
     }
 
     const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
-    const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+    const synthesisInput = buildSynthesisInput(req.input, successfulOutputs);
 
-    log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName}`);
+    log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName} (input: ${synthesisInput.length} chars)`);
     const synthesisMaxTokens = ROLE_SYNTHESIS_MAX_TOKENS[synthesisRoleSlug];
     const synthesisResult = await executeTask({
       provider: synthesisProvider,
@@ -1474,7 +1504,7 @@ async function runAgentStreamCore(
       req.authenticated
     );
 
-    const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+    const synthesisInput = buildSynthesisInput(req.input, successfulOutputs);
 
     emit({
       type: "synthesis_start",

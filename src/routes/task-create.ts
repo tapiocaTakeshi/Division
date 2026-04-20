@@ -27,61 +27,54 @@ const updateTaskSchema = z.object({
 
 // --- Leader Prompt for Task Creation ---
 
-const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、具体的なタスクに分解してください。
+const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下の5層パイプラインに基づいてタスクを分解してください。
 
-利用可能なロール:
+## パイプライン構造（必ずこの順序で多層化する）
+
+【Layer 1 — 調査・発想】並列実行（dependsOn: []）
+- ideaman: 創造的ブレインストーミング・アイデア出し
 - search: ウェブ検索・情報収集
-- deep-research: 徹底的な多角的調査・包括的分析・詳細レポート作成
-- planning: 企画・設計・戦略立案
-- coding: コード生成・デバッグ
-- writing: 文章作成・ドキュメント
-- review: レビュー・品質確認
-- design: UI/UXデザイン・ワイヤーフレーム・ビジュアルデザイン・デザインシステム
+- file-search: プロジェクト内ファイル検索・コード解析
+- research / deep-research: 調査・分析・レポート
 
-ルール:
-1. 各タスクには0始まりのインデックスが暗黙的に付与されます
-2. 他のタスクの結果が必要な場合は "dependsOn" で依存先のインデックスを指定してください
-3. 各タスクにはわかりやすいtitleとdescriptionを付けてください
+【Layer 2 — 設計・デザイン】Layer 1に依存
+- design: UI/UXデザイン・HTML/CSS生成・プロトタイプ
+- image: 画像生成・ビジュアルコンテンツ
+- planning: 企画・設計・アーキテクチャ
+
+【Layer 3 — 実装・執筆】Layer 2に依存
+- coding: コード生成・実装・デバッグ
+- writing: 文章作成・ドキュメント
+
+【Layer 4 — レビュー】Layer 3に依存
+- review: 品質確認・レビュー・改善提案
+
+## ルール
+1. 各タスクには0始まりのインデックスが付与されます
+2. dependsOn で依存先インデックスを指定。空=並列実行
+3. 各タスクにわかりやすいtitleとdescriptionを付ける
 4. titleは短く簡潔に（50文字以内）
-5. descriptionはそのタスクで何をすべきか具体的に記述してください
-6. 必ず以下のJSON形式のみで回答してください。説明文や前置き（例：「はい、承知いたしました」等）は一切不要です。
-7. タスクは最低5個以上生成してください。リクエストが複雑な場合は8〜15個程度に細分化してください
-8. 1つのタスクに複数の作業を詰め込まず、できるだけ細かく分割してください
-9. 調査・計画・実装・レビューなど各フェーズを独立したタスクにしてください
-10. 同じロールでも異なる観点・対象であれば別タスクに分けてください
-11. 各タスクには、そのタスクの性質に応じた "mode" を指定してください。
-    - "chat" (デフォルト): 通常の文章生成等のテキストベースのタスク
-    - "computer_use": 実際にターミナル等でコードを実行・テストする必要があるタスク（例: codingやreview時等）
-    - "function_calling": 検索やファイルの読み込み等、外部ツールを利用して情報収集するタスク（例: search等）
-12. 単一の層（すべて並列実行など）ではなく、必ず複数層（例: 調査層→計画層→実装層→テスト層）になるように dependsOn を用いて多層的な依存関係（パイプライン）を構築してください。
+5. descriptionはそのタスクで何をすべきか具体的に記述
+6. 必ず以下のJSON形式のみで回答。説明文は一切不要
+7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
+8. 1タスクに複数作業を詰め込まず細かく分割
+9. 同じロールでも異なる観点なら別タスクに分ける
+10. 各タスクに "mode" を指定:
+    - "chat": テキスト生成タスク（デフォルト）
+    - "computer_use": コード実行・テストが必要なタスク
+    - "function_calling": 検索・ファイル読込等のツール利用タスク
 
 \`\`\`json
 {
   "tasks": [
-    {
-      "role": "search",
-      "mode": "function_calling",
-      "title": "技術仕様の調査",
-      "description": "実装に必要なAPIや技術の仕様を調査する",
-      "reason": "正確な設計の土台とするため",
-      "dependsOn": []
-    },
-    {
-      "role": "planning",
-      "mode": "chat",
-      "title": "アーキテクチャ設計",
-      "description": "調査結果を元にシステム全体の設計図を作成する",
-      "reason": "実装の方向性を決めるため",
-      "dependsOn": [0]
-    },
-    {
-      "role": "coding",
-      "mode": "computer_use",
-      "title": "コアモジュール実装",
-      "description": "設計に沿って中心機能の開発を行う",
-      "reason": "要件の主要部分を実現するため",
-      "dependsOn": [1]
-    }
+    { "role": "ideaman", "mode": "chat", "title": "アイデア提案", "description": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [] },
+    { "role": "search", "mode": "function_calling", "title": "技術調査", "description": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
+    { "role": "file-search", "mode": "function_calling", "title": "既存コード調査", "description": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装を把握するため", "dependsOn": [] },
+    { "role": "research", "mode": "chat", "title": "技術トレンド調査", "description": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [] },
+    { "role": "design", "mode": "chat", "title": "UIデザイン作成", "description": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "planning", "mode": "chat", "title": "設計・要件定義", "description": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "coding", "mode": "computer_use", "title": "実装", "description": "設計とデザインに沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [4, 5] },
+    { "role": "review", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案", "reason": "品質保証のため", "dependsOn": [6] }
   ]
 }
 \`\`\``;

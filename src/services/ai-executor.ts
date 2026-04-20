@@ -433,94 +433,251 @@ function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
   }
 }
 
-async function gatherToolContext(req: ExecutionRequest): Promise<string> {
-  let contextAdded = false;
-  let currentInput = req.input;
-  let toolContext = "## Tool Results (Context gathered automatically before your generation)\\n\\n";
+// --- Tool loop system prompts ---
 
-  const systemPrompt = `You are a search and file retrieval agent.
-Your goal is to gather necessary context from the local filesystem to answer the user's request.
-You have the following tools available:
-1. read_file: {"path": "..."}
-2. search_files: {"query": "...", "directory": "."}
-3. list_directory: {"path": "..."}
+// file-search role: read-only tools for exploring the codebase
+const FILE_SEARCH_AGENT_PROMPT = `You are a file search and code analysis agent.
+Your goal is to explore the codebase, find relevant files, read code, and gather context.
 
-If you need to use a tool, output a JSON block in this exact format:
+Available tools:
+1. read_file: {"path": "...", "startLine": N, "endLine": N} — Read a file with optional line range
+2. search_files: {"query": "...", "directory": ".", "include": "*.ts"} — Search for a pattern in files
+3. list_directory: {"path": "..."} — List directory contents
+
+Output format — always output a single JSON block:
 \`\`\`json
 {
   "tool": "read_file",
   "args": { "path": "src/main.ts" }
 }
 \`\`\`
-Do not output anything else. I will execute the tool and provide the result.
 
-If you DO NOT need to use any tools, or you have gathered enough information, output EXACTLY:
+When you have gathered enough information, output:
 \`\`\`json
 { "done": true }
 \`\`\`
-DO NOT output the final answer to the user. Only output the tool JSON or the done JSON.`;
+DO NOT output the final answer. Only output tool JSON or done JSON.`;
+
+const FILE_SEARCH_TOOLS = new Set(["read_file", "search_files", "list_directory"]);
+
+// coder role: file editing and command execution tools
+const CODER_AGENT_PROMPT = `You are an expert software engineer. You implement code changes and run commands.
+
+Available tools:
+1. edit_file: {"path": "...", "old_string": "...", "new_string": "..."} — Replace exact text in a file (old_string must be unique in the file)
+2. write_file: {"path": "...", "content": "..."} — Create a new file or overwrite an existing file
+3. execute_command: {"command": "...", "timeout": 30000} — Run a shell command (npm, tsc, git, etc.)
+4. read_file: {"path": "...", "startLine": N, "endLine": N} — Read a file to understand current code before editing
+
+Workflow:
+1. Read the relevant file(s) to understand current code
+2. Use edit_file to make precise changes (preferred over write_file)
+3. Run execute_command to verify (e.g. "npx tsc --noEmit", "npm test")
+4. Fix any errors and re-verify
+
+Rules:
+- Use edit_file for modifying existing files. old_string must be an EXACT unique match (including whitespace/indentation)
+- Use write_file ONLY for creating new files
+- Always verify changes with execute_command after editing
+- If edit_file fails (not unique), include more surrounding context in old_string
+
+Output format — always output a single JSON block:
+\`\`\`json
+{
+  "tool": "edit_file",
+  "args": { "path": "src/index.ts", "old_string": "const x = 1;", "new_string": "const x = 2;" }
+}
+\`\`\`
+
+When ALL changes are complete and verified, output:
+\`\`\`json
+{ "done": true, "summary": "Brief description of what was changed" }
+\`\`\``;
+
+const CODER_TOOLS = new Set(["read_file", "write_file", "edit_file", "execute_command"]);
+
+function extractToolJson(output: string): Record<string, unknown> | null {
+  try {
+    const match = output.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    let jsonStr = match ? match[1].trim() : output.trim();
+
+    if (!jsonStr.startsWith("{")) {
+      const firstBrace = jsonStr.indexOf("{");
+      const lastBrace = jsonStr.lastIndexOf("}");
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
+      }
+    }
+
+    return JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+}
+
+async function gatherToolContext(req: ExecutionRequest): Promise<string> {
+  let contextAdded = false;
+  let currentInput = req.input;
+  let toolContext = "## Tool Results (Context gathered automatically before your generation)\n\n";
 
   let loopCount = 0;
   const chatHistory = [...(req.chatHistory || [])];
 
-  while (loopCount < 5) {
+  while (loopCount < 10) {
     loopCount++;
     const result = await executeTask({
       provider: req.provider,
       config: req.config,
       input: currentInput,
       role: req.role,
-      systemPrompt: systemPrompt,
-      chatHistory: chatHistory
+      systemPrompt: FILE_SEARCH_AGENT_PROMPT,
+      chatHistory: chatHistory,
     });
 
     if (result.status === "error") {
-      logger.error("[Tool Loop] Provider error: " + (result.errorMsg || "unknown error"));
+      logger.error("[FileSearch] Provider error: " + (result.errorMsg || "unknown error"));
       break;
     }
 
-    try {
-      const match = result.output.match(/\`\`\`(?:json)?\s*\n?([\s\S]*?)\n?\`\`\`/);
-      let jsonStr = match ? match[1].trim() : result.output.trim();
-      
-      // Attempt to clean up jsonStr if it wasn't inside markdown blocks
-      if (!jsonStr.startsWith("{")) {
-        const firstBrace = jsonStr.indexOf("{");
-        const lastBrace = jsonStr.lastIndexOf("}");
-        if (firstBrace >= 0 && lastBrace > firstBrace) {
-          jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
-        }
-      }
+    const parsed = extractToolJson(result.output);
+    if (!parsed) {
+      logger.warn(`[FileSearch] Failed to parse tool call: ${result.output.slice(0, 200)}`);
+      break;
+    }
 
-      const parsed = JSON.parse(jsonStr);
+    if (parsed.done) break;
 
-      if (parsed.done) {
-        break;
-      }
+    if (parsed.tool && parsed.args) {
+      const toolName = parsed.tool as string;
 
-      if (parsed.tool && parsed.args) {
-        logger.info(`[Tool Loop] Executing tool ${parsed.tool}`);
-        const toolResult = await executeNativeTool(parsed.tool, parsed.args);
-
-        toolContext += `### Tool: ${parsed.tool}\\nArgs: ${JSON.stringify(parsed.args)}\\nResult:\\n${toolResult}\\n\\n`;
-        contextAdded = true;
-
+      if (!FILE_SEARCH_TOOLS.has(toolName)) {
+        logger.warn(`[FileSearch] Tool "${toolName}" not allowed for file-search role`);
         chatHistory.push({ role: "user", content: currentInput });
         chatHistory.push({ role: "assistant", content: result.output });
-        currentInput = `Tool Result for ${parsed.tool}:\\n${toolResult.slice(0, 10000)}\\n\\nWhat other tool do you need? (Or output {"done": true})`;
-      } else {
-        break;
+        currentInput = `Error: Tool "${toolName}" is not available. You can only use: ${[...FILE_SEARCH_TOOLS].join(", ")}. Try again.`;
+        continue;
       }
-    } catch (err) {
-      logger.warn(`[Tool Loop] Failed to parse tool call: ${result.output}`);
+
+      logger.info(`[FileSearch] Executing tool ${toolName}`);
+      const toolResult = await executeNativeTool(toolName, parsed.args as Record<string, unknown>);
+
+      toolContext += `### Tool: ${toolName}\nArgs: ${JSON.stringify(parsed.args)}\nResult:\n${toolResult}\n\n`;
+      contextAdded = true;
+
+      chatHistory.push({ role: "user", content: currentInput });
+      chatHistory.push({ role: "assistant", content: result.output });
+      currentInput = `Tool Result for ${toolName}:\n${toolResult.slice(0, 15000)}\n\nWhat other tool do you need? (Or output {"done": true})`;
+    } else {
       break;
     }
   }
 
   if (contextAdded) {
-    return `${toolContext}\\n\\n## User Request:\\n${req.input}`;
+    return `${toolContext}\n\n## User Request:\n${req.input}`;
   }
   return req.input;
+}
+
+/**
+ * Execute a coder agent loop: read → edit → verify → repeat.
+ * Returns the accumulated log of all actions and the final summary.
+ */
+export async function executeCoderLoop(
+  req: ExecutionRequest,
+  onLog?: (text: string) => void
+): Promise<ExecutionResult> {
+  const start = Date.now();
+  const MAX_ITERATIONS = 20;
+  const logs: string[] = [];
+
+  function log(msg: string) {
+    logs.push(msg);
+    onLog?.(msg + "\n");
+    logger.info(`[Coder] ${msg}`);
+  }
+
+  log(`Starting coder loop for: ${req.input.slice(0, 100)}...`);
+
+  const chatHistory: ChatMessage[] = [...(req.chatHistory || [])];
+  let currentInput = req.input;
+  let iteration = 0;
+  let finalSummary = "";
+
+  while (iteration < MAX_ITERATIONS) {
+    iteration++;
+    log(`--- Iteration ${iteration}/${MAX_ITERATIONS} ---`);
+
+    const result = await executeTask({
+      provider: req.provider,
+      config: req.config,
+      input: currentInput,
+      role: req.role,
+      systemPrompt: req.systemPrompt || CODER_AGENT_PROMPT,
+      chatHistory,
+    });
+
+    if (result.status === "error") {
+      log(`Error from provider: ${result.errorMsg}`);
+      return {
+        output: logs.join("\n"),
+        durationMs: Date.now() - start,
+        status: "error",
+        errorMsg: result.errorMsg,
+      };
+    }
+
+    const parsed = extractToolJson(result.output);
+    if (!parsed) {
+      log("No tool call detected, treating as final output");
+      finalSummary = result.output;
+      break;
+    }
+
+    if (parsed.done) {
+      finalSummary = (parsed.summary as string) || "Changes completed";
+      log(`Done: ${finalSummary}`);
+      break;
+    }
+
+    if (parsed.tool && parsed.args) {
+      const toolName = parsed.tool as string;
+      const toolArgs = parsed.args as Record<string, unknown>;
+
+      if (!CODER_TOOLS.has(toolName)) {
+        log(`Tool "${toolName}" not allowed for coder role. Allowed: ${[...CODER_TOOLS].join(", ")}`);
+        chatHistory.push({ role: "user", content: currentInput });
+        chatHistory.push({ role: "assistant", content: result.output });
+        currentInput = `Error: Tool "${toolName}" is not available. You can only use: ${[...CODER_TOOLS].join(", ")}. Try again.`;
+        continue;
+      }
+
+      log(`Tool: ${toolName} → ${JSON.stringify(toolArgs).slice(0, 200)}`);
+
+      const toolResult = await executeNativeTool(toolName, toolArgs);
+      const truncatedResult = toolResult.length > 15000 ? toolResult.slice(0, 15000) + "\n...[truncated]" : toolResult;
+      log(`Result: ${truncatedResult.slice(0, 300)}${truncatedResult.length > 300 ? "..." : ""}`);
+
+      chatHistory.push({ role: "user", content: currentInput });
+      chatHistory.push({ role: "assistant", content: result.output });
+      currentInput = `Tool "${toolName}" result:\n${truncatedResult}\n\nContinue with the next step. Use another tool or output {"done": true, "summary": "..."} when finished.`;
+    } else {
+      log("Unrecognized output format, stopping");
+      finalSummary = result.output;
+      break;
+    }
+  }
+
+  if (iteration >= MAX_ITERATIONS) {
+    log(`Reached max iterations (${MAX_ITERATIONS})`);
+  }
+
+  const output = `## Coder Agent Results\n\n### Summary\n${finalSummary}\n\n### Execution Log\n${logs.join("\n")}`;
+
+  return {
+    output,
+    durationMs: Date.now() - start,
+    status: "success",
+  };
 }
 
 /**
@@ -538,7 +695,7 @@ export async function executeTaskStream(
   // For function_calling mode, perform an implicit multi-turn tool calling loop to gather file context
   // before running the final streaming generation.
   let enrichedInput = req.input;
-  if (req.mode === "function_calling" || req.role.slug === "search") {
+  if (req.mode === "function_calling" || req.role.slug === "search" || req.role.slug === "file-search") {
     try {
       enrichedInput = await gatherToolContext(req);
     } catch (err) {

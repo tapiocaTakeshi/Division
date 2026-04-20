@@ -9,7 +9,7 @@
  */
 
 import { prisma } from "../db";
-import { executeTask, executeTaskStream } from "./ai-executor";
+import { executeTask, executeTaskStream, executeCoderLoop } from "./ai-executor";
 import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
 import { recordUsage, estimateTokens } from "./credits";
@@ -569,14 +569,28 @@ export async function runAgent(
 
     const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
-    const result = await executeTask({
-      provider,
-      config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-      input: enrichedInput,
-      role: { slug: role.slug, name: role.name },
-      mode: task.mode,
-      ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
-    });
+    const isCoderRole = task.role === "coding" || task.role === "coder" || task.mode === "computer_use";
+
+    const result = isCoderRole
+      ? await executeCoderLoop(
+          {
+            provider,
+            config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
+            input: enrichedInput,
+            role: { slug: role.slug, name: role.name },
+            mode: task.mode,
+            ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+          },
+          (msg) => log(`  [coder] ${msg.trim()}`)
+        )
+      : await executeTask({
+          provider,
+          config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
+          input: enrichedInput,
+          role: { slug: role.slug, name: role.name },
+          mode: task.mode,
+          ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+        });
 
     if (result.status === "success") {
       log(`[Agent] Done: [${task.role}] → ${provider.displayName} (${result.durationMs}ms)`);
@@ -1212,18 +1226,32 @@ async function runAgentStreamCore(
 
     const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
-    const result = await executeTaskStream(
-      {
-        provider,
-        config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-        input: enrichedInput,
-        role: { slug: role.slug, name: role.name },
-        mode: task.mode,
-        ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
-      },
-      (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
-      (text) => emit({ type: "task_thinking_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text })
-    );
+    const isCoderRole = task.role === "coding" || task.role === "coder" || task.mode === "computer_use";
+
+    const result = isCoderRole
+      ? await executeCoderLoop(
+          {
+            provider,
+            config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
+            input: enrichedInput,
+            role: { slug: role.slug, name: role.name },
+            mode: task.mode,
+            ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+          },
+          (msg) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text: msg })
+        )
+      : await executeTaskStream(
+          {
+            provider,
+            config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
+            input: enrichedInput,
+            role: { slug: role.slug, name: role.name },
+            mode: task.mode,
+            ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+          },
+          (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
+          (text) => emit({ type: "task_thinking_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text })
+        );
 
     // Log to DB
     const taskLog = await prisma.taskLog.create({

@@ -465,38 +465,46 @@ DO NOT output the final answer to the user. Only output the tool JSON or the don
 
 const CODER_AGENT_PROMPT = `You are an expert software engineer. You implement code changes and verify them.
 
+## Environment
+You are running inside a serverless (Vercel) environment. Key constraints:
+- Source files are compiled JavaScript (.js), NOT TypeScript (.ts)
+- The filesystem is READ-ONLY except for /tmp/
+- Use "ls" instead of "find" to explore directories
+- Use write_file to create new files ONLY under /tmp/ (e.g. /tmp/output.html)
+- edit_file works only on writable paths (/tmp/)
+- For code generation tasks, output the code as your final summary instead of trying to write files to read-only paths
+
 Available tools:
-1. read_file: {"path": "...", "startLine": N, "endLine": N} — Read a file to understand the code before editing
-2. edit_file: {"path": "...", "old_string": "...", "new_string": "..."} — Replace exact text in a file (old_string must be unique in the file)
-3. write_file: {"path": "...", "content": "..."} — Create a NEW file (do NOT use for existing files)
-4. execute_command: {"command": "...", "timeout": 30000} — Run a shell command (npm test, tsc, git diff, etc.)
+1. read_file: {"path": "...", "startLine": N, "endLine": N} — Read a file to understand the code
+2. edit_file: {"path": "...", "old_string": "...", "new_string": "..."} — Replace exact text in a writable file (old_string must be unique)
+3. write_file: {"path": "...", "content": "..."} — Create a NEW file (only under /tmp/)
+4. execute_command: {"command": "...", "timeout": 30000} — Run a shell command (ls, node, etc.)
 
 Workflow:
-1. Read relevant files to understand the code
+1. Read relevant files to understand the existing code
 2. Plan your changes
-3. Implement changes using edit_file (preferred) or write_file (new files only)
-4. Verify with execute_command (e.g. "npx tsc --noEmit")
-5. Fix any errors and re-verify
+3. Generate the code/changes needed
+4. If writing files, use /tmp/ for output
+5. Output a clear summary of what was done
 
 Rules:
-- ALWAYS read a file before editing it
-- Use edit_file for modifying existing files — NOT write_file
-- old_string must be an EXACT match (including whitespace and indentation) and must appear exactly once in the file
-- If old_string is not unique, include more surrounding context lines to make it unique
-- After making changes, run verification commands
+- ALWAYS read a file before trying to edit it
+- old_string must be an EXACT match including whitespace
+- Do NOT attempt to write to read-only paths (src/, node_modules/, etc.)
 - One tool call per response
+- If you cannot modify existing source files, provide the complete code changes in your summary
 
 Output format — always output a single JSON block:
 \`\`\`json
 {
-  "tool": "edit_file",
-  "args": { "path": "src/index.ts", "old_string": "const x = 1;", "new_string": "const x = 2;" }
+  "tool": "read_file",
+  "args": { "path": "src/index.js" }
 }
 \`\`\`
 
-When ALL changes are complete and verified, output:
+When ALL work is complete, output:
 \`\`\`json
-{ "done": true, "summary": "Brief description of what was changed" }
+{ "done": true, "summary": "Brief description of what was done/generated" }
 \`\`\``;
 
 function extractToolJson(output: string): Record<string, unknown> | null {
@@ -698,10 +706,10 @@ export async function executeTaskStream(
 ): Promise<ExecutionResult> {
   const start = Date.now();
 
-  // For function_calling mode, perform an implicit multi-turn tool calling loop to gather file context
-  // before running the final streaming generation.
+  // For file-search role, perform a multi-turn tool loop to gather local file context.
+  // Note: "search" role uses Perplexity web search and should NOT enter the tool loop.
   let enrichedInput = req.input;
-  if (req.mode === "function_calling" || req.role.slug === "search") {
+  if (req.role.slug === "file-search") {
     try {
       enrichedInput = await gatherToolContext(req);
     } catch (err) {

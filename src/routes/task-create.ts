@@ -60,15 +60,16 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 8. 1タスクに複数作業を詰め込まず細かく分割
 9. 同じロールでも異なる観点なら別タスクに分ける
 10. 各タスクに "mode" を指定:
-    - "chat": テキスト生成タスク（デフォルト）
-    - "computer_use": コード実行・テストが必要なタスク
-    - "function_calling": 検索・ファイル読込等のツール利用タスク
+    - "chat": テキスト生成タスク（デフォルト。search, research 等 Web検索ロールもこれ）
+    - "computer_use": コード実行・テストが必要なタスク（coding ロール用）
+    - "function_calling": ローカルファイル検索のみ（file-search ロール専用）
+    ※ search / research ロールは Perplexity が Web 検索するため mode="chat" にすること
 
 \`\`\`json
 {
   "tasks": [
     { "role": "ideaman", "mode": "chat", "title": "アイデア提案", "description": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [] },
-    { "role": "search", "mode": "function_calling", "title": "技術調査", "description": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
+    { "role": "search", "mode": "chat", "title": "技術調査", "description": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
     { "role": "file-search", "mode": "function_calling", "title": "既存コード調査", "description": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装を把握するため", "dependsOn": [] },
     { "role": "research", "mode": "chat", "title": "技術トレンド調査", "description": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [] },
     { "role": "design", "mode": "chat", "title": "UIデザイン作成", "description": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },

@@ -148,9 +148,10 @@ ideaman, search, file-search, research, deep-research, design, image, planning, 
 7. 1タスクに複数作業を詰め込まず細かく分割
 8. 同じロールでも異なる観点なら別タスクに分ける
 9. 各タスクに "mode" を指定:
-   - "chat": テキスト生成タスク（デフォルト）
-   - "computer_use": コード実行・テストが必要なタスク
-   - "function_calling": 検索・ファイル読込等の外部ツール利用タスク
+   - "chat": テキスト生成タスク（デフォルト。search, research 等 Web検索ロールもこれ）
+   - "computer_use": コード実行・テストが必要なタスク（coding ロール用）
+   - "function_calling": ローカルファイル検索のみ（file-search ロール専用）
+   ※ search / research ロールは Perplexity が Web 検索するため mode="chat" にすること
 10. "finalRole" を必ず指定:
     - "coder": コードが主な成果物の場合
     - "writer": ドキュメント・文章が主な成果物の場合
@@ -159,7 +160,7 @@ ideaman, search, file-search, research, deep-research, design, image, planning, 
 {
   "tasks": [
     { "role": "ideaman", "mode": "chat", "input": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため" },
-    { "role": "search", "mode": "function_calling", "input": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため" },
+    { "role": "search", "mode": "chat", "input": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため" },
     { "role": "file-search", "mode": "function_calling", "input": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装の把握のため" },
     { "role": "research", "mode": "chat", "input": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため" },
     { "role": "design", "mode": "chat", "input": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2, 3] },
@@ -374,11 +375,18 @@ export async function runAgent(
     throw new Error('Role "leader" not found. Please run db:seed.');
   }
 
-  const leaderAssignment = await prisma.roleAssignment.findFirst({
+  let leaderAssignment = await prisma.roleAssignment.findFirst({
     where: { projectId: req.projectId, roleId: leaderRole.id },
     include: { provider: true },
     orderBy: { priority: "desc" },
   });
+  if (!leaderAssignment) {
+    leaderAssignment = await prisma.roleAssignment.findFirst({
+      where: { roleId: leaderRole.id },
+      include: { provider: true },
+      orderBy: { priority: "desc" },
+    });
+  }
   if (!leaderAssignment) {
     throw new Error(
       'No AI provider assigned to "leader" role in this project.'
@@ -518,11 +526,18 @@ export async function runAgent(
     }
 
     if (!provider) {
-      const assignment = await prisma.roleAssignment.findFirst({
+      let assignment = await prisma.roleAssignment.findFirst({
         where: { projectId: req.projectId, roleId: role.id },
         include: { provider: true },
         orderBy: { priority: "desc" },
       });
+      if (!assignment) {
+        assignment = await prisma.roleAssignment.findFirst({
+          where: { roleId: role.id },
+          include: { provider: true },
+          orderBy: { priority: "desc" },
+        });
+      }
       if (assignment) {
         const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
         const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
@@ -697,11 +712,18 @@ export async function runAgent(
 
     let synthesisProvider: typeof leaderProvider | null = null;
     if (synthesisRole) {
-      const synthesisAssignment = await prisma.roleAssignment.findFirst({
+      let synthesisAssignment = await prisma.roleAssignment.findFirst({
         where: { projectId: req.projectId, roleId: synthesisRole.id },
         include: { provider: true },
         orderBy: { priority: "desc" },
       });
+      if (!synthesisAssignment) {
+        synthesisAssignment = await prisma.roleAssignment.findFirst({
+          where: { roleId: synthesisRole.id },
+          include: { provider: true },
+          orderBy: { priority: "desc" },
+        });
+      }
       if (synthesisAssignment) {
         const synthConfig = synthesisAssignment.config ? JSON.parse(synthesisAssignment.config) : {};
         const synthModelId = (synthConfig.model as string) || synthesisAssignment.provider.modelId;
@@ -709,25 +731,26 @@ export async function runAgent(
       }
     }
 
-    if (synthesisProvider) {
-      const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
-      const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+    if (!synthesisProvider) {
+      synthesisProvider = leaderProvider;
+      logger.warn(`[Synthesis] No provider for "${synthesisRoleSlug}", falling back to leader: ${leaderProvider.displayName}`);
+    }
 
-      log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName}`);
-      const synthesisResult = await executeTask({
-        provider: synthesisProvider,
-        config: { apiKey: synthesisApiKey },
-        input: synthesisInput,
-        role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
-        systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
-      });
+    const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
+    const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
 
-      if (synthesisResult.status === "success") {
-        finalOutput = synthesisResult.output;
-        if (finalRole === "coder") finalCode = synthesisResult.output;
-      } else {
-        finalOutput = successfulOutputs.join("\n\n---\n\n");
-      }
+    log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName}`);
+    const synthesisResult = await executeTask({
+      provider: synthesisProvider,
+      config: { apiKey: synthesisApiKey },
+      input: synthesisInput,
+      role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
+      systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
+    });
+
+    if (synthesisResult.status === "success") {
+      finalOutput = synthesisResult.output;
+      if (finalRole === "coder") finalCode = synthesisResult.output;
     } else {
       finalOutput = successfulOutputs.join("\n\n---\n\n");
     }
@@ -977,11 +1000,18 @@ async function runAgentStreamCore(
     return;
   }
 
-  const leaderAssignment = await prisma.roleAssignment.findFirst({
+  let leaderAssignment = await prisma.roleAssignment.findFirst({
     where: { projectId: req.projectId, roleId: leaderRole.id },
     include: { provider: true },
     orderBy: { priority: "desc" },
   });
+  if (!leaderAssignment) {
+    leaderAssignment = await prisma.roleAssignment.findFirst({
+      where: { roleId: leaderRole.id },
+      include: { provider: true },
+      orderBy: { priority: "desc" },
+    });
+  }
   if (!leaderAssignment) {
     emit({ type: "leader_error", id: nextId(), error: 'No AI provider assigned to "leader" role in this project.' });
     return;
@@ -1161,11 +1191,20 @@ async function runAgentStreamCore(
     }
 
     if (!provider) {
-      const assignment = await prisma.roleAssignment.findFirst({
+      // Try project-specific assignment first
+      let assignment = await prisma.roleAssignment.findFirst({
         where: { projectId: req.projectId, roleId: role.id },
         include: { provider: true },
         orderBy: { priority: "desc" },
       });
+      // Fallback: any assignment for this role
+      if (!assignment) {
+        assignment = await prisma.roleAssignment.findFirst({
+          where: { roleId: role.id },
+          include: { provider: true },
+          orderBy: { priority: "desc" },
+        });
+      }
       if (assignment) {
         const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
         const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
@@ -1401,11 +1440,19 @@ async function runAgentStreamCore(
     } | null = null;
 
     if (synthesisRole) {
-      const synthesisAssignment = await prisma.roleAssignment.findFirst({
+      // Try project-specific assignment first, then any assignment for this role
+      let synthesisAssignment = await prisma.roleAssignment.findFirst({
         where: { projectId: req.projectId, roleId: synthesisRole.id },
         include: { provider: true },
         orderBy: { priority: "desc" },
       });
+      if (!synthesisAssignment) {
+        synthesisAssignment = await prisma.roleAssignment.findFirst({
+          where: { roleId: synthesisRole.id },
+          include: { provider: true },
+          orderBy: { priority: "desc" },
+        });
+      }
       if (synthesisAssignment) {
         const synthConfig = synthesisAssignment.config ? JSON.parse(synthesisAssignment.config) : {};
         const synthModelId = (synthConfig.model as string) || synthesisAssignment.provider.modelId;
@@ -1413,65 +1460,65 @@ async function runAgentStreamCore(
       }
     }
 
-    if (synthesisProvider) {
-      const synthesisApiKey = resolveApiKey(
-        synthesisProvider.name,
-        synthesisProvider.apiType,
-        req.apiKeys,
-        req.authenticated
-      );
+    // Fallback: use the leader provider for synthesis if no dedicated assignment exists
+    if (!synthesisProvider) {
+      synthesisProvider = leaderProvider;
+      logger.warn(`[Synthesis] No provider assigned for role "${synthesisRoleSlug}", falling back to leader provider: ${leaderProvider.displayName}`);
+    }
 
-      const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+    const synthesisApiKey = resolveApiKey(
+      synthesisProvider.name,
+      synthesisProvider.apiType,
+      req.apiKeys,
+      req.authenticated
+    );
 
+    const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+
+    emit({
+      type: "synthesis_start",
+      id: nextId(),
+      role: finalRole,
+      provider: synthesisProvider.displayName,
+      model: synthesisProvider.modelId,
+    });
+
+    const synthStart = Date.now();
+    const synthesisResult = await executeTaskStream(
+      {
+        provider: synthesisProvider,
+        config: { apiKey: synthesisApiKey },
+        input: synthesisInput,
+        role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
+        systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
+      },
+      (text) => emit({ type: "synthesis_chunk", id: nextId(), text })
+    );
+
+    const synthDurationMs = Date.now() - synthStart;
+
+    if (synthesisResult.status === "success") {
+      finalOutput = synthesisResult.output;
       emit({
-        type: "synthesis_start",
+        type: "synthesis_done",
         id: nextId(),
+        output: synthesisResult.output,
+        durationMs: synthDurationMs,
         role: finalRole,
         provider: synthesisProvider.displayName,
         model: synthesisProvider.modelId,
       });
-
-      const synthStart = Date.now();
-      const synthesisResult = await executeTaskStream(
-        {
-          provider: synthesisProvider,
-          config: { apiKey: synthesisApiKey },
-          input: synthesisInput,
-          role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
-          systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
-        },
-        (text) => emit({ type: "synthesis_chunk", id: nextId(), text })
-      );
-
-      const synthDurationMs = Date.now() - synthStart;
-
-      if (synthesisResult.status === "success") {
-        finalOutput = synthesisResult.output;
-        emit({
-          type: "synthesis_done",
-          id: nextId(),
-          output: synthesisResult.output,
-          durationMs: synthDurationMs,
-          role: finalRole,
-          provider: synthesisProvider.displayName,
-          model: synthesisProvider.modelId,
-        });
-      } else {
-        // Synthesis failed — fall back to concatenated outputs
-        finalOutput = successfulOutputs.join("\n\n---\n\n");
-        emit({
-          type: "synthesis_done",
-          id: nextId(),
-          output: finalOutput,
-          durationMs: synthDurationMs,
-          role: finalRole,
-          provider: synthesisProvider.displayName,
-          model: synthesisProvider.modelId,
-        });
-      }
     } else {
-      // No synthesis provider assigned — fall back to concatenated outputs
       finalOutput = successfulOutputs.join("\n\n---\n\n");
+      emit({
+        type: "synthesis_done",
+        id: nextId(),
+        output: finalOutput,
+        durationMs: synthDurationMs,
+        role: finalRole,
+        provider: synthesisProvider.displayName,
+        model: synthesisProvider.modelId,
+      });
     }
   }
 

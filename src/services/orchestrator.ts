@@ -31,18 +31,18 @@ const ROLE_ALIASES: Record<string, string> = {
 // --- Role-Specific Max Tokens (override default 4096) ---
 // OpenAI: max 128k, Anthropic: max 128k, Gemini: max 65k
 const ROLE_MAX_TOKENS: Record<string, number> = {
-  designer: 65536,
-  coder: 65536,
-  coding: 65536,
-  writer: 32768,
-  planner: 32768,
-  planning: 32768,
-  reviewer: 32768,
-  searcher: 16384,
-  researcher: 32768,
-  "deep-research": 65536,
-  "file-searcher": 16384,
-  ideaman: 32768,
+  designer: 32768,
+  coder: 32768,
+  coding: 32768,
+  writer: 16384,
+  planner: 16384,
+  planning: 16384,
+  reviewer: 16384,
+  searcher: 8192,
+  researcher: 16384,
+  "deep-research": 32768,
+  "file-searcher": 8192,
+  ideaman: 16384,
 };
 
 // --- Role-Specific System Prompts ---

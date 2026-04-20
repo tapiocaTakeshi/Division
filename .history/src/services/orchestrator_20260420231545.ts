@@ -48,9 +48,11 @@ const ROLE_MAX_TOKENS: Record<string, number> = {
   coder: 32768,
   writer: 16384,
   planner: 16384,
+  planning: 16384,
   reviewer: 16384,
   searcher: 8192,
   researcher: 16384,
+  "deep-research": 32768,
   "file-searcher": 8192,
   ideaman: 16384,
 };

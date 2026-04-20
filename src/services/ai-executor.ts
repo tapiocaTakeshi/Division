@@ -433,53 +433,58 @@ function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
   }
 }
 
+// --- Tool permissions per role ---
+
+const FILE_SEARCH_TOOLS = new Set(["read_file", "search_files", "list_directory"]);
+const CODER_TOOLS = new Set(["read_file", "write_file", "edit_file", "execute_command"]);
+
 // --- Tool loop system prompts ---
 
-// file-search role: read-only tools for exploring the codebase
-const FILE_SEARCH_AGENT_PROMPT = `You are a file search and code analysis agent.
-Your goal is to explore the codebase, find relevant files, read code, and gather context.
+const SEARCH_AGENT_PROMPT = `You are a file search and retrieval agent.
+Your goal is to gather necessary context from the local filesystem to answer the user's request.
 
-Available tools:
+Available tools (read-only):
 1. read_file: {"path": "...", "startLine": N, "endLine": N} — Read a file with optional line range
 2. search_files: {"query": "...", "directory": ".", "include": "*.ts"} — Search for a pattern in files
-3. list_directory: {"path": "..."} — List directory contents
+3. list_directory: {"path": "..."} — List contents of a directory
 
-Output format — always output a single JSON block:
+If you need to use a tool, output a JSON block in this exact format:
 \`\`\`json
 {
   "tool": "read_file",
   "args": { "path": "src/main.ts" }
 }
 \`\`\`
+Do not output anything else. I will execute the tool and provide the result.
 
-When you have gathered enough information, output:
+If you DO NOT need to use any tools, or you have gathered enough information, output EXACTLY:
 \`\`\`json
 { "done": true }
 \`\`\`
-DO NOT output the final answer. Only output tool JSON or done JSON.`;
+DO NOT output the final answer to the user. Only output the tool JSON or the done JSON.`;
 
-const FILE_SEARCH_TOOLS = new Set(["read_file", "search_files", "list_directory"]);
-
-// coder role: file editing and command execution tools
-const CODER_AGENT_PROMPT = `You are an expert software engineer. You implement code changes and run commands.
+const CODER_AGENT_PROMPT = `You are an expert software engineer. You implement code changes and verify them.
 
 Available tools:
-1. edit_file: {"path": "...", "old_string": "...", "new_string": "..."} — Replace exact text in a file (old_string must be unique in the file)
-2. write_file: {"path": "...", "content": "..."} — Create a new file or overwrite an existing file
-3. execute_command: {"command": "...", "timeout": 30000} — Run a shell command (npm, tsc, git, etc.)
-4. read_file: {"path": "...", "startLine": N, "endLine": N} — Read a file to understand current code before editing
+1. read_file: {"path": "...", "startLine": N, "endLine": N} — Read a file to understand the code before editing
+2. edit_file: {"path": "...", "old_string": "...", "new_string": "..."} — Replace exact text in a file (old_string must be unique in the file)
+3. write_file: {"path": "...", "content": "..."} — Create a NEW file (do NOT use for existing files)
+4. execute_command: {"command": "...", "timeout": 30000} — Run a shell command (npm test, tsc, git diff, etc.)
 
 Workflow:
-1. Read the relevant file(s) to understand current code
-2. Use edit_file to make precise changes (preferred over write_file)
-3. Run execute_command to verify (e.g. "npx tsc --noEmit", "npm test")
-4. Fix any errors and re-verify
+1. Read relevant files to understand the code
+2. Plan your changes
+3. Implement changes using edit_file (preferred) or write_file (new files only)
+4. Verify with execute_command (e.g. "npx tsc --noEmit")
+5. Fix any errors and re-verify
 
 Rules:
-- Use edit_file for modifying existing files. old_string must be an EXACT unique match (including whitespace/indentation)
-- Use write_file ONLY for creating new files
-- Always verify changes with execute_command after editing
-- If edit_file fails (not unique), include more surrounding context in old_string
+- ALWAYS read a file before editing it
+- Use edit_file for modifying existing files — NOT write_file
+- old_string must be an EXACT match (including whitespace and indentation) and must appear exactly once in the file
+- If old_string is not unique, include more surrounding context lines to make it unique
+- After making changes, run verification commands
+- One tool call per response
 
 Output format — always output a single JSON block:
 \`\`\`json
@@ -493,8 +498,6 @@ When ALL changes are complete and verified, output:
 \`\`\`json
 { "done": true, "summary": "Brief description of what was changed" }
 \`\`\``;
-
-const CODER_TOOLS = new Set(["read_file", "write_file", "edit_file", "execute_command"]);
 
 function extractToolJson(output: string): Record<string, unknown> | null {
   try {
@@ -523,25 +526,25 @@ async function gatherToolContext(req: ExecutionRequest): Promise<string> {
   let loopCount = 0;
   const chatHistory = [...(req.chatHistory || [])];
 
-  while (loopCount < 10) {
+  while (loopCount < 5) {
     loopCount++;
     const result = await executeTask({
       provider: req.provider,
       config: req.config,
       input: currentInput,
       role: req.role,
-      systemPrompt: FILE_SEARCH_AGENT_PROMPT,
+      systemPrompt: SEARCH_AGENT_PROMPT,
       chatHistory: chatHistory,
     });
 
     if (result.status === "error") {
-      logger.error("[FileSearch] Provider error: " + (result.errorMsg || "unknown error"));
+      logger.error("[Tool Loop] Provider error: " + (result.errorMsg || "unknown error"));
       break;
     }
 
     const parsed = extractToolJson(result.output);
     if (!parsed) {
-      logger.warn(`[FileSearch] Failed to parse tool call: ${result.output.slice(0, 200)}`);
+      logger.warn(`[Tool Loop] Failed to parse tool call: ${result.output.slice(0, 200)}`);
       break;
     }
 
@@ -551,22 +554,25 @@ async function gatherToolContext(req: ExecutionRequest): Promise<string> {
       const toolName = parsed.tool as string;
 
       if (!FILE_SEARCH_TOOLS.has(toolName)) {
-        logger.warn(`[FileSearch] Tool "${toolName}" not allowed for file-search role`);
+        logger.warn(`[Tool Loop] Tool "${toolName}" not allowed for file-search role`);
         chatHistory.push({ role: "user", content: currentInput });
         chatHistory.push({ role: "assistant", content: result.output });
         currentInput = `Error: Tool "${toolName}" is not available. You can only use: ${[...FILE_SEARCH_TOOLS].join(", ")}. Try again.`;
         continue;
       }
 
-      logger.info(`[FileSearch] Executing tool ${toolName}`);
-      const toolResult = await executeNativeTool(toolName, parsed.args as Record<string, unknown>);
+      logger.info(`[Tool Loop] Executing tool ${toolName}`);
+      const toolResult = await executeNativeTool(
+        toolName,
+        parsed.args as Record<string, unknown>
+      );
 
       toolContext += `### Tool: ${toolName}\nArgs: ${JSON.stringify(parsed.args)}\nResult:\n${toolResult}\n\n`;
       contextAdded = true;
 
       chatHistory.push({ role: "user", content: currentInput });
       chatHistory.push({ role: "assistant", content: result.output });
-      currentInput = `Tool Result for ${toolName}:\n${toolResult.slice(0, 15000)}\n\nWhat other tool do you need? (Or output {"done": true})`;
+      currentInput = `Tool Result for ${toolName}:\n${toolResult.slice(0, 10000)}\n\nWhat other tool do you need? (Or output {"done": true})`;
     } else {
       break;
     }
@@ -644,7 +650,7 @@ export async function executeCoderLoop(
       const toolArgs = parsed.args as Record<string, unknown>;
 
       if (!CODER_TOOLS.has(toolName)) {
-        log(`Tool "${toolName}" not allowed for coder role. Allowed: ${[...CODER_TOOLS].join(", ")}`);
+        log(`Tool "${toolName}" not allowed for coder role`);
         chatHistory.push({ role: "user", content: currentInput });
         chatHistory.push({ role: "assistant", content: result.output });
         currentInput = `Error: Tool "${toolName}" is not available. You can only use: ${[...CODER_TOOLS].join(", ")}. Try again.`;
@@ -695,7 +701,7 @@ export async function executeTaskStream(
   // For function_calling mode, perform an implicit multi-turn tool calling loop to gather file context
   // before running the final streaming generation.
   let enrichedInput = req.input;
-  if (req.mode === "function_calling" || req.role.slug === "search" || req.role.slug === "file-search") {
+  if (req.mode === "function_calling" || req.role.slug === "search") {
     try {
       enrichedInput = await gatherToolContext(req);
     } catch (err) {

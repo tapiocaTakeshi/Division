@@ -210,6 +210,16 @@ function buildRequestBody(
       }
     }
     messages.push({ role: "user", content: input });
+
+    // Opus 4.7+ uses "adaptive" thinking; older models use "enabled"
+    const useAdaptive = /opus-4|claude-4/.test(resolvedModelId);
+    const thinkingConfig = useAdaptive
+      ? { type: "adaptive" as const }
+      : {
+          type: "enabled" as const,
+          budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.5), 1024), 32768),
+        };
+
     return {
       url: resolvedEndpoint,
       headers: {
@@ -222,10 +232,7 @@ function buildRequestBody(
         max_tokens: maxTokens,
         system: systemPrompt,
         messages,
-        thinking: {
-          type: "enabled",
-          budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.5), 1024), 32768),
-        },
+        thinking: thinkingConfig,
       },
     };
   }

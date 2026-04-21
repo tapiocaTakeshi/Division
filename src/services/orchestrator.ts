@@ -112,6 +112,8 @@ export interface OrchestratorRequest {
   authenticated?: boolean;
   /** Clerk user ID for credit tracking */
   userId?: string;
+  /** Absolute path to the user's workspace for file-search / coder tools */
+  workspacePath?: string;
 }
 
 export interface OrchestratorResult {
@@ -612,6 +614,7 @@ export async function runAgent(
             input: enrichedInput,
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
+            workspacePath: req.workspacePath,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (msg) => log(`  [coder] ${msg.trim()}`)
@@ -622,6 +625,7 @@ export async function runAgent(
           input: enrichedInput,
           role: { slug: role.slug, name: role.name },
           mode: task.mode,
+          workspacePath: req.workspacePath,
           ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
         });
 
@@ -1294,6 +1298,7 @@ async function runAgentStreamCore(
             input: enrichedInput,
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
+            workspacePath: req.workspacePath,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (msg) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text: msg })
@@ -1305,6 +1310,7 @@ async function runAgentStreamCore(
             input: enrichedInput,
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
+            workspacePath: req.workspacePath,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),

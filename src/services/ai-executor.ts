@@ -31,6 +31,8 @@ export interface ExecutionRequest {
   systemPrompt?: string;
   /** Chat history to provide context to the AI (previous user/assistant messages) */
   chatHistory?: ChatMessage[];
+  /** Override workspace root for file-search / coder tools (absolute path on the host) */
+  workspacePath?: string;
 }
 
 export interface ExecutionResult {
@@ -552,15 +554,17 @@ function extractToolJson(output: string): Record<string, unknown> | null {
 }
 
 async function gatherToolContext(req: ExecutionRequest): Promise<string> {
+  const ws = req.workspacePath;
   let toolContext = "## ファイル検索結果（自動収集）\n\n";
+  if (ws) toolContext += `ワークスペース: ${ws}\n\n`;
 
   // Step 1: Always start by listing the root directory to give AI project structure
-  logger.info("[Tool Loop] Auto-listing workspace root");
-  const rootListing = await executeNativeTool("list_directory", { path: "." });
+  logger.info(`[Tool Loop] Auto-listing workspace root${ws ? ` (${ws})` : ""}`);
+  const rootListing = await executeNativeTool("list_directory", { path: "." }, ws);
   toolContext += `### ワークスペース構造\n${rootListing}\n\n`;
 
   // Also list src/ if it exists
-  const srcListing = await executeNativeTool("list_directory", { path: "src" });
+  const srcListing = await executeNativeTool("list_directory", { path: "src" }, ws);
   if (!srcListing.startsWith("Error:")) {
     toolContext += `### src/ 構造\n${srcListing}\n\n`;
   }
@@ -654,7 +658,7 @@ search_files の query にはコード上のキーワード（関数名、変数
       }
 
       logger.info(`[Tool Loop] Executing: ${toolName}(${JSON.stringify(parsed.args).slice(0, 100)})`);
-      const toolResult = await executeNativeTool(toolName, parsed.args as Record<string, unknown>);
+      const toolResult = await executeNativeTool(toolName, parsed.args as Record<string, unknown>, ws);
 
       toolContext += `### ${toolName}\nArgs: ${JSON.stringify(parsed.args)}\nResult:\n${toolResult}\n\n`;
 
@@ -744,7 +748,7 @@ export async function executeCoderLoop(
 
       log(`Tool: ${toolName} → ${JSON.stringify(toolArgs).slice(0, 200)}`);
 
-      const toolResult = await executeNativeTool(toolName, toolArgs);
+      const toolResult = await executeNativeTool(toolName, toolArgs, req.workspacePath);
       const truncatedResult = toolResult.length > 40000 ? toolResult.slice(0, 40000) + "\n...[truncated]" : toolResult;
       log(`Result: ${truncatedResult.slice(0, 300)}${truncatedResult.length > 300 ? "..." : ""}`);
 

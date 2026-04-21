@@ -16,6 +16,8 @@ const agentRunSchema = z.object({
     role: z.enum(["user", "assistant"]),
     content: z.string(),
   })).optional(),
+  /** Absolute path to user's workspace for file-search / coder tools */
+  workspacePath: z.string().optional(),
 });
 
 const agentStreamSchema = agentRunSchema.extend({

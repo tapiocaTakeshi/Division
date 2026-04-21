@@ -46,6 +46,11 @@ const TOOLS = [
           description:
             "Division API Key (e.g. ak_...). Required to authenticate the request.",
         },
+        workspacePath: {
+          type: "string",
+          description:
+            "Absolute path to user's workspace for file-search and coder tools (e.g. /Users/me/project)",
+        },
       },
       required: ["input"],
     },
@@ -85,6 +90,11 @@ const TOOLS = [
           type: "string",
           description:
             "Division API Key (e.g. ak_...). Required to authenticate the request.",
+        },
+        workspacePath: {
+          type: "string",
+          description:
+            "Absolute path to user's workspace for file-search and coder tools (e.g. /Users/me/project)",
         },
       },
       required: ["input"],
@@ -181,11 +191,13 @@ async function handleDivisionRun(args: Record<string, unknown>, authenticated: b
   const projectId = (args.projectId as string) || "demo-project-001";
   const overrides = args.overrides as Record<string, string> | undefined;
   const divisionApiKey = args.divisionApiKey as string | undefined;
+  const workspacePath = args.workspacePath as string | undefined;
 
-  const request: { projectId: string; input: string; overrides?: Record<string, string>; divisionApiKey?: string; authenticated?: boolean } = {
+  const request: { projectId: string; input: string; overrides?: Record<string, string>; divisionApiKey?: string; authenticated?: boolean; workspacePath?: string } = {
     projectId,
     input,
     authenticated,
+    workspacePath,
   };
   if (overrides && Object.keys(overrides).length > 0) {
     request.overrides = overrides;
@@ -307,11 +319,13 @@ async function handleDivisionStream(args: Record<string, unknown>, authenticated
   const projectId = (args.projectId as string) || "demo-project-001";
   const overrides = args.overrides as Record<string, string> | undefined;
   const divisionApiKey = args.divisionApiKey as string | undefined;
+  const workspacePath = args.workspacePath as string | undefined;
 
-  const request: { projectId: string; input: string; overrides?: Record<string, string>; divisionApiKey?: string; authenticated?: boolean } = {
+  const request: { projectId: string; input: string; overrides?: Record<string, string>; divisionApiKey?: string; authenticated?: boolean; workspacePath?: string } = {
     projectId,
     input,
     authenticated,
+    workspacePath,
   };
   if (overrides && Object.keys(overrides).length > 0) {
     request.overrides = overrides;

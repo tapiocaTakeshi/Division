@@ -7,15 +7,15 @@ import { logger } from "../utils/logger";
 const execFileAsync = util.promisify(execFile);
 const execAsync = util.promisify(exec);
 
-const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || process.cwd();
+const DEFAULT_WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || process.cwd();
 
-function resolvePath(p: string): string {
-  return path.resolve(WORKSPACE_ROOT, p);
+function resolvePath(p: string, root: string): string {
+  return path.resolve(root, p);
 }
 
-function isPathSafe(p: string): boolean {
-  const resolved = resolvePath(p);
-  return resolved.startsWith(WORKSPACE_ROOT) || resolved.startsWith("/tmp/") || resolved === "/tmp";
+function isPathSafe(p: string, root: string): boolean {
+  const resolved = resolvePath(p, root);
+  return resolved.startsWith(root) || resolved.startsWith("/tmp/") || resolved === "/tmp";
 }
 
 export const NATIVE_TOOLS = [
@@ -127,12 +127,13 @@ function isCommandSafe(cmd: string): boolean {
   return !BLOCKED_COMMANDS.some((re) => re.test(cmd));
 }
 
-export async function executeNativeTool(name: string, args: Record<string, unknown>): Promise<string> {
+export async function executeNativeTool(name: string, args: Record<string, unknown>, workspaceRoot?: string): Promise<string> {
+  const root = workspaceRoot || DEFAULT_WORKSPACE_ROOT;
   try {
     switch (name) {
       case "read_file": {
-        const filePath = resolvePath(args.path as string);
-        if (!isPathSafe(filePath)) return "Error: Path is outside workspace";
+        const filePath = resolvePath(args.path as string, root);
+        if (!isPathSafe(args.path as string, root)) return "Error: Path is outside workspace";
         if (!fs.existsSync(filePath)) return `Error: File not found: ${args.path}`;
 
         const stat = fs.statSync(filePath);
@@ -154,8 +155,8 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
       }
 
       case "write_file": {
-        const filePath = resolvePath(args.path as string);
-        if (!isPathSafe(filePath)) return "Error: Path is outside workspace";
+        const filePath = resolvePath(args.path as string, root);
+        if (!isPathSafe(args.path as string, root)) return "Error: Path is outside workspace";
 
         const dir = path.dirname(filePath);
         if (!fs.existsSync(dir)) {
@@ -168,8 +169,8 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
       }
 
       case "edit_file": {
-        const filePath = resolvePath(args.path as string);
-        if (!isPathSafe(filePath)) return "Error: Path is outside workspace";
+        const filePath = resolvePath(args.path as string, root);
+        if (!isPathSafe(args.path as string, root)) return "Error: Path is outside workspace";
         if (!fs.existsSync(filePath)) return `Error: File not found: ${args.path}`;
 
         const content = fs.readFileSync(filePath, "utf-8");
@@ -199,7 +200,7 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
 
         try {
           const { stdout, stderr } = await execAsync(cmd, {
-            cwd: WORKSPACE_ROOT,
+            cwd: root,
             timeout: timeoutMs,
             maxBuffer: 1024 * 1024 * 5,
             env: { ...process.env, FORCE_COLOR: "0" },
@@ -226,8 +227,8 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
 
       case "search_files": {
         if (!args.query) return "Error: query is required";
-        const dir = args.directory ? resolvePath(args.directory as string) : WORKSPACE_ROOT;
-        if (!isPathSafe(dir)) return "Error: Path is outside workspace";
+        const dir = args.directory ? resolvePath(args.directory as string, root) : root;
+        if (!isPathSafe(args.directory as string || ".", root)) return "Error: Path is outside workspace";
 
         const grepArgs = ["-RnI", "--color=never"];
         if (args.include) grepArgs.push(`--include=${args.include}`);
@@ -249,8 +250,8 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
       }
 
       case "list_directory": {
-        const dirPath = resolvePath(args.path as string);
-        if (!isPathSafe(dirPath)) return "Error: Path is outside workspace";
+        const dirPath = resolvePath(args.path as string, root);
+        if (!isPathSafe(args.path as string, root)) return "Error: Path is outside workspace";
         if (!fs.existsSync(dirPath)) return `Error: Directory not found: ${args.path}`;
 
         const stat = fs.statSync(dirPath);

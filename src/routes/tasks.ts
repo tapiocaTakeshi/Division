@@ -12,6 +12,7 @@ const executeTaskSchema = z.object({
   input: z.string().min(1),
   config: z.record(z.unknown()).optional(),
   stream: z.boolean().optional(),
+  workspacePath: z.string().optional(),
 });
 
 const ROLE_MAX_TOKENS: Record<string, number> = {
@@ -66,7 +67,7 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
     return;
   }
 
-  const { projectId, roleSlug, input, config } = parsed.data;
+  const { projectId, roleSlug, input, config, workspacePath } = parsed.data;
 
   // Find the role by slug (supports aliases for backward compatibility)
   const role = await resolveRole(roleSlug);
@@ -116,6 +117,7 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
     config: mergedConfig,
     input,
     role: { slug: role.slug, name: role.name },
+    workspacePath,
   };
 
   // Streaming mode

@@ -14,18 +14,6 @@ import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
 import { recordUsage, estimateTokens } from "./credits";
 
-/** Provider shape used throughout the orchestrator (apiEndpoint is optional for Prisma compat) */
-interface OrchestratorProvider {
-  id: string;
-  name: string;
-  displayName: string;
-  apiBaseUrl: string;
-  apiType: string;
-  apiEndpoint?: string;
-  modelId: string;
-  isEnabled: boolean;
-}
-
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
   "deep-research": "researcher",
@@ -46,11 +34,14 @@ const ROLE_ALIASES: Record<string, string> = {
 const ROLE_MAX_TOKENS: Record<string, number> = {
   designer: 32768,
   coder: 32768,
+  coding: 32768,
   writer: 16384,
   planner: 16384,
+  planning: 16384,
   reviewer: 16384,
   searcher: 8192,
   researcher: 16384,
+  "deep-research": 32768,
   "file-searcher": 8192,
   ideaman: 16384,
 };
@@ -63,36 +54,6 @@ const ROLE_SYNTHESIS_MAX_TOKENS: Record<string, number> = {
   coder: 65536,
   writer: 65536,
 };
-
-/**
- * Truncate each agent output so the combined synthesis input stays within
- * a safe character budget (~400k chars ≈ ~100k tokens). Longest outputs
- * are trimmed first while shorter ones are kept intact.
- */
-const MAX_SYNTHESIS_CHARS = 400_000;
-
-function buildSynthesisInput(
-  userRequest: string,
-  agentOutputs: string[],
-): string {
-  const header = `## ユーザーの元のリクエスト:\n${userRequest}\n\n## 各エージェントの作業結果:\n`;
-  const headerLen = header.length;
-  const budget = MAX_SYNTHESIS_CHARS - headerLen;
-
-  const totalLen = agentOutputs.reduce((s, o) => s + o.length, 0);
-  if (totalLen <= budget) {
-    return header + agentOutputs.join("\n\n");
-  }
-
-  const perAgent = Math.floor(budget / agentOutputs.length);
-  const truncated = agentOutputs.map((o) => {
-    if (o.length <= perAgent) return o;
-    return o.slice(0, perAgent) + "\n\n...[出力が長いため省略されました]";
-  });
-
-  logger.warn(`[Synthesis] Input truncated: ${totalLen} → ${truncated.reduce((s, o) => s + o.length, 0)} chars`);
-  return header + truncated.join("\n\n");
-}
 
 // --- Role-Specific System Prompts ---
 const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
@@ -453,7 +414,7 @@ export async function runAgent(
   // Resolve model: config.model overrides provider.modelId
   const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
   const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
-  const leaderProvider: OrchestratorProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
+  const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
 
   const leaderApiKey = resolveApiKey(
     leaderAssignment.provider.name,
@@ -561,7 +522,16 @@ export async function runAgent(
     taskRoleNames[i] = role.name;
 
     // Find assignment (check overrides first, then DB)
-    let provider: OrchestratorProvider | null = null;
+    let provider: {
+      id: string;
+      name: string;
+      displayName: string;
+      apiBaseUrl: string;
+      apiType: string;
+      apiEndpoint: string;
+      modelId: string;
+      isEnabled: boolean;
+    } | null = null;
 
     const overrideProviderName = req.overrides?.[task.role];
     if (overrideProviderName) {
@@ -758,7 +728,7 @@ export async function runAgent(
     const synthesisRoleSlug = normalizeRoleSlug(finalRole);
     const synthesisRole = await prisma.role.findUnique({ where: { slug: synthesisRoleSlug } });
 
-    let synthesisProvider: OrchestratorProvider | null = null;
+    let synthesisProvider: typeof leaderProvider | null = null;
     if (synthesisRole) {
       let synthesisAssignment = await prisma.roleAssignment.findFirst({
         where: { projectId: req.projectId, roleId: synthesisRole.id },
@@ -785,9 +755,9 @@ export async function runAgent(
     }
 
     const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
-    const synthesisInput = buildSynthesisInput(req.input, successfulOutputs);
+    const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
 
-    log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName} (input: ${synthesisInput.length} chars)`);
+    log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName}`);
     const synthesisMaxTokens = ROLE_SYNTHESIS_MAX_TOKENS[synthesisRoleSlug];
     const synthesisResult = await executeTask({
       provider: synthesisProvider,
@@ -1069,7 +1039,7 @@ async function runAgentStreamCore(
   // Resolve model: config.model overrides provider.modelId
   const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
   const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
-  const leaderProvider: OrchestratorProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
+  const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
 
   const leaderApiKey = resolveApiKey(
     leaderAssignment.provider.name,
@@ -1218,7 +1188,16 @@ async function runAgentStreamCore(
     taskRoleNames[i] = role.name;
 
     // Find provider (check overrides first, then DB)
-    let provider: OrchestratorProvider | null = null;
+    let provider: {
+      id: string;
+      name: string;
+      displayName: string;
+      apiBaseUrl: string;
+      apiType: string;
+      apiEndpoint: string;
+      modelId: string;
+      isEnabled: boolean;
+    } | null = null;
 
     const overrideProviderName = req.overrides?.[task.role];
     if (overrideProviderName) {
@@ -1468,7 +1447,16 @@ async function runAgentStreamCore(
       where: { slug: synthesisRoleSlug },
     });
 
-    let synthesisProvider: OrchestratorProvider | null = null;
+    let synthesisProvider: {
+      id: string;
+      name: string;
+      displayName: string;
+      apiBaseUrl: string;
+      apiType: string;
+      apiEndpoint: string;
+      modelId: string;
+      isEnabled: boolean;
+    } | null = null;
 
     if (synthesisRole) {
       // Try project-specific assignment first, then any assignment for this role
@@ -1504,7 +1492,7 @@ async function runAgentStreamCore(
       req.authenticated
     );
 
-    const synthesisInput = buildSynthesisInput(req.input, successfulOutputs);
+    const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
 
     emit({
       type: "synthesis_start",

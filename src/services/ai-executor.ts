@@ -447,28 +447,46 @@ const CODER_TOOLS = new Set(["read_file", "write_file", "edit_file", "execute_co
 
 // --- Tool loop system prompts ---
 
-const SEARCH_AGENT_PROMPT = `You are a file search and retrieval agent.
-Your goal is to gather necessary context from the local filesystem to answer the user's request.
+const SEARCH_AGENT_PROMPT = `あなたはファイル検索・コード解析エージェントです。
+ユーザーのリクエストに答えるため、ローカルファイルシステムから必要な情報を収集してください。
 
-Available tools (read-only):
-1. read_file: {"path": "...", "startLine": N, "endLine": N} — Read a file with optional line range
-2. search_files: {"query": "...", "directory": ".", "include": "*.ts"} — Search for a pattern in files
-3. list_directory: {"path": "..."} — List contents of a directory
+## 環境
+- Vercel サーバーレス環境で動作しています
+- ソースファイルはコンパイル済み JavaScript (.js) です
+- "find" コマンドは使えません。"ls" を使ってください
+- ワークスペースルートは現在の作業ディレクトリです
 
-If you need to use a tool, output a JSON block in this exact format:
+## 利用可能なツール（読み取り専用）
+1. list_directory: {"path": "."} — ディレクトリの内容を一覧表示（まずこれで構造を把握）
+2. read_file: {"path": "...", "startLine": N, "endLine": N} — ファイルを読み取り（行範囲指定可）
+3. search_files: {"query": "...", "directory": ".", "include": "*.js"} — パターンでファイル内を検索
+
+## 手順
+1. まず list_directory でプロジェクト構造を把握する
+2. 関連しそうなディレクトリを深堀りする
+3. search_files でキーワード検索する
+4. 見つかったファイルを read_file で読む
+5. 十分な情報が集まったら完了を出力
+
+## 出力形式 — 必ず以下のJSON形式のみ出力:
+
+ツールを使う場合:
 \`\`\`json
 {
-  "tool": "read_file",
-  "args": { "path": "src/main.ts" }
+  "tool": "list_directory",
+  "args": { "path": "." }
 }
 \`\`\`
-Do not output anything else. I will execute the tool and provide the result.
 
-If you DO NOT need to use any tools, or you have gathered enough information, output EXACTLY:
+情報収集が完了した場合:
 \`\`\`json
 { "done": true }
 \`\`\`
-DO NOT output the final answer to the user. Only output the tool JSON or the done JSON.`;
+
+ルール:
+- 1回のレスポンスで1つのツールのみ
+- ツールJSON以外のテキストは出力しない
+- まず list_directory で構造を把握してから他のツールを使う`;
 
 const CODER_AGENT_PROMPT = `You are an expert software engineer. You implement code changes and verify them.
 
@@ -534,32 +552,91 @@ function extractToolJson(output: string): Record<string, unknown> | null {
 }
 
 async function gatherToolContext(req: ExecutionRequest): Promise<string> {
-  let contextAdded = false;
-  let currentInput = req.input;
-  let toolContext = "## Tool Results (Context gathered automatically before your generation)\n\n";
+  let toolContext = "## ファイル検索結果（自動収集）\n\n";
 
+  // Step 1: Always start by listing the root directory to give AI project structure
+  logger.info("[Tool Loop] Auto-listing workspace root");
+  const rootListing = await executeNativeTool("list_directory", { path: "." });
+  toolContext += `### ワークスペース構造\n${rootListing}\n\n`;
+
+  // Also list src/ if it exists
+  const srcListing = await executeNativeTool("list_directory", { path: "src" });
+  if (!srcListing.startsWith("Error:")) {
+    toolContext += `### src/ 構造\n${srcListing}\n\n`;
+  }
+
+  // Step 2: AI-driven tool loop for deeper exploration
   let loopCount = 0;
-  const chatHistory = [...(req.chatHistory || [])];
+  const chatHistory: ChatMessage[] = [];
+  let currentInput = `以下のプロジェクト構造を参考に、ユーザーのリクエストに関連するファイルを調査してください。
 
-  while (loopCount < 5) {
+## プロジェクト構造
+${rootListing}
+${!srcListing.startsWith("Error:") ? `\n## src/ 構造\n${srcListing}` : ""}
+
+## ユーザーのリクエスト
+${req.input}
+
+関連するファイルを list_directory, search_files, read_file で調査してください。
+search_files の query にはコード上のキーワード（関数名、変数名、import文等）を英語で指定してください。日本語テキストでの検索は避けてください。`;
+
+  const MAX_LOOPS = 8;
+
+  while (loopCount < MAX_LOOPS) {
     loopCount++;
-    const result = await executeTask({
-      provider: req.provider,
-      config: req.config,
-      input: currentInput,
-      role: req.role,
-      systemPrompt: SEARCH_AGENT_PROMPT,
-      chatHistory: chatHistory,
-    });
 
-    if (result.status === "error") {
-      logger.error("[Tool Loop] Provider error: " + (result.errorMsg || "unknown error"));
+    // Call AI without triggering recursive gatherToolContext
+    const systemPrompt = req.systemPrompt || SEARCH_AGENT_PROMPT;
+    const modelId = (req.config?.model as string) || req.provider.modelId;
+    const requestSpec = buildRequestBody(
+      req.provider.apiType,
+      modelId,
+      currentInput,
+      systemPrompt,
+      req.config || undefined,
+      chatHistory,
+      req.provider.apiEndpoint
+    );
+
+    if (!requestSpec) break;
+
+    const apiKey = resolveApiKeyFromConfig(req.config, req.provider.apiType);
+    if (!apiKey) break;
+
+    // Set API key in headers
+    if (req.provider.apiType === "anthropic") {
+      requestSpec.headers["x-api-key"] = apiKey;
+    } else if (req.provider.apiType === "google") {
+      requestSpec.headers["x-goog-api-key"] = apiKey;
+    } else {
+      requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+
+    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[req.provider.apiType] || "";
+    const fullUrl = `${baseUrl}${requestSpec.url}`;
+
+    let result: { output: string; status: string };
+    try {
+      const response = await fetch(fullUrl, {
+        method: "POST",
+        headers: requestSpec.headers,
+        body: JSON.stringify(requestSpec.body),
+      });
+      if (!response.ok) {
+        logger.error(`[Tool Loop] API error ${response.status}`);
+        break;
+      }
+      const data = await response.json();
+      const parsed = parseResponse(req.provider.apiType, data);
+      result = { output: parsed.output, status: "success" };
+    } catch (err) {
+      logger.error("[Tool Loop] Fetch error", err);
       break;
     }
 
     const parsed = extractToolJson(result.output);
     if (!parsed) {
-      logger.warn(`[Tool Loop] Failed to parse tool call: ${result.output.slice(0, 200)}`);
+      logger.warn(`[Tool Loop] Failed to parse tool call (iter ${loopCount}): ${result.output.slice(0, 200)}`);
       break;
     }
 
@@ -569,34 +646,27 @@ async function gatherToolContext(req: ExecutionRequest): Promise<string> {
       const toolName = parsed.tool as string;
 
       if (!FILE_SEARCH_TOOLS.has(toolName)) {
-        logger.warn(`[Tool Loop] Tool "${toolName}" not allowed for file-searcher role`);
+        logger.warn(`[Tool Loop] Tool "${toolName}" not allowed`);
         chatHistory.push({ role: "user", content: currentInput });
         chatHistory.push({ role: "assistant", content: result.output });
-        currentInput = `Error: Tool "${toolName}" is not available. You can only use: ${[...FILE_SEARCH_TOOLS].join(", ")}. Try again.`;
+        currentInput = `Error: Tool "${toolName}" は使えません。使えるツール: ${[...FILE_SEARCH_TOOLS].join(", ")}`;
         continue;
       }
 
-      logger.info(`[Tool Loop] Executing tool ${toolName}`);
-      const toolResult = await executeNativeTool(
-        toolName,
-        parsed.args as Record<string, unknown>
-      );
+      logger.info(`[Tool Loop] Executing: ${toolName}(${JSON.stringify(parsed.args).slice(0, 100)})`);
+      const toolResult = await executeNativeTool(toolName, parsed.args as Record<string, unknown>);
 
-      toolContext += `### Tool: ${toolName}\nArgs: ${JSON.stringify(parsed.args)}\nResult:\n${toolResult}\n\n`;
-      contextAdded = true;
+      toolContext += `### ${toolName}\nArgs: ${JSON.stringify(parsed.args)}\nResult:\n${toolResult}\n\n`;
 
       chatHistory.push({ role: "user", content: currentInput });
       chatHistory.push({ role: "assistant", content: result.output });
-      currentInput = `Tool Result for ${toolName}:\n${toolResult.slice(0, 10000)}\n\nWhat other tool do you need? (Or output {"done": true})`;
+      currentInput = `ツール実行結果 (${toolName}):\n${toolResult.slice(0, 10000)}\n\n他に調査が必要なら次のツールを指定してください。十分なら {"done": true} を出力してください。`;
     } else {
       break;
     }
   }
 
-  if (contextAdded) {
-    return `${toolContext}\n\n## User Request:\n${req.input}`;
-  }
-  return req.input;
+  return `${toolContext}\n\n## ユーザーのリクエスト:\n${req.input}`;
 }
 
 /**
@@ -899,6 +969,16 @@ export async function executeTaskStream(
 export async function executeTask(req: ExecutionRequest): Promise<ExecutionResult> {
   const start = Date.now();
 
+  // For file-searcher role, gather context via tool loop first
+  let enrichedInput = req.input;
+  if (req.role.slug === "file-searcher") {
+    try {
+      enrichedInput = await gatherToolContext(req);
+    } catch (err) {
+      logger.error("[AI Executor] Error in gatherToolContext (non-stream)", err);
+    }
+  }
+
   const systemPrompt =
     req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
 
@@ -906,7 +986,7 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   const requestSpec = buildRequestBody(
     req.provider.apiType,
     modelId,
-    req.input,
+    enrichedInput,
     systemPrompt,
     req.config || undefined,
     req.chatHistory,

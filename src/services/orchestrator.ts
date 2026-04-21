@@ -530,7 +530,7 @@ export async function runAgent(
       displayName: string;
       apiBaseUrl: string;
       apiType: string;
-      apiEndpoint: string;
+      apiEndpoint?: string;
       modelId: string;
       isEnabled: boolean;
     } | null = null;
@@ -1198,7 +1198,7 @@ async function runAgentStreamCore(
       displayName: string;
       apiBaseUrl: string;
       apiType: string;
-      apiEndpoint: string;
+      apiEndpoint?: string;
       modelId: string;
       isEnabled: boolean;
     } | null = null;
@@ -1459,7 +1459,7 @@ async function runAgentStreamCore(
       displayName: string;
       apiBaseUrl: string;
       apiType: string;
-      apiEndpoint: string;
+      apiEndpoint?: string;
       modelId: string;
       isEnabled: boolean;
     } | null = null;

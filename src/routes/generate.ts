@@ -38,6 +38,7 @@ const generateSchema = z.object({
   systemPrompt: z.string().optional(),
   maxTokens: z.number().int().positive().optional(),
   apiKeys: z.record(z.string()).optional(),
+  workspacePath: z.string().optional(),
 });
 
 /**
@@ -81,7 +82,7 @@ generateRouter.post(
       return;
     }
 
-    const { provider: providerName, input, systemPrompt, maxTokens, apiKeys } = parsed.data;
+    const { provider: providerName, input, systemPrompt, maxTokens, apiKeys, workspacePath } = parsed.data;
     const authenticated = !!res.locals.authenticated;
 
     const provider = await prisma.provider.findUnique({ where: { name: providerName } });
@@ -102,6 +103,7 @@ generateRouter.post(
       input,
       role: { slug: "generate", name: "Generate" },
       systemPrompt,
+      workspacePath,
     });
 
     let costUsd: number | undefined;
@@ -152,7 +154,7 @@ generateRouter.post(
       return;
     }
 
-    const { provider: providerName, input, systemPrompt, maxTokens, apiKeys } = parsed.data;
+    const { provider: providerName, input, systemPrompt, maxTokens, apiKeys, workspacePath } = parsed.data;
     const authenticated = !!res.locals.authenticated;
 
     const provider = await prisma.provider.findUnique({ where: { name: providerName } });
@@ -203,6 +205,7 @@ generateRouter.post(
           input,
           role: { slug: "generate", name: "Generate" },
           systemPrompt,
+          workspacePath,
         },
         (text) => sendEvent("chunk", { type: "chunk", text }),
         (text) => sendEvent("thinking", { type: "thinking", text })

@@ -151,7 +151,7 @@ taskCreateRouter.post(
       return;
     }
 
-    const { projectId, input, apiKeys, chatHistory } = parsed.data;
+    const { projectId, input, apiKeys, chatHistory, workspacePath } = parsed.data;
 
     // Verify project exists
     const project = await prisma.project.findUnique({

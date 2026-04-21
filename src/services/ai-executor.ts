@@ -553,17 +553,37 @@ function extractToolJson(output: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Check if a workspace path is accessible on this machine.
+ */
+function isWorkspaceAccessible(ws: string | undefined): boolean {
+  if (!ws) return false;
+  try {
+    const fs = require("fs");
+    return fs.existsSync(ws) && fs.statSync(ws).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function gatherToolContext(req: ExecutionRequest): Promise<string> {
   const ws = req.workspacePath;
-  let toolContext = "## ファイル検索結果（自動収集）\n\n";
-  if (ws) toolContext += `ワークスペース: ${ws}\n\n`;
+  const canAccessWorkspace = isWorkspaceAccessible(ws);
 
-  // Step 1: Always start by listing the root directory to give AI project structure
-  logger.info(`[Tool Loop] Auto-listing workspace root${ws ? ` (${ws})` : ""}`);
+  // If workspace is not accessible (e.g., API runs on Vercel, path is local),
+  // skip tool loop and return the input as-is so the AI responds analytically.
+  if (!canAccessWorkspace) {
+    logger.info(`[Tool Loop] Workspace not accessible${ws ? ` (${ws})` : " (no workspacePath)"}, skipping tool loop`);
+    return req.input;
+  }
+
+  let toolContext = `## ファイル検索結果（自動収集）\nワークスペース: ${ws}\n\n`;
+
+  // Step 1: List root directory structure
+  logger.info(`[Tool Loop] Auto-listing workspace root (${ws})`);
   const rootListing = await executeNativeTool("list_directory", { path: "." }, ws);
   toolContext += `### ワークスペース構造\n${rootListing}\n\n`;
 
-  // Also list src/ if it exists
   const srcListing = await executeNativeTool("list_directory", { path: "src" }, ws);
   if (!srcListing.startsWith("Error:")) {
     toolContext += `### src/ 構造\n${srcListing}\n\n`;
@@ -589,7 +609,6 @@ search_files の query にはコード上のキーワード（関数名、変数
   while (loopCount < MAX_LOOPS) {
     loopCount++;
 
-    // Call AI without triggering recursive gatherToolContext
     const systemPrompt = req.systemPrompt || SEARCH_AGENT_PROMPT;
     const modelId = (req.config?.model as string) || req.provider.modelId;
     const requestSpec = buildRequestBody(
@@ -607,7 +626,6 @@ search_files の query にはコード上のキーワード（関数名、変数
     const apiKey = resolveApiKeyFromConfig(req.config, req.provider.apiType);
     if (!apiKey) break;
 
-    // Set API key in headers
     if (req.provider.apiType === "anthropic") {
       requestSpec.headers["x-api-key"] = apiKey;
     } else if (req.provider.apiType === "google") {

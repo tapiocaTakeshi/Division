@@ -445,7 +445,7 @@ function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
 // --- Tool permissions per role ---
 
 const FILE_SEARCH_TOOLS = new Set(["read_file", "search_files", "list_directory"]);
-const CODER_TOOLS = new Set(["read_file", "write_file", "edit_file", "execute_command"]);
+const CODER_TOOLS = new Set(["read_file", "write_file", "edit_file", "execute_command", "list_directory", "search_files"]);
 
 // --- Tool loop system prompts ---
 
@@ -490,7 +490,7 @@ const SEARCH_AGENT_PROMPT = `あなたはファイル検索・コード解析エ
 - ツールJSON以外のテキストは出力しない
 - まず list_directory で構造を把握してから他のツールを使う`;
 
-const CODER_AGENT_PROMPT = `You are an expert software engineer. You implement code changes and verify them.
+const CODER_AGENT_PROMPT_REMOTE = `You are an expert software engineer. You implement code changes and verify them.
 
 ## Environment
 You are running inside a serverless (Vercel) environment. Key constraints:
@@ -533,6 +533,54 @@ When ALL work is complete, output:
 \`\`\`json
 { "done": true, "summary": "Brief description of what was done/generated" }
 \`\`\``;
+
+const CODER_AGENT_PROMPT_LOCAL = `あなたは優秀なソフトウェアエンジニアです。既存プロジェクトのコードを理解し、修正・追加を行います。
+
+## 重要な原則
+- **既存のコードベースを尊重してください**。ゼロからファイルを作り直さないでください。
+- まず既存のファイルを読んで構造を理解してから変更を加えてください。
+- 他のエージェント（file-searcher等）から提供されたファイル情報を活用してください。
+
+## 利用可能なツール
+1. read_file: {"path": "...", "startLine": N, "endLine": N} — ファイルの読み取り
+2. edit_file: {"path": "...", "old_string": "...", "new_string": "..."} — 既存ファイルの部分編集（old_stringは一意の完全一致が必要）
+3. write_file: {"path": "...", "content": "..."} — 新規ファイルの作成
+4. execute_command: {"command": "...", "timeout": 30000} — シェルコマンド実行（ls, npm, node等）
+5. list_directory: {"path": "."} — ディレクトリ内容の一覧
+
+## ワークフロー
+1. まず list_directory や read_file で既存のプロジェクト構造を把握する
+2. 変更対象のファイルを read_file で読む
+3. edit_file で既存ファイルを修正する（新規作成より編集を優先）
+4. 必要に応じて write_file で新しいファイルを追加する
+5. execute_command でビルドやテストを実行して確認する
+
+## ルール
+- 編集前に必ず read_file でファイルを読むこと
+- old_string は空白やインデントを含めて完全一致させること
+- 既存ファイルの編集を優先し、不要な新規作成を避けること
+- 1回のレスポンスで1つのツールのみ使用すること
+
+## 出力形式 — 必ず以下のJSON形式のみ出力:
+
+\`\`\`json
+{
+  "tool": "read_file",
+  "args": { "path": "src/app/page.tsx" }
+}
+\`\`\`
+
+全ての作業が完了したら:
+\`\`\`json
+{ "done": true, "summary": "変更内容の要約" }
+\`\`\``;
+
+function getCoderPrompt(req: ExecutionRequest): string {
+  if (req.workspacePath && isWorkspaceAccessible(req.workspacePath)) {
+    return CODER_AGENT_PROMPT_LOCAL;
+  }
+  return CODER_AGENT_PROMPT_REMOTE;
+}
 
 function extractToolJson(output: string): Record<string, unknown> | null {
   try {
@@ -725,7 +773,7 @@ export async function executeCoderLoop(
       config: req.config,
       input: currentInput,
       role: req.role,
-      systemPrompt: req.systemPrompt || CODER_AGENT_PROMPT,
+      systemPrompt: req.systemPrompt || getCoderPrompt(req),
       chatHistory,
     });
 

@@ -7,3 +7,4 @@ dist/
 prisma/prisma/
 prisma/dev.db
 .env*.local
+.history/

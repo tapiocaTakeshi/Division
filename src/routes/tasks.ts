@@ -23,7 +23,7 @@ const ROLE_MAX_TOKENS: Record<string, number> = {
   reviewer: 8192,
   searcher: 4096,
   researcher: 8192,
-  "file-searcher": 4096,
+  "file-searcher": 16384,
   ideaman: 8192,
   leader: 4096,
   imager: 4096,

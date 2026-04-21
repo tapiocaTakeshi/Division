@@ -450,25 +450,31 @@ const CODER_TOOLS = new Set(["read_file", "write_file", "edit_file", "execute_co
 // --- Tool loop system prompts ---
 
 const SEARCH_AGENT_PROMPT = `あなたはファイル検索・コード解析エージェントです。
-ユーザーのリクエストに答えるため、ローカルファイルシステムから必要な情報を収集してください。
+ユーザーのリクエストに答えるため、プロジェクトのファイルシステムから必要な情報を**徹底的に**収集してください。
 
 ## 環境
-- Vercel サーバーレス環境で動作しています
-- ソースファイルはコンパイル済み JavaScript (.js) です
-- "find" コマンドは使えません。"ls" を使ってください
-- ワークスペースルートは現在の作業ディレクトリです
+- ユーザーのローカルプロジェクトのファイルシステムにアクセスしています
+- TypeScript (.ts/.tsx), JavaScript (.js/.jsx), その他あらゆるソースファイルが存在します
+- ワークスペースルートはユーザーのプロジェクトディレクトリです
 
 ## 利用可能なツール（読み取り専用）
 1. list_directory: {"path": "."} — ディレクトリの内容を一覧表示（まずこれで構造を把握）
-2. read_file: {"path": "...", "startLine": N, "endLine": N} — ファイルを読み取り（行範囲指定可）
-3. search_files: {"query": "...", "directory": ".", "include": "*.js"} — パターンでファイル内を検索
+2. read_file: {"path": "...", "startLine": N, "endLine": N} — ファイルを読み取り（行範囲指定可。省略時は全行）
+3. search_files: {"query": "...", "directory": ".", "include": "*.ts"} — パターンでファイル内を検索
 
 ## 手順
 1. まず list_directory でプロジェクト構造を把握する
-2. 関連しそうなディレクトリを深堀りする
-3. search_files でキーワード検索する
-4. 見つかったファイルを read_file で読む
-5. 十分な情報が集まったら完了を出力
+2. 関連しそうなディレクトリを深く掘り下げる（src/, app/, pages/, components/ 等）
+3. search_files で関連キーワードを**英語で**検索する（関数名、変数名、import文等）
+4. 見つかったファイルを read_file で**全体を**読む（重要なファイルは行範囲を省略して全行読み取る）
+5. 関連ファイルが多い場合は、最大ループ回数まで徹底的に調査する
+6. 十分な情報が集まったら完了を出力
+
+## 重要
+- search_files の query は**英語のコードキーワード**を使ってください（日本語は検索に向きません）
+- read_file では可能な限りファイル全体を読んでください（startLine/endLine を省略）
+- 1つのファイルだけでなく、関連する複数ファイルを読んでください
+- ループ回数に余裕がある限り、できるだけ多くのファイルを調査してください
 
 ## 出力形式 — 必ず以下のJSON形式のみ出力:
 
@@ -652,7 +658,7 @@ ${req.input}
 関連するファイルを list_directory, search_files, read_file で調査してください。
 search_files の query にはコード上のキーワード（関数名、変数名、import文等）を英語で指定してください。日本語テキストでの検索は避けてください。`;
 
-  const MAX_LOOPS = 8;
+  const MAX_LOOPS = 15;
 
   while (loopCount < MAX_LOOPS) {
     loopCount++;
@@ -730,7 +736,7 @@ search_files の query にはコード上のキーワード（関数名、変数
 
       chatHistory.push({ role: "user", content: currentInput });
       chatHistory.push({ role: "assistant", content: result.output });
-      currentInput = `ツール実行結果 (${toolName}):\n${toolResult.slice(0, 10000)}\n\n他に調査が必要なら次のツールを指定してください。十分なら {"done": true} を出力してください。`;
+      currentInput = `ツール実行結果 (${toolName}):\n${toolResult.slice(0, 50000)}\n\n他に調査が必要なら次のツールを指定してください。十分なら {"done": true} を出力してください。`;
     } else {
       break;
     }

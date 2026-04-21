@@ -42,7 +42,7 @@ const ROLE_MAX_TOKENS: Record<string, number> = {
   searcher: 8192,
   researcher: 16384,
   "deep-research": 32768,
-  "file-searcher": 8192,
+  "file-searcher": 16384,
   ideaman: 16384,
 };
 
@@ -53,32 +53,11 @@ const ROLE_MAX_TOKENS: Record<string, number> = {
 const ROLE_SYNTHESIS_MAX_TOKENS: Record<string, number> = {
   coder: 65536,
   writer: 65536,
+  designer: 65536,
 };
 
 // --- Role-Specific System Prompts ---
 const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
-  "file-searcher": `あなたはプロジェクト構造分析・ファイル検索エキスパートです。
-
-ユーザーのリクエストに基づいて、プロジェクト内の関連ファイルやコード構造を特定・分析してください。
-
-## あなたの役割
-- プロジェクトの構造を分析し、リクエストに関連するファイル・ディレクトリを特定する
-- フレームワーク（Next.js, React, Express 等）の規約に基づいて、ファイルの配置を推定する
-- 関連するコンポーネント、ルート、API、型定義、設定ファイルを洗い出す
-- 修正や機能追加に必要なファイルの一覧と、それぞれの役割を説明する
-
-## 出力形式
-以下の構造で出力してください：
-
-### 関連ファイル一覧
-| ファイルパス | 役割・内容 | 重要度 |
-|---|---|---|
-| src/... | ... | 高/中/低 |
-
-### 分析・推奨
-- どのファイルを確認・修正すべきか
-- ファイル間の依存関係
-- 推奨する作業順序`,
   designer: `あなたは優秀なUIデザイナー兼フロントエンドエンジニアです。
 リクエストに基づいて、**完全に自己完結した単一のHTMLファイル**を生成してください。
 
@@ -93,6 +72,45 @@ const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
 8. インタラクティブな要素（ホバー効果、クリックイベント等）を積極的に入れてください
 9. ダークモード対応も考慮してください
 10. HTMLの前後に説明テキストを入れず、HTMLコードブロックのみを出力してください`,
+
+  "file-searcher": `あなたはプロジェクトのファイル構造・コードベースを徹底的に調査し、**非常に詳細で長いMarkdownレポート**を生成する専門家です。
+
+あなたの出力は、後続のcoder・designer・writerが**このレポートだけで実装できる**レベルの情報量を持つ必要があります。
+出力トークンの制限を最大限使い切ってください。短い要約ではなく、詳細な分析レポートを出力してください。
+
+## 出力構成（この順序で網羅的に記載）
+
+### 1. プロジェクト全体構造
+- ディレクトリツリー（深さ3階層以上）
+- 各ディレクトリの役割と責務の説明
+
+### 2. 関連ファイル一覧と概要
+- ユーザーのリクエストに関連する全ファイルのパスと概要
+- 各ファイルの行数、主要なexport、依存関係
+
+### 3. コードの詳細分析
+- 関連する関数・クラス・型定義・インターフェースの**完全なコード**をコードブロックで掲載
+- 関数のシグネチャだけでなく、実装の中身も含めてください
+- コンポーネントのprops、state、イベントハンドラも記載
+
+### 4. ファイル間の依存関係
+- import/export の関係性マップ
+- データフロー（どのファイルからどのファイルへデータが流れるか）
+
+### 5. 設定・環境
+- package.json の関連依存パッケージ
+- 設定ファイル（tsconfig, eslint, tailwind等）の関連設定
+
+### 6. 変更が必要な箇所の特定
+- ユーザーのリクエストを達成するために変更が必要なファイルと箇所を具体的に列挙
+- 変更の影響範囲と注意点
+
+## ルール
+- **絶対に省略しないでください** — 「...」や「以下省略」は禁止です
+- コードは必ず \`\`\`言語名 で囲んでください
+- ファイルパスは常にフルパスで記載してください
+- 推測ではなく、実際に読み取った内容のみを報告してください
+- 出力は最低でも3000文字以上を目指してください`,
 };
 
 function normalizeRoleSlug(slug: string): string {
@@ -134,8 +152,6 @@ export interface OrchestratorRequest {
   authenticated?: boolean;
   /** Clerk user ID for credit tracking */
   userId?: string;
-  /** Absolute path to the user's workspace for file-search / coder tools */
-  workspacePath?: string;
 }
 
 export interface OrchestratorResult {
@@ -552,7 +568,7 @@ export async function runAgent(
       displayName: string;
       apiBaseUrl: string;
       apiType: string;
-      apiEndpoint?: string;
+      apiEndpoint: string;
       modelId: string;
       isEnabled: boolean;
     } | null = null;
@@ -636,7 +652,6 @@ export async function runAgent(
             input: enrichedInput,
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
-            workspacePath: req.workspacePath,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (msg) => log(`  [coder] ${msg.trim()}`)
@@ -647,7 +662,6 @@ export async function runAgent(
           input: enrichedInput,
           role: { slug: role.slug, name: role.name },
           mode: task.mode,
-          workspacePath: req.workspacePath,
           ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
         });
 
@@ -1220,7 +1234,7 @@ async function runAgentStreamCore(
       displayName: string;
       apiBaseUrl: string;
       apiType: string;
-      apiEndpoint?: string;
+      apiEndpoint: string;
       modelId: string;
       isEnabled: boolean;
     } | null = null;
@@ -1320,7 +1334,6 @@ async function runAgentStreamCore(
             input: enrichedInput,
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
-            workspacePath: req.workspacePath,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (msg) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text: msg })
@@ -1332,7 +1345,6 @@ async function runAgentStreamCore(
             input: enrichedInput,
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
-            workspacePath: req.workspacePath,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
@@ -1481,7 +1493,7 @@ async function runAgentStreamCore(
       displayName: string;
       apiBaseUrl: string;
       apiType: string;
-      apiEndpoint?: string;
+      apiEndpoint: string;
       modelId: string;
       isEnabled: boolean;
     } | null = null;
@@ -1577,20 +1589,14 @@ async function runAgentStreamCore(
     }
   }
 
-  // 7. Determine overall status & emit session_done with full results
-  const allSuccess = filledResults.every((r) => r.status === "success");
-  const allError = filledResults.every((r) => r.status === "error");
-  const status = allSuccess ? "success" : allError ? "error" : "partial";
-  const totalDurationMs = Date.now() - startTime;
-
   emit({
     type: "session_done",
     id: nextId(),
     sessionId,
-    status,
-    totalDurationMs,
-    taskCount: subTasks.length,
-    finalOutput,
+    status: finalOutput ? "success" : "error",
+    totalDurationMs: Date.now() - startTime,
+    taskCount: filledResults.length,
+    finalOutput: finalOutput || undefined,
     results: filledResults,
   });
 }

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db";
 import { z } from "zod";
-import { executeTask } from "../services/ai-executor";
+import { executeTask, executeTaskStream } from "../services/ai-executor";
 import { asyncHandler } from "../middleware/async-handler";
 
 export const taskRouter = Router();
@@ -11,6 +11,7 @@ const executeTaskSchema = z.object({
   roleSlug: z.string().min(1),
   input: z.string().min(1),
   config: z.record(z.unknown()).optional(),
+  stream: z.boolean().optional(),
 });
 
 const ROLE_MAX_TOKENS: Record<string, number> = {
@@ -110,15 +111,54 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
     ...config,
   };
 
-  // Execute
-  const result = await executeTask({
+  const execReq = {
     provider: assignment.provider,
     config: mergedConfig,
     input,
     role: { slug: role.slug, name: role.name },
-  });
+  };
 
-  // Log the task
+  // Streaming mode
+  if (parsed.data.stream) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const result = await executeTaskStream(
+      execReq,
+      (text) => { res.write(`data: ${JSON.stringify({ type: "chunk", text })}\n\n`); },
+      (text) => { res.write(`data: ${JSON.stringify({ type: "thinking", text })}\n\n`); }
+    );
+
+    await prisma.taskLog.create({
+      data: {
+        projectId,
+        roleId: role.id,
+        providerId: assignment.provider.id,
+        input,
+        output: result.output || null,
+        status: result.status,
+        errorMsg: result.errorMsg || null,
+        durationMs: result.durationMs,
+      },
+    });
+
+    res.write(`data: ${JSON.stringify({
+      type: "done",
+      role: role.name,
+      provider: assignment.provider.displayName,
+      model: assignment.provider.modelId,
+      status: result.status,
+      durationMs: result.durationMs,
+    })}\n\n`);
+    res.end();
+    return;
+  }
+
+  // Non-streaming mode
+  const result = await executeTask(execReq);
+
   await prisma.taskLog.create({
     data: {
       projectId,

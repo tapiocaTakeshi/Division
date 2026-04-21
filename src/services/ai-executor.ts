@@ -863,11 +863,12 @@ export async function executeTaskStream(
   // Note: "search" role uses Perplexity web search and should NOT enter the tool loop.
   let enrichedInput = req.input;
   if (req.role.slug === "file-searcher") {
+    logger.info(`[AI Executor] file-searcher detected, workspacePath=${req.workspacePath || "(none)"}`);
     try {
       enrichedInput = await gatherToolContext(req);
+      logger.info(`[AI Executor] gatherToolContext completed, enrichedInput length=${enrichedInput.length}`);
     } catch (err) {
       logger.error("[AI Executor] Error in gatherToolContext", err);
-      // Fallback to original input if tool gathering fails
     }
   }
 
@@ -1048,8 +1049,10 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   // For file-searcher role, gather context via tool loop first
   let enrichedInput = req.input;
   if (req.role.slug === "file-searcher") {
+    logger.info(`[AI Executor] file-searcher detected (non-stream), workspacePath=${req.workspacePath || "(none)"}`);
     try {
       enrichedInput = await gatherToolContext(req);
+      logger.info(`[AI Executor] gatherToolContext completed (non-stream), enrichedInput length=${enrichedInput.length}`);
     } catch (err) {
       logger.error("[AI Executor] Error in gatherToolContext (non-stream)", err);
     }

@@ -61,10 +61,11 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
 8. 1タスクに複数作業を詰め込まず細かく分割
 9. 同じロールでも異なる観点なら別タスクに分ける
-10. 各タスクに "mode" を指定:
+10. **【必須】Layer 1 には次の4ロールを必ず1タスクずつ含めること（どれか1つでも欠けると不合格）: ideaman, searcher, file-searcher, researcher。デザインのみ・コード不要に見える依頼でも file-searcher を省略してはならない（既存のスタイル・HTML・設定ファイルの有無を調べる）。**
+11. 各タスクに "mode" を指定:
     - "chat": テキスト生成タスク（デフォルト。searcher, researcher 等 Web検索ロールもこれ）
     - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
-    - "function_calling": ローカルファイル検索のみ（file-searcher ロール専用）
+    - "function_calling": 使用しない（廃止）
     ※ searcher / researcher ロールは Perplexity が Web 検索するため mode="chat" にすること
 
 \`\`\`json
@@ -72,7 +73,7 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
   "tasks": [
     { "role": "ideaman", "mode": "chat", "title": "アイデア提案", "description": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [] },
     { "role": "searcher", "mode": "chat", "title": "技術調査", "description": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
-    { "role": "file-searcher", "mode": "function_calling", "title": "既存コード調査", "description": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装を把握するため", "dependsOn": [] },
+    { "role": "file-searcher", "mode": "chat", "title": "既存コード調査", "description": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装を把握するため", "dependsOn": [] },
     { "role": "researcher", "mode": "chat", "title": "技術トレンド調査", "description": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [] },
     { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },
     { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
@@ -132,6 +133,43 @@ function extractJson(text: string): string {
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (jsonMatch) return jsonMatch[0];
   return text;
+}
+
+type ParsedTaskRow = {
+  role: string;
+  mode: string;
+  title: string;
+  description: string;
+  reason?: string;
+  dependsOn?: number[];
+};
+
+/**
+ * Leader が file-searcher を省略することがあるため、欠けていれば先頭に挿入し、
+ * 全タスクの dependsOn インデックスを +1 ずらす。
+ */
+function ensureFileSearcherTask(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
+  const hasFs = tasks.some(
+    (t) => t.role === "file-searcher" || t.role === "file_searcher"
+  );
+  if (hasFs) return tasks;
+
+  const inserted: ParsedTaskRow = {
+    role: "file-searcher",
+    mode: "chat",
+    title: "既存コード・スタイルの調査",
+    description:
+      "プロジェクト内の既存UI、スタイル、テーマ、HTML/CSS、設定ファイルを検索し、リクエストに関連する実装や資産を把握する。",
+    reason: "既存デザインとの整合と重複回避のため",
+    dependsOn: [],
+  };
+
+  const shifted = tasks.map((t) => ({
+    ...t,
+    dependsOn: t.dependsOn?.map((d) => d + 1),
+  }));
+
+  return [inserted, ...shifted];
 }
 
 // --- Routes ---
@@ -204,7 +242,11 @@ taskCreateRouter.post(
       ? "【これまでの会話履歴】\n" + chatHistory.map(m => `${m.role === 'user' ? 'ユーザー' : 'AI'}: ${m.content}`).join('\n\n') + "\n\n"
       : "";
 
-    const enrichedInput = `${formattedHistory}【ユーザーの最新のリクエスト】\n${input}`;
+    const workspaceHint = workspacePath
+      ? `\n\n【実行環境】ローカルプロジェクトが開かれています（タスク実行時に workspacePath が渡されます）。Layer 1 に file-searcher を必ず含めてください。\n`
+      : "";
+
+    const enrichedInput = `${formattedHistory}【ユーザーの最新のリクエスト】\n${input}${workspaceHint}`;
 
     const savedConfig = leaderAssignment.config
       ? JSON.parse(leaderAssignment.config)
@@ -255,6 +297,14 @@ taskCreateRouter.post(
             : undefined,
         })
       );
+
+      const beforeFs = parsedTasks.length;
+      parsedTasks = ensureFileSearcherTask(parsedTasks);
+      if (parsedTasks.length > beforeFs) {
+        logger.info(
+          `[TaskCreate] Session ${sessionId} - Injected missing file-searcher task; dependsOn indices shifted`
+        );
+      }
     } catch (err) {
       res.status(502).json({
         error: "Failed to parse Leader AI response",

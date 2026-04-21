@@ -152,6 +152,8 @@ export interface OrchestratorRequest {
   authenticated?: boolean;
   /** Clerk user ID for credit tracking */
   userId?: string;
+  /** Absolute path to user's workspace for file-search / coder tools */
+  workspacePath?: string;
 }
 
 export interface OrchestratorResult {
@@ -199,7 +201,7 @@ ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます（0, 1, 2...）
 2. dependsOn で依存先のインデックスを指定。空=並列実行
-3. 不要なロールは使わなくてOK。リクエストに応じて適切に選択
+3. **【必須】Layer 1 には次の4ロールを必ず1タスクずつ含めること: ideaman, searcher, file-searcher, researcher。デザインのみの依頼でも file-searcher を省略してはならない（既存のスタイル・HTML・設定を調べる）。** それ以外のロール（designer 等）はリクエストに応じて選択可。
 4. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること
 5. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
 6. タスクは最低5個以上。複雑な場合は8〜15個に細分化
@@ -208,7 +210,7 @@ ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, 
 9. 各タスクに "mode" を指定:
    - "chat": テキスト生成タスク（デフォルト。searcher, researcher 等 Web検索ロールもこれ）
    - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
-   - "function_calling": ローカルファイル検索のみ（file-searcher ロール専用）
+   - "function_calling": 使用しない（廃止）
    ※ searcher / researcher ロールは Perplexity が Web 検索するため mode="chat" にすること
 10. "finalRole" を必ず指定:
     - "coder": コードが主な成果物の場合
@@ -219,7 +221,7 @@ ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, 
   "tasks": [
     { "role": "ideaman", "mode": "chat", "input": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため" },
     { "role": "searcher", "mode": "chat", "input": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため" },
-    { "role": "file-searcher", "mode": "function_calling", "input": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装の把握のため" },
+    { "role": "file-searcher", "mode": "chat", "input": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装の把握のため" },
     { "role": "researcher", "mode": "chat", "input": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため" },
     { "role": "designer", "mode": "chat", "input": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2, 3] },
     { "role": "planner", "mode": "chat", "input": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
@@ -305,12 +307,36 @@ function parseLeaderResponse(output: string): LeaderParsedResponse {
 
     const finalRole = parsed.finalRole === "coder" ? "coder" : "writer";
 
-    return { tasks, finalRole };
+    return { tasks: ensureFileSearcherSubTask(tasks), finalRole };
   } catch (err) {
     throw new Error(
       `Failed to parse Leader response: ${err instanceof Error ? err.message : String(err)}\nRaw output: ${output}`
     );
   }
+}
+
+/** Leader が file-searcher を省略することがあるため、欠けていれば先頭に挿入し dependsOn を +1 ずらす */
+function ensureFileSearcherSubTask(tasks: SubTask[]): SubTask[] {
+  const hasFs = tasks.some(
+    (t) => t.role === "file-searcher" || t.role === "file_searcher"
+  );
+  if (hasFs) return tasks;
+
+  const inserted: SubTask = {
+    role: "file-searcher",
+    mode: "chat",
+    input:
+      "プロジェクト内の既存UI、スタイル、テーマ、HTML/CSS、設定ファイルを検索し、このリクエストに関連する実装や資産を把握する。",
+    reason: "既存デザインとの整合と重複回避のため",
+    dependsOn: [],
+  };
+
+  const shifted = tasks.map((t) => ({
+    ...t,
+    dependsOn: t.dependsOn?.map((d) => d + 1),
+  }));
+
+  return [inserted, ...shifted];
 }
 
 /** Maps apiType to the corresponding environment variable name */
@@ -652,6 +678,7 @@ export async function runAgent(
             input: enrichedInput,
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
+            workspacePath: req.workspacePath,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (msg) => log(`  [coder] ${msg.trim()}`)
@@ -662,6 +689,7 @@ export async function runAgent(
           input: enrichedInput,
           role: { slug: role.slug, name: role.name },
           mode: task.mode,
+          workspacePath: req.workspacePath,
           ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
         });
 
@@ -1334,6 +1362,7 @@ async function runAgentStreamCore(
             input: enrichedInput,
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
+            workspacePath: req.workspacePath,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (msg) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text: msg })
@@ -1345,6 +1374,7 @@ async function runAgentStreamCore(
             input: enrichedInput,
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
+            workspacePath: req.workspacePath,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),

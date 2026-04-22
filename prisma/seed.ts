@@ -2,6 +2,21 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+/** Defaults aligned with ai-executor (inference) + sync-models (list models). */
+const PROVIDER_ENDPOINT_DEFAULTS: Record<string, { apiEndpoint: string; modelsEndpoint: string }> = {
+  openai: { apiEndpoint: "/v1/responses", modelsEndpoint: "/v1/models" },
+  anthropic: { apiEndpoint: "/v1/messages", modelsEndpoint: "/v1/models" },
+  google: { apiEndpoint: "", modelsEndpoint: "/v1beta/models" },
+  perplexity: { apiEndpoint: "/v1/sonar", modelsEndpoint: "" },
+  xai: { apiEndpoint: "/v1/chat/completions", modelsEndpoint: "/v1/models" },
+  deepseek: { apiEndpoint: "/chat/completions", modelsEndpoint: "/models" },
+  mistral: { apiEndpoint: "/v1/chat/completions", modelsEndpoint: "/v1/models" },
+  meta: { apiEndpoint: "/v1/chat/completions", modelsEndpoint: "/v1/models" },
+  qwen: { apiEndpoint: "/compatible-mode/v1/chat/completions", modelsEndpoint: "" },
+  cohere: { apiEndpoint: "/v2/chat", modelsEndpoint: "/v1/models" },
+  moonshot: { apiEndpoint: "/v1/chat/completions", modelsEndpoint: "/v1/models" },
+};
+
 async function upsertProvider(data: {
   name: string;
   displayName: string;
@@ -9,11 +24,34 @@ async function upsertProvider(data: {
   apiType: string;
   modelId: string;
   description: string;
+  apiEndpoint?: string;
+  modelsEndpoint?: string;
 }) {
+  const defs = PROVIDER_ENDPOINT_DEFAULTS[data.apiType] ?? { apiEndpoint: "", modelsEndpoint: "" };
+  const apiEndpoint = data.apiEndpoint ?? defs.apiEndpoint;
+  const modelsEndpoint = data.modelsEndpoint ?? defs.modelsEndpoint;
+
   return prisma.provider.upsert({
     where: { name: data.name },
-    update: { modelId: data.modelId, displayName: data.displayName, description: data.description },
-    create: data,
+    update: {
+      modelId: data.modelId,
+      displayName: data.displayName,
+      description: data.description,
+      apiBaseUrl: data.apiBaseUrl,
+      apiType: data.apiType,
+      apiEndpoint,
+      modelsEndpoint,
+    },
+    create: {
+      name: data.name,
+      displayName: data.displayName,
+      apiBaseUrl: data.apiBaseUrl,
+      apiType: data.apiType,
+      modelId: data.modelId,
+      description: data.description,
+      apiEndpoint,
+      modelsEndpoint,
+    },
   });
 }
 

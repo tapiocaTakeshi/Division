@@ -111,15 +111,17 @@ function resolveApiKey(
 ): string | undefined {
   if (authenticated) {
     const envVar = ENV_KEY_MAP[apiType];
-    if (envVar && process.env[envVar]) {
-      return process.env[envVar];
-    }
+    const raw = envVar ? process.env[envVar] : undefined;
+    const fromEnv = raw?.trim();
+    if (fromEnv) return fromEnv;
   }
   if (apiKeys) {
-    if (apiKeys[providerName]) return apiKeys[providerName];
+    const byName = apiKeys[providerName]?.trim();
+    if (byName) return byName;
     const aliases = API_KEY_ALIASES[apiType] || [];
     for (const alias of aliases) {
-      if (apiKeys[alias]) return apiKeys[alias];
+      const v = apiKeys[alias]?.trim();
+      if (v) return v;
     }
   }
   return undefined;

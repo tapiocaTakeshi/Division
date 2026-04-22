@@ -54,16 +54,19 @@ function resolveApiKey(
   console.log(`[resolveApiKey] apiType=${apiType}, authenticated=${authenticated}, hasApiKeys=${!!apiKeys}`);
   if (authenticated) {
     const envVar = ENV_KEY_MAP[apiType];
-    const hasEnvVar = !!(envVar && process.env[envVar]);
-    console.log(`[resolveApiKey] envVar=${envVar}, exists=${hasEnvVar}`);
-    if (hasEnvVar) {
-      return process.env[envVar];
+    const raw = envVar ? process.env[envVar] : undefined;
+    const fromEnv = raw?.trim();
+    console.log(`[resolveApiKey] envVar=${envVar}, exists=${!!fromEnv}`);
+    if (fromEnv) {
+      return fromEnv;
     }
   }
   if (apiKeys) {
-    if (apiKeys[apiType]) return apiKeys[apiType];
+    const byType = apiKeys[apiType]?.trim();
+    if (byType) return byType;
     const envVar = ENV_KEY_MAP[apiType];
-    if (envVar && apiKeys[envVar]) return apiKeys[envVar];
+    const byEnvName = envVar ? apiKeys[envVar]?.trim() : undefined;
+    if (byEnvName) return byEnvName;
   }
   return undefined;
 }

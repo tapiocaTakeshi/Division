@@ -86,6 +86,12 @@ const ENV_KEY_MAP: Record<string, string> = {
   moonshot: "MOONSHOT_API_KEY",
 };
 
+/** Trim keys so .env / copy-paste whitespace does not break provider auth. */
+function normalizeApiKeySegment(raw: string | undefined): string {
+  if (raw == null) return "";
+  return raw.trim();
+}
+
 /**
  * Resolve API key: prefer config, then fall back to environment variable.
  */
@@ -93,10 +99,10 @@ function resolveApiKeyFromConfig(
   config: Record<string, unknown> | undefined,
   apiType: string
 ): string {
-  const fromConfig = (config?.apiKey as string) || "";
+  const fromConfig = normalizeApiKeySegment(config?.apiKey as string | undefined);
   if (fromConfig) return fromConfig;
   const envVar = ENV_KEY_MAP[apiType];
-  if (envVar) return process.env[envVar] || "";
+  if (envVar) return normalizeApiKeySegment(process.env[envVar]);
   return "";
 }
 
@@ -132,7 +138,8 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
 
 /** API types that use the OpenAI-compatible chat completions format */
 const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
-  perplexity: "/chat/completions",
+  /** Perplexity: official path is POST /v1/sonar (not legacy /chat/completions). */
+  perplexity: "/v1/sonar",
   xai: "/v1/chat/completions",
   deepseek: "/chat/completions",
   mistral: "/v1/chat/completions",
@@ -167,7 +174,7 @@ function buildRequestBody(
   const FALLBACK_ENDPOINTS: Record<string, string> = {
     openai: "/v1/responses",
     anthropic: "/v1/messages",
-    perplexity: "/chat/completions",
+    perplexity: "/v1/sonar",
     xai: "/v1/chat/completions",
     deepseek: "/chat/completions",
     mistral: "/v1/chat/completions",
@@ -178,7 +185,10 @@ function buildRequestBody(
   };
 
   // Resolve the endpoint: prefer DB value, fall back to hardcoded
-  const resolvedEndpoint = apiEndpoint || FALLBACK_ENDPOINTS[apiType] || "";
+  let resolvedEndpoint = apiEndpoint || FALLBACK_ENDPOINTS[apiType] || "";
+  if (apiType === "perplexity" && resolvedEndpoint === "/chat/completions") {
+    resolvedEndpoint = "/v1/sonar";
+  }
 
   // OpenAI Responses API (/v1/responses)
   if (apiType === "openai") {
@@ -284,6 +294,10 @@ function buildRequestBody(
       }
     }
     messages.push({ role: "user", content: input });
+    const tokenField =
+      apiType === "perplexity"
+        ? { max_tokens: maxTokens }
+        : { max_completion_tokens: maxTokens };
     return {
       url: resolvedEndpoint || OPENAI_COMPATIBLE_TYPES[apiType],
       headers: {
@@ -292,7 +306,7 @@ function buildRequestBody(
       },
       body: {
         model: resolvedModelId,
-        max_completion_tokens: maxTokens,
+        ...tokenField,
         messages,
       },
     };

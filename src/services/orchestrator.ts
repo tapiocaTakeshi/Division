@@ -363,20 +363,24 @@ function resolveApiKey(
   // 1. Check environment variables only when authenticated via Clerk
   if (authenticated) {
     const envVar = ENV_KEY_MAP[apiType];
-    if (envVar && process.env[envVar]) {
-      return process.env[envVar];
+    const raw = envVar ? process.env[envVar] : undefined;
+    const fromEnv = raw?.trim();
+    if (fromEnv) {
+      return fromEnv;
     }
   }
 
   // 2. Fall back to user-supplied apiKeys from request
   if (apiKeys) {
     // Direct match by provider name
-    if (apiKeys[providerName]) return apiKeys[providerName];
+    const byName = apiKeys[providerName]?.trim();
+    if (byName) return byName;
 
     // Look up by apiType aliases
     const aliases = API_KEY_ALIASES[apiType] || [];
     for (const alias of aliases) {
-      if (apiKeys[alias]) return apiKeys[alias];
+      const v = apiKeys[alias]?.trim();
+      if (v) return v;
     }
   }
 

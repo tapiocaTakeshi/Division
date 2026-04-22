@@ -62,7 +62,7 @@ const FALLBACK_MODELS_PATH: Record<string, string> = {
   deepseek: "/models",
 };
 
-// ===== Env Key Mapping (per provider id) =====
+// ===== Env Key Mapping (per apiType) =====
 
 const ENV_KEYS: Record<string, string> = {
   openai: "OPENAI_API_KEY",
@@ -230,7 +230,7 @@ function getPerplexityModels(): DiscoveredModel[] {
   ];
 }
 
-// ===== Fetcher Dispatch (provider.id → fetcher) =====
+// ===== Fetcher Dispatch (apiType → fetcher) =====
 
 type Fetcher = (baseUrl: string, apiKey: string, modelsPath?: string) => Promise<DiscoveredModel[]>;
 
@@ -265,23 +265,23 @@ export function clearModelCache(): void {
  */
 export async function fetchModelsForProvider(provider: ProviderRecord): Promise<ProviderModels> {
   // Perplexity has no models API
-  if (provider.id === "perplexity") {
+  if (provider.apiType === "perplexity") {
     return { provider: provider.name, apiType: provider.apiType, models: getPerplexityModels() };
   }
 
   const now = Date.now();
-  const cached = modelCache.get(provider.id);
+  const cached = modelCache.get(provider.apiType);
   if (cached && cached.expiresAt > now) {
     return cached.data;
   }
 
-  const fetcher = FETCHER_MAP[provider.id];
-  const modelsPath = provider.modelsEndpoint || FALLBACK_MODELS_PATH[provider.id];
+  const fetcher = FETCHER_MAP[provider.apiType];
+  const modelsPath = provider.modelsEndpoint || FALLBACK_MODELS_PATH[provider.apiType];
   if (!fetcher || !modelsPath) {
-    return { provider: provider.name, apiType: provider.apiType, models: [], error: `No models fetcher for provider "${provider.id}"` };
+    return { provider: provider.name, apiType: provider.apiType, models: [], error: `No models fetcher for apiType "${provider.apiType}"` };
   }
 
-  const envKey = ENV_KEYS[provider.id];
+  const envKey = ENV_KEYS[provider.apiType];
   const apiKey = envKey ? process.env[envKey] : undefined;
   if (!apiKey) {
     return { provider: provider.name, apiType: provider.apiType, models: [], error: `${envKey || "API_KEY"} not set` };
@@ -292,7 +292,7 @@ export async function fetchModelsForProvider(provider: ProviderRecord): Promise<
   try {
     const models = await fetcher(provider.apiBaseUrl, apiKey, modelsPath);
     const result: ProviderModels = { provider: provider.name, apiType: provider.apiType, models, endpoint };
-    modelCache.set(provider.id, { data: result, expiresAt: now + CACHE_TTL_MS });
+    modelCache.set(provider.apiType, { data: result, expiresAt: now + CACHE_TTL_MS });
     return result;
   } catch (err) {
     return { provider: provider.name, apiType: provider.apiType, models: [], endpoint, error: err instanceof Error ? err.message : String(err) };
@@ -310,7 +310,7 @@ export async function syncModelsToDb(): Promise<SyncResult> {
   let totalSynced = 0;
 
   for (const provider of providers) {
-    if (provider.id === "perplexity") {
+    if (provider.apiType === "perplexity") {
       const models = getPerplexityModels();
       for (const m of models) {
         await prisma.model.upsert({
@@ -324,13 +324,13 @@ export async function syncModelsToDb(): Promise<SyncResult> {
       continue;
     }
 
-    const fetcher = FETCHER_MAP[provider.id];
+    const fetcher = FETCHER_MAP[provider.apiType];
     if (!fetcher) {
-      results.push({ provider: provider.name, synced: 0, removed: 0, error: `No fetcher for ${provider.id}` });
+      results.push({ provider: provider.name, synced: 0, removed: 0, error: `No fetcher for apiType ${provider.apiType}` });
       continue;
     }
 
-    const envKey = ENV_KEYS[provider.id];
+    const envKey = ENV_KEYS[provider.apiType];
     const apiKey = envKey ? process.env[envKey] : undefined;
     if (!apiKey) {
       results.push({ provider: provider.name, synced: 0, removed: 0, error: `${envKey || "API_KEY"} not set` });

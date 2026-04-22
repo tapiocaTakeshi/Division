@@ -37,9 +37,16 @@ app.get("/debug/auth", divisionAuth, (_req, res) => {
     "XAI_API_KEY",
     "DEEPSEEK_API_KEY",
   ];
-  const envStatus: Record<string, boolean> = {};
+  const envStatus: Record<string, { set: boolean; length: number; prefix: string; looksPlaceholder: boolean }> = {};
   for (const key of envKeys) {
-    envStatus[key] = !!process.env[key];
+    const value = process.env[key] || "";
+    const trimmed = value.trim();
+    envStatus[key] = {
+      set: !!value,
+      length: trimmed.length,
+      prefix: trimmed.slice(0, 7),
+      looksPlaceholder: /x{3,}|your[_-]?key|placeholder/i.test(trimmed) || trimmed === "",
+    };
   }
   res.json({
     authenticated: !!res.locals.authenticated,

@@ -9,6 +9,7 @@ const createRoleSchema = z.object({
   slug: z.string().min(1).regex(/^[a-z0-9-]+$/, "slug must be lowercase alphanumeric with hyphens"),
   name: z.string().min(1),
   description: z.string().optional(),
+  systemPrompt: z.string().optional(),
 });
 
 const updateRoleSchema = createRoleSchema.partial();

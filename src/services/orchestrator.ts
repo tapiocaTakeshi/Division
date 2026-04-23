@@ -567,7 +567,7 @@ export async function runAgent(
     config: { apiKey: leaderApiKey },
     input: augmentLeaderInput(req),
     role: { slug: "leader", name: "Leader" },
-    systemPrompt: LEADER_SYSTEM_PROMPT,
+    systemPrompt: leaderRole.systemPrompt ?? LEADER_SYSTEM_PROMPT,
     chatHistory: req.chatHistory,
   });
 
@@ -740,7 +740,7 @@ export async function runAgent(
       `[Agent] Executing: [${task.role}] → ${provider.displayName}`
     );
 
-    const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
+    const roleSystemPrompt = role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const isCoderRole = task.role === "coder" || task.mode === "computer_use";
 
@@ -908,7 +908,7 @@ export async function runAgent(
       config: { apiKey: synthesisApiKey, ...(synthesisMaxTokens ? { maxTokens: synthesisMaxTokens } : {}) },
       input: synthesisInput,
       role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
-      systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
+      systemPrompt: synthesisRole?.systemPrompt ?? SYNTHESIS_SYSTEM_PROMPT,
     });
 
     if (synthesisResult.status === "success") {
@@ -1215,7 +1215,7 @@ async function runAgentStreamCore(
       config: { apiKey: leaderApiKey },
       input: augmentLeaderInput(req),
       role: { slug: "leader", name: "Leader" },
-      systemPrompt: LEADER_SYSTEM_PROMPT,
+      systemPrompt: leaderRole.systemPrompt ?? LEADER_SYSTEM_PROMPT,
       chatHistory: req.chatHistory,
     },
     (text) => emit({ type: "leader_chunk", id: nextId(), text })
@@ -1433,7 +1433,7 @@ async function runAgentStreamCore(
       mode: task.mode,
     });
 
-    const roleSystemPrompt = ROLE_SYSTEM_PROMPTS[task.role];
+    const roleSystemPrompt = role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const isCoderRole = task.role === "coder" || task.mode === "computer_use";
 
@@ -1665,7 +1665,7 @@ async function runAgentStreamCore(
         config: { apiKey: synthesisApiKey, ...(synthesisMaxTokens ? { maxTokens: synthesisMaxTokens } : {}) },
         input: synthesisInput,
         role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
-        systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
+        systemPrompt: synthesisRole?.systemPrompt ?? SYNTHESIS_SYSTEM_PROMPT,
       },
       (text) => emit({ type: "synthesis_chunk", id: nextId(), text })
     );

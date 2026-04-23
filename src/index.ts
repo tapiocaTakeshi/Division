@@ -19,7 +19,8 @@ import { webhookRouter } from "./routes/webhook";
 import { divisionAuth } from "./middleware/auth";
 const app = express();
 
-app.use(express.json({ limit: "10mb" }));
+// localWorkspaceContext（IDE スナップショット）が大きくなり得るため余裕を持たせる
+app.use(express.json({ limit: "50mb" }));
 
 // Health check
 app.get("/health", (_req, res) => {

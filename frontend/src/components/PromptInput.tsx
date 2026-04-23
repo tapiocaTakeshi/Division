@@ -9,6 +9,8 @@ interface PromptInputProps {
 
 export function PromptInput({ onSubmit, isRunning, onStop }: PromptInputProps) {
   const [value, setValue] = useState('')
+  const [snapshotError, setSnapshotError] = useState<string | null>(null)
+  const [snapshotName, setSnapshotName] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const localWorkspaceContext = useOrchestraStore((s) => s.localWorkspaceContext)
@@ -31,13 +33,24 @@ export function PromptInput({ onSubmit, isRunning, onStop }: PromptInputProps) {
   const handleSnapshotFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ''
+    setSnapshotError(null)
     if (!file) return
+    setSnapshotName(file.name)
     const reader = new FileReader()
     reader.onload = () => {
       const text = typeof reader.result === 'string' ? reader.result : ''
       setLocalWorkspaceContext(text)
+      if (!text.length) {
+        setSnapshotError('ファイルが空か、テキストとして読めませんでした')
+      }
     }
-    reader.readAsText(file)
+    reader.onerror = () => {
+      setSnapshotError(reader.error?.message || 'ファイルの読み込みに失敗しました')
+      setLocalWorkspaceContext('')
+      setSnapshotName(null)
+    }
+    // 第2引数: 環境差のある文字化けを減らす
+    reader.readAsText(file, 'UTF-8')
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -83,34 +96,53 @@ export function PromptInput({ onSubmit, isRunning, onStop }: PromptInputProps) {
           </button>
         )}
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-conductor-muted">
+      <div className="mt-2 flex flex-col gap-1">
+        {/*
+          display:none の file input は Safari 等で input.click() が効かないことがあるため、
+          画面外配置で非表示にする。
+        */}
         <input
           ref={fileRef}
           type="file"
-          accept=".md,.txt,text/markdown,text/plain"
-          className="hidden"
+          accept=".md,.txt,.json,.markdown,text/markdown,text/plain"
+          tabIndex={-1}
+          className="sr-only"
           onChange={handleSnapshotFile}
         />
-        <button
-          type="button"
-          disabled={isRunning}
-          onClick={() => fileRef.current?.click()}
-          className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-40 transition-colors"
-        >
-          ワークスペーススナップショット（.md / .txt）
-        </button>
-        {localWorkspaceContext ? (
-          <>
-            <span className="text-white/50">{localWorkspaceContext.length.toLocaleString()} 文字</span>
-            <button
-              type="button"
-              disabled={isRunning}
-              onClick={clearLocalWorkspaceContext}
-              className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-40 transition-colors"
-            >
-              クリア
-            </button>
-          </>
+        <div className="flex flex-wrap items-center gap-2 text-[10px] text-conductor-muted">
+          <button
+            type="button"
+            disabled={isRunning}
+            onClick={() => fileRef.current?.click()}
+            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-40 transition-colors"
+          >
+            ワークスペーススナップショット（テキストファイル）
+          </button>
+          {localWorkspaceContext ? (
+            <>
+              {snapshotName ? (
+                <span className="text-white/50 truncate max-w-[200px]" title={snapshotName}>
+                  {snapshotName}
+                </span>
+              ) : null}
+              <span className="text-white/50">{localWorkspaceContext.length.toLocaleString()} 文字</span>
+              <button
+                type="button"
+                disabled={isRunning}
+                onClick={() => {
+                  clearLocalWorkspaceContext()
+                  setSnapshotName(null)
+                  setSnapshotError(null)
+                }}
+                className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-40 transition-colors"
+              >
+                クリア
+              </button>
+            </>
+          ) : null}
+        </div>
+        {snapshotError ? (
+          <p className="text-[10px] text-conductor-error">{snapshotError}</p>
         ) : null}
       </div>
     </div>

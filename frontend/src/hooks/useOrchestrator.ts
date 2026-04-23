@@ -16,14 +16,15 @@ export function useOrchestrator() {
       const abort = new AbortController()
       abortRef.current = abort
 
+      // resetSession より前にスナップショットを取る（ストアのリセットで消えないよう順序固定）
+      const snapshot = useOrchestraStore.getState().localWorkspaceContext?.trim()
+
       store.resetSession()
 
       try {
         const token = await getAccessToken()
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         if (token) headers['Authorization'] = `Bearer ${token}`
-
-        const snapshot = useOrchestraStore.getState().localWorkspaceContext?.trim()
         const body: Record<string, unknown> = { projectId, input, overrides }
         if (snapshot) body.localWorkspaceContext = snapshot
 

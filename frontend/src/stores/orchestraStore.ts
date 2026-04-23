@@ -16,6 +16,8 @@ interface OrchestraState {
   session: OrchestraSession | null
   viewMode: ViewMode
   isRunning: boolean
+  /** IDE 連携: ローカルで読んだワークスペーススナップショット（API ボディ localWorkspaceContext に載せる） */
+  localWorkspaceContext: string
 
   // Pipeline builder
   pipelineSteps: PipelineStep[]
@@ -26,6 +28,8 @@ interface OrchestraState {
 
   // Actions
   setViewMode: (mode: ViewMode) => void
+  setLocalWorkspaceContext: (text: string) => void
+  clearLocalWorkspaceContext: () => void
   startSession: (sessionId: string, projectId: string, input: string) => void
   updateAgentStatus: (agentId: string, status: AgentStatus, data?: Partial<AgentNode>) => void
   setLeaderOutput: (output: string) => void
@@ -102,11 +106,16 @@ export const useOrchestraStore = create<OrchestraState>((set) => ({
   session: null,
   viewMode: 'pipeline',
   isRunning: false,
+  localWorkspaceContext: '',
   pipelineSteps: [],
   templates: defaultTemplates,
   metrics: defaultMetrics,
 
   setViewMode: (mode) => set({ viewMode: mode }),
+
+  setLocalWorkspaceContext: (text) => set({ localWorkspaceContext: text }),
+
+  clearLocalWorkspaceContext: () => set({ localWorkspaceContext: '' }),
 
   startSession: (sessionId, projectId, input) =>
     set({

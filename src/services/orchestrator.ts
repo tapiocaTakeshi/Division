@@ -42,7 +42,7 @@ const ROLE_MAX_TOKENS: Record<string, number> = {
   searcher: 8192,
   researcher: 16384,
   "deep-research": 32768,
-  "file-searcher": 163840,
+  "file-searcher": 245760,
   ideaman: 16384,
 };
 
@@ -110,7 +110,8 @@ const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
 - コードは必ず \`\`\`言語名 で囲んでください
 - ファイルパスは常にフルパスで記載してください
 - 推測ではなく、実際に読み取った内容のみを報告してください
-- 出力は最低でも3000文字以上を目指してください`,
+- **出力は最低でも 2 万文字以上**を目安にし、可能なら **3～8 万文字規模**の詳細レポートを出してください（トークン上限まで使ってよい）
+- **localWorkspaceContext が渡されている場合**: それはユーザーのマシンで収集されたスナップショットです。API はローカルディスクを直接読みません。スナップショットを一次資料としてレポートしてください`,
 };
 
 function normalizeRoleSlug(slug: string): string {
@@ -154,6 +155,22 @@ export interface OrchestratorRequest {
   userId?: string;
   /** Absolute path to user's workspace for file-search / coder tools */
   workspacePath?: string;
+  /**
+   * クライアント（IDE/CLI）がローカルで収集したワークスペース本文。指定時は API はディスクを読まない。
+   */
+  localWorkspaceContext?: string;
+}
+
+/** Leader への追記: 実行モード（本番は IDE スナップショット前提） */
+function augmentLeaderInput(req: OrchestratorRequest): string {
+  let s = req.input;
+  if (req.localWorkspaceContext?.trim()) {
+    s +=
+      "\n\n【実行モード】IDE/CLI 連携: リクエストに `localWorkspaceContext`（ローカルで収集したワークスペーススナップショット）が付きます。API サーバーはユーザーの PC のパスを直接読みません。file-searcher はこのスナップショットを根拠に詳細な Markdown レポートを書いてください。";
+  } else if (req.workspacePath) {
+    s += `\n\n【実行モード】workspacePath=${req.workspacePath} が渡されます。API プロセスがそのマシン上でパスにアクセスできるときだけサーバー側ファイルツールが使えます（Vercel 等の本番では通常不可）。本番では localWorkspaceContext の利用を推奨します。`;
+  }
+  return s;
 }
 
 export interface OrchestratorResult {
@@ -530,7 +547,7 @@ export async function runAgent(
   const leaderResult = await executeTask({
     provider: leaderProvider,
     config: { apiKey: leaderApiKey },
-    input: req.input,
+    input: augmentLeaderInput(req),
     role: { slug: "leader", name: "Leader" },
     systemPrompt: LEADER_SYSTEM_PROMPT,
     chatHistory: req.chatHistory,
@@ -711,6 +728,7 @@ export async function runAgent(
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
             workspacePath: req.workspacePath,
+            localWorkspaceContext: req.localWorkspaceContext,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (msg) => log(`  [coder] ${msg.trim()}`)
@@ -722,6 +740,7 @@ export async function runAgent(
           role: { slug: role.slug, name: role.name },
           mode: task.mode,
           workspacePath: req.workspacePath,
+          localWorkspaceContext: req.localWorkspaceContext,
           ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
         });
 
@@ -855,7 +874,7 @@ export async function runAgent(
     }
 
     const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
-    const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+    const synthesisInput = `## ユーザーの元のリクエスト:\n${augmentLeaderInput(req)}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
 
     log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName}`);
     const synthesisMaxTokens = ROLE_SYNTHESIS_MAX_TOKENS[synthesisRoleSlug];
@@ -1169,7 +1188,7 @@ async function runAgentStreamCore(
     {
       provider: leaderProvider,
       config: { apiKey: leaderApiKey },
-      input: req.input,
+      input: augmentLeaderInput(req),
       role: { slug: "leader", name: "Leader" },
       systemPrompt: LEADER_SYSTEM_PROMPT,
       chatHistory: req.chatHistory,
@@ -1395,6 +1414,7 @@ async function runAgentStreamCore(
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
             workspacePath: req.workspacePath,
+            localWorkspaceContext: req.localWorkspaceContext,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (msg) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text: msg })
@@ -1407,6 +1427,7 @@ async function runAgentStreamCore(
             role: { slug: role.slug, name: role.name },
             mode: task.mode,
             workspacePath: req.workspacePath,
+            localWorkspaceContext: req.localWorkspaceContext,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
           },
           (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
@@ -1594,7 +1615,7 @@ async function runAgentStreamCore(
       req.authenticated
     );
 
-    const synthesisInput = `## ユーザーの元のリクエスト:\n${req.input}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+    const synthesisInput = `## ユーザーの元のリクエスト:\n${augmentLeaderInput(req)}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
 
     emit({
       type: "synthesis_start",

@@ -148,8 +148,9 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         const numbered = selected.map((line, i) => `${String(start + i).padStart(5)}| ${line}`).join("\n");
         const header = `File: ${args.path} (${lines.length} lines total, showing ${start}-${end})\n`;
 
-        if (numbered.length > 100000) {
-          return header + numbered.slice(0, 100000) + "\n...[truncated]";
+        const maxReadChars = 900_000;
+        if (numbered.length > maxReadChars) {
+          return header + numbered.slice(0, maxReadChars) + "\n...[truncated]";
         }
         return header + numbered;
       }
@@ -211,8 +212,9 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
           if (stderr) output += (output ? "\n[stderr]\n" : "[stderr]\n") + stderr;
           if (!output) output = "(no output)";
 
-          if (output.length > 50000) {
-            output = output.slice(0, 50000) + "\n...[truncated]";
+          const maxCmdOut = 400_000;
+          if (output.length > maxCmdOut) {
+            output = output.slice(0, maxCmdOut) + "\n...[truncated]";
           }
           return output;
         } catch (err: unknown) {
@@ -235,11 +237,18 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         grepArgs.push(args.query as string, dir);
 
         try {
-          const { stdout } = await execFileAsync("grep", grepArgs, { timeout: 15000 });
+          const { stdout } = await execFileAsync("grep", grepArgs, {
+            timeout: 60000,
+            maxBuffer: 12 * 1024 * 1024,
+          });
           const lines = stdout.split("\n").filter(Boolean);
           if (lines.length === 0) return "No matches found.";
-          if (lines.length > 100) {
-            return lines.slice(0, 100).join("\n") + `\n...[${lines.length - 100} more matches. Be more specific.]`;
+          const maxGrepLines = 1000;
+          if (lines.length > maxGrepLines) {
+            return (
+              lines.slice(0, maxGrepLines).join("\n") +
+              `\n...[${lines.length - maxGrepLines} more matches. Narrow query or directory.]`
+            );
           }
           return stdout;
         } catch (err: unknown) {

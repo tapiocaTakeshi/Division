@@ -51,6 +51,11 @@ const TOOLS = [
           description:
             "Absolute path to user's workspace for file-search and coder tools (e.g. /Users/me/project)",
         },
+        localWorkspaceContext: {
+          type: "string",
+          description:
+            "Workspace snapshot text collected locally by IDE/CLI (Markdown). When set, the API does not read the user's disk; file-searcher uses this as primary source.",
+        },
       },
       required: ["input"],
     },
@@ -95,6 +100,11 @@ const TOOLS = [
           type: "string",
           description:
             "Absolute path to user's workspace for file-search and coder tools (e.g. /Users/me/project)",
+        },
+        localWorkspaceContext: {
+          type: "string",
+          description:
+            "Workspace snapshot from IDE/CLI. API does not read local disk when this is provided.",
         },
       },
       required: ["input"],
@@ -192,12 +202,22 @@ async function handleDivisionRun(args: Record<string, unknown>, authenticated: b
   const overrides = args.overrides as Record<string, string> | undefined;
   const divisionApiKey = args.divisionApiKey as string | undefined;
   const workspacePath = args.workspacePath as string | undefined;
+  const localWorkspaceContext = args.localWorkspaceContext as string | undefined;
 
-  const request: { projectId: string; input: string; overrides?: Record<string, string>; divisionApiKey?: string; authenticated?: boolean; workspacePath?: string } = {
+  const request: {
+    projectId: string;
+    input: string;
+    overrides?: Record<string, string>;
+    divisionApiKey?: string;
+    authenticated?: boolean;
+    workspacePath?: string;
+    localWorkspaceContext?: string;
+  } = {
     projectId,
     input,
     authenticated,
     workspacePath,
+    localWorkspaceContext,
   };
   if (overrides && Object.keys(overrides).length > 0) {
     request.overrides = overrides;
@@ -320,12 +340,22 @@ async function handleDivisionStream(args: Record<string, unknown>, authenticated
   const overrides = args.overrides as Record<string, string> | undefined;
   const divisionApiKey = args.divisionApiKey as string | undefined;
   const workspacePath = args.workspacePath as string | undefined;
+  const localWorkspaceContext = args.localWorkspaceContext as string | undefined;
 
-  const request: { projectId: string; input: string; overrides?: Record<string, string>; divisionApiKey?: string; authenticated?: boolean; workspacePath?: string } = {
+  const request: {
+    projectId: string;
+    input: string;
+    overrides?: Record<string, string>;
+    divisionApiKey?: string;
+    authenticated?: boolean;
+    workspacePath?: string;
+    localWorkspaceContext?: string;
+  } = {
     projectId,
     input,
     authenticated,
     workspacePath,
+    localWorkspaceContext,
   };
   if (overrides && Object.keys(overrides).length > 0) {
     request.overrides = overrides;

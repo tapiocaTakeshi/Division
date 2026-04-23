@@ -33,6 +33,11 @@ export interface ExecutionRequest {
   chatHistory?: ChatMessage[];
   /** Override workspace root for file-search / coder tools (absolute path on the host) */
   workspacePath?: string;
+  /**
+   * IDE / CLI がローカルで読んだワークスペースのスナップショット（Markdown 等）。
+   * 指定時は本番 API はユーザーのディスクを読まず、この内容を一次資料にする（Cursor 系の流れ）。
+   */
+  localWorkspaceContext?: string;
 }
 
 export interface ExecutionResult {
@@ -707,7 +712,8 @@ ${req.input}
 関連するファイルを list_directory, search_files, read_file で調査してください。
 search_files の query にはコード上のキーワード（関数名、変数名、import文等）を英語で指定してください。日本語テキストでの検索は避けてください。`;
 
-  const MAX_LOOPS = 15;
+  /** Deeper exploration → richer markdown context for file-searcher (was 15). */
+  const MAX_LOOPS = 36;
   const apiTypeEff = effectiveApiType(req.provider);
 
   while (loopCount < MAX_LOOPS) {
@@ -786,7 +792,10 @@ search_files の query にはコード上のキーワード（関数名、変数
 
       chatHistory.push({ role: "user", content: currentInput });
       chatHistory.push({ role: "assistant", content: result.output });
-      currentInput = `ツール実行結果 (${toolName}):\n${toolResult.slice(0, 50000)}\n\n他に調査が必要なら次のツールを指定してください。十分なら {"done": true} を出力してください。`;
+      const toolFeedbackCap = 450_000;
+      const feedback =
+        toolResult.length > toolFeedbackCap ? toolResult.slice(0, toolFeedbackCap) + "\n...[truncated]" : toolResult;
+      currentInput = `ツール実行結果 (${toolName}):\n${feedback}\n\n他に調査が必要なら次のツールを指定してください。十分なら {"done": true} を出力してください。`;
     } else {
       break;
     }
@@ -813,10 +822,13 @@ export async function executeCoderLoop(
     logger.info(`[Coder] ${msg}`);
   }
 
-  log(`Starting coder loop for: ${req.input.slice(0, 100)}...`);
-
+  const bundle = (req.localWorkspaceContext || "").trim();
   const chatHistory: ChatMessage[] = [...(req.chatHistory || [])];
-  let currentInput = req.input;
+  let currentInput = bundle
+    ? `## ローカルワークスペーススナップショット（クライアント側で収集・API はディスク非アクセス）\n\n${bundle}\n\n---\n\n${req.input}`
+    : req.input;
+
+  log(`Starting coder loop for: ${currentInput.slice(0, 100)}...`);
   let iteration = 0;
   let finalSummary = "";
 
@@ -909,16 +921,27 @@ export async function executeTaskStream(
 ): Promise<ExecutionResult> {
   const start = Date.now();
 
-  // For file-search role, perform a multi-turn tool loop to gather local file context.
-  // Note: "search" role uses Perplexity web search and should NOT enter the tool loop.
+  // file-searcher: prefer client-provided snapshot (IDE pattern); else server-side tool loop only if path is on this machine.
   let enrichedInput = req.input;
   if (req.role.slug === "file-searcher") {
-    logger.info(`[AI Executor] file-searcher detected, workspacePath=${req.workspacePath || "(none)"}`);
-    try {
-      enrichedInput = await gatherToolContext(req);
-      logger.info(`[AI Executor] gatherToolContext completed, enrichedInput length=${enrichedInput.length}`);
-    } catch (err) {
-      logger.error("[AI Executor] Error in gatherToolContext", err);
+    const bundle = (req.localWorkspaceContext || "").trim();
+    if (bundle.length > 0) {
+      logger.info(
+        `[AI Executor] file-searcher: client localWorkspaceContext (${bundle.length} chars), skip server fs`
+      );
+      enrichedInput = `# ローカルワークスペーススナップショット（IDE / CLI が収集）\n\n${bundle}\n\n---\n\n## 依頼・分析してほしいこと\n\n${req.input}`;
+    } else if (isWorkspaceAccessible(req.workspacePath)) {
+      logger.info(`[AI Executor] file-searcher: server gatherToolContext, workspacePath=${req.workspacePath}`);
+      try {
+        enrichedInput = await gatherToolContext(req);
+        logger.info(`[AI Executor] gatherToolContext completed, enrichedInput length=${enrichedInput.length}`);
+      } catch (err) {
+        logger.error("[AI Executor] Error in gatherToolContext", err);
+      }
+    } else {
+      logger.info(
+        `[AI Executor] file-searcher: no bundle and no accessible workspacePath; using task input only`
+      );
     }
   }
 
@@ -1100,15 +1123,24 @@ export async function executeTaskStream(
 export async function executeTask(req: ExecutionRequest): Promise<ExecutionResult> {
   const start = Date.now();
 
-  // For file-searcher role, gather context via tool loop first
   let enrichedInput = req.input;
   if (req.role.slug === "file-searcher") {
-    logger.info(`[AI Executor] file-searcher detected (non-stream), workspacePath=${req.workspacePath || "(none)"}`);
-    try {
-      enrichedInput = await gatherToolContext(req);
-      logger.info(`[AI Executor] gatherToolContext completed (non-stream), enrichedInput length=${enrichedInput.length}`);
-    } catch (err) {
-      logger.error("[AI Executor] Error in gatherToolContext (non-stream)", err);
+    const bundle = (req.localWorkspaceContext || "").trim();
+    if (bundle.length > 0) {
+      logger.info(
+        `[AI Executor] file-searcher (non-stream): client localWorkspaceContext (${bundle.length} chars)`
+      );
+      enrichedInput = `# ローカルワークスペーススナップショット（IDE / CLI が収集）\n\n${bundle}\n\n---\n\n## 依頼・分析してほしいこと\n\n${req.input}`;
+    } else if (isWorkspaceAccessible(req.workspacePath)) {
+      logger.info(`[AI Executor] file-searcher (non-stream), workspacePath=${req.workspacePath || "(none)"}`);
+      try {
+        enrichedInput = await gatherToolContext(req);
+        logger.info(`[AI Executor] gatherToolContext completed (non-stream), enrichedInput length=${enrichedInput.length}`);
+      } catch (err) {
+        logger.error("[AI Executor] Error in gatherToolContext (non-stream)", err);
+      }
+    } else {
+      logger.info(`[AI Executor] file-searcher (non-stream): no bundle, no accessible workspace`);
     }
   }
 

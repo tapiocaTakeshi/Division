@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useOrchestraStore } from '../stores/orchestraStore'
 
 interface PromptInputProps {
   onSubmit: (input: string) => void
@@ -9,6 +10,10 @@ interface PromptInputProps {
 export function PromptInput({ onSubmit, isRunning, onStop }: PromptInputProps) {
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const localWorkspaceContext = useOrchestraStore((s) => s.localWorkspaceContext)
+  const setLocalWorkspaceContext = useOrchestraStore((s) => s.setLocalWorkspaceContext)
+  const clearLocalWorkspaceContext = useOrchestraStore((s) => s.clearLocalWorkspaceContext)
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -21,6 +26,18 @@ export function PromptInput({ onSubmit, isRunning, onStop }: PromptInputProps) {
     if (!value.trim() || isRunning) return
     onSubmit(value.trim())
     setValue('')
+  }
+
+  const handleSnapshotFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : ''
+      setLocalWorkspaceContext(text)
+    }
+    reader.readAsText(file)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -65,6 +82,36 @@ export function PromptInput({ onSubmit, isRunning, onStop }: PromptInputProps) {
             </svg>
           </button>
         )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-conductor-muted">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".md,.txt,text/markdown,text/plain"
+          className="hidden"
+          onChange={handleSnapshotFile}
+        />
+        <button
+          type="button"
+          disabled={isRunning}
+          onClick={() => fileRef.current?.click()}
+          className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-40 transition-colors"
+        >
+          ワークスペーススナップショット（.md / .txt）
+        </button>
+        {localWorkspaceContext ? (
+          <>
+            <span className="text-white/50">{localWorkspaceContext.length.toLocaleString()} 文字</span>
+            <button
+              type="button"
+              disabled={isRunning}
+              onClick={clearLocalWorkspaceContext}
+              className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-40 transition-colors"
+            >
+              クリア
+            </button>
+          </>
+        ) : null}
       </div>
     </div>
   )

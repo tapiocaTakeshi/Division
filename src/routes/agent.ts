@@ -18,6 +18,10 @@ const agentRunSchema = z.object({
   })).optional(),
   /** Absolute path to user's workspace for file-search / coder tools */
   workspacePath: z.string().optional(),
+  /**
+   * IDE/CLI がローカルで収集したワークスペース本文（Markdown 等）。指定時 API はユーザーのディスクを直接読まない。
+   */
+  localWorkspaceContext: z.string().optional(),
 });
 
 const agentStreamSchema = agentRunSchema.extend({

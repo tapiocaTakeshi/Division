@@ -20,6 +20,8 @@ const createTasksSchema = z.object({
   })).optional(),
   /** Absolute path to user's workspace for file-search / coder tools */
   workspacePath: z.string().optional(),
+  /** IDE/CLI 連携: ローカルで収集したスナップショット */
+  localWorkspaceContext: z.string().optional(),
 });
 
 const updateTaskSchema = z.object({
@@ -217,7 +219,7 @@ taskCreateRouter.post(
       return;
     }
 
-    const { projectId, input, apiKeys, chatHistory, workspacePath } = parsed.data;
+    const { projectId, input, apiKeys, chatHistory, workspacePath, localWorkspaceContext } = parsed.data;
 
     // Verify project exists
     const project = await prisma.project.findUnique({
@@ -270,9 +272,11 @@ taskCreateRouter.post(
       ? "【これまでの会話履歴】\n" + chatHistory.map(m => `${m.role === 'user' ? 'ユーザー' : 'AI'}: ${m.content}`).join('\n\n') + "\n\n"
       : "";
 
-    const workspaceHint = workspacePath
-      ? `\n\n【実行環境】ローカルプロジェクトが開かれています（タスク実行時に workspacePath が渡されます）。Layer 1 に file-searcher を必ず含めてください。\n`
-      : "";
+    const workspaceHint = localWorkspaceContext?.trim()
+      ? `\n\n【実行環境】IDE/CLI から localWorkspaceContext（ワークスペーススナップショット）が付与されます。API はローカルディスクを直接読みません。Layer 1 に file-searcher を必ず含めてください。\n`
+      : workspacePath
+        ? `\n\n【実行環境】ローカルプロジェクトが開かれています（タスク実行時に workspacePath が渡されます）。Layer 1 に file-searcher を必ず含めてください。\n`
+        : "";
 
     const enrichedInput = `${formattedHistory}【ユーザーの最新のリクエスト】\n${input}${workspaceHint}`;
 

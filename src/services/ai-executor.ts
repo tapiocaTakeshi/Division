@@ -86,6 +86,28 @@ const ENV_KEY_MAP: Record<string, string> = {
   moonshot: "MOONSHOT_API_KEY",
 };
 
+/**
+ * If Provider.apiType is wrongly left as "openai" while apiBaseUrl points at another vendor,
+ * we would POST OpenAI /v1/responses + body to e.g. api.anthropic.com (404) or perplexity (401).
+ * Infer the wire protocol from the host when declared type is openai.
+ */
+function effectiveApiType(provider: ExecutionRequest["provider"]): string {
+  const declared = provider.apiType;
+  if (declared !== "openai") return declared;
+  const base = (provider.apiBaseUrl || "").toLowerCase();
+  if (base.includes("api.anthropic.com") || base.includes("anthropic.com")) return "anthropic";
+  if (base.includes("api.perplexity.ai") || base.includes("perplexity.ai")) return "perplexity";
+  if (base.includes("generativelanguage.googleapis.com")) return "google";
+  if (base.includes("api.x.ai")) return "xai";
+  if (base.includes("deepseek.com")) return "deepseek";
+  if (base.includes("mistral.ai")) return "mistral";
+  if (base.includes("llama.com")) return "meta";
+  if (base.includes("dashscope")) return "qwen";
+  if (base.includes("cohere.com")) return "cohere";
+  if (base.includes("moonshot")) return "moonshot";
+  return declared;
+}
+
 /** Trim keys so .env / copy-paste whitespace does not break provider auth. */
 function normalizeApiKeySegment(raw: string | undefined): string {
   if (raw == null) return "";
@@ -138,8 +160,11 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
 
 /** API types that use the OpenAI-compatible chat completions format */
 const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
-  /** Perplexity: official path is POST /v1/sonar (not legacy /chat/completions). */
-  perplexity: "/v1/sonar",
+  /**
+   * Perplexity: OpenAI SDK uses POST /chat/completions; Perplexity documents this as an alias
+   * of /v1/sonar. Using /chat/completions avoids edge cases with direct /v1/sonar calls.
+   */
+  perplexity: "/chat/completions",
   xai: "/v1/chat/completions",
   deepseek: "/chat/completions",
   mistral: "/v1/chat/completions",
@@ -174,7 +199,7 @@ function buildRequestBody(
   const FALLBACK_ENDPOINTS: Record<string, string> = {
     openai: "/v1/responses",
     anthropic: "/v1/messages",
-    perplexity: "/v1/sonar",
+    perplexity: "/chat/completions",
     xai: "/v1/chat/completions",
     deepseek: "/chat/completions",
     mistral: "/v1/chat/completions",
@@ -186,8 +211,8 @@ function buildRequestBody(
 
   // Resolve the endpoint: prefer DB value, fall back to hardcoded
   let resolvedEndpoint = apiEndpoint || FALLBACK_ENDPOINTS[apiType] || "";
-  if (apiType === "perplexity" && resolvedEndpoint === "/chat/completions") {
-    resolvedEndpoint = "/v1/sonar";
+  if (apiType === "perplexity" && resolvedEndpoint === "/v1/sonar") {
+    resolvedEndpoint = "/chat/completions";
   }
 
   // OpenAI Responses API (/v1/responses)
@@ -223,14 +248,24 @@ function buildRequestBody(
     }
     messages.push({ role: "user", content: input });
 
-    // Opus 4.7+ uses "adaptive" thinking; older models use "enabled"
-    const useAdaptive = /opus-4|claude-4/.test(resolvedModelId);
-    const thinkingConfig = useAdaptive
-      ? { type: "adaptive" as const }
-      : {
-          type: "enabled" as const,
-          budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.5), 1024), 32768),
-        };
+    /**
+     * Extended thinking: adaptive only for Opus 4.7+, Opus 4.6, Sonnet 4.6 (Anthropic docs).
+     * Do NOT use /opus-4/ — that matches Opus 4.5 / 4.1 / 4.0 IDs and triggers 400s.
+     * Claude Haiku 3.x: omit thinking (not supported like Claude 4 family).
+     */
+    const omitThinking = /haiku-3-|claude-3-haiku|claude-haiku-3-\d/.test(resolvedModelId);
+    const useAdaptive =
+      resolvedModelId.startsWith("claude-opus-4-7") ||
+      resolvedModelId.startsWith("claude-opus-4-6") ||
+      resolvedModelId.startsWith("claude-sonnet-4-6");
+    const thinkingConfig = omitThinking
+      ? undefined
+      : useAdaptive
+        ? { type: "adaptive" as const }
+        : {
+            type: "enabled" as const,
+            budget_tokens: Math.min(Math.max(Math.floor(maxTokens * 0.5), 1024), 32768),
+          };
 
     return {
       url: resolvedEndpoint,
@@ -244,7 +279,7 @@ function buildRequestBody(
         max_tokens: maxTokens,
         system: systemPrompt,
         messages,
-        thinking: thinkingConfig,
+        ...(thinkingConfig ? { thinking: thinkingConfig } : {}),
       },
     };
   }
@@ -673,6 +708,7 @@ ${req.input}
 search_files の query にはコード上のキーワード（関数名、変数名、import文等）を英語で指定してください。日本語テキストでの検索は避けてください。`;
 
   const MAX_LOOPS = 15;
+  const apiTypeEff = effectiveApiType(req.provider);
 
   while (loopCount < MAX_LOOPS) {
     loopCount++;
@@ -680,7 +716,7 @@ search_files の query にはコード上のキーワード（関数名、変数
     const systemPrompt = req.systemPrompt || SEARCH_AGENT_PROMPT;
     const modelId = (req.config?.model as string) || req.provider.modelId;
     const requestSpec = buildRequestBody(
-      req.provider.apiType,
+      apiTypeEff,
       modelId,
       currentInput,
       systemPrompt,
@@ -691,18 +727,18 @@ search_files の query にはコード上のキーワード（関数名、変数
 
     if (!requestSpec) break;
 
-    const apiKey = resolveApiKeyFromConfig(req.config, req.provider.apiType);
+    const apiKey = resolveApiKeyFromConfig(req.config, apiTypeEff);
     if (!apiKey) break;
 
-    if (req.provider.apiType === "anthropic") {
+    if (apiTypeEff === "anthropic") {
       requestSpec.headers["x-api-key"] = apiKey;
-    } else if (req.provider.apiType === "google") {
+    } else if (apiTypeEff === "google") {
       requestSpec.headers["x-goog-api-key"] = apiKey;
     } else {
       requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
     }
 
-    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[req.provider.apiType] || "";
+    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[apiTypeEff] || "";
     const fullUrl = `${baseUrl}${requestSpec.url}`;
 
     let result: { output: string; status: string };
@@ -717,7 +753,7 @@ search_files の query にはコード上のキーワード（関数名、変数
         break;
       }
       const data = await response.json();
-      const parsed = parseResponse(req.provider.apiType, data);
+      const parsed = parseResponse(apiTypeEff, data);
       result = { output: parsed.output, status: "success" };
     } catch (err) {
       logger.error("[Tool Loop] Fetch error", err);
@@ -889,9 +925,10 @@ export async function executeTaskStream(
   const systemPrompt =
     req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
 
+  const apiTypeEff = effectiveApiType(req.provider);
   const modelId = (req.config?.model as string) || req.provider.modelId;
   const requestSpec = buildRequestBody(
-    req.provider.apiType,
+    apiTypeEff,
     modelId,
     enrichedInput,
     systemPrompt,
@@ -905,46 +942,49 @@ export async function executeTaskStream(
       output: "",
       durationMs: Date.now() - start,
       status: "error",
-      errorMsg: `Unsupported API type: ${req.provider.apiType}`,
+      errorMsg: `Unsupported API type: ${apiTypeEff}`,
     };
   }
 
-  const apiKey = resolveApiKeyFromConfig(req.config, req.provider.apiType);
+  const apiKey = resolveApiKeyFromConfig(req.config, apiTypeEff);
   if (!apiKey) {
-    const envVar = ENV_KEY_MAP[req.provider.apiType];
+    const envVar = ENV_KEY_MAP[apiTypeEff];
     return {
       output: "",
       durationMs: Date.now() - start,
       status: "error",
-      errorMsg: `No API key found for ${req.provider.name} (${req.provider.apiType}). Set ${envVar || "the API key"} environment variable or authenticate with a valid Division API key.`,
+      errorMsg: `No API key found for ${req.provider.name} (${apiTypeEff}). Set ${envVar || "the API key"} environment variable or authenticate with a valid Division API key.`,
     };
   }
 
   // Update headers with the resolved API key
-  if (req.provider.apiType === "openai") {
+  if (apiTypeEff === "openai") {
     requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
-  } else if (req.provider.apiType === "anthropic") {
+  } else if (apiTypeEff === "anthropic") {
     requestSpec.headers["x-api-key"] = apiKey;
-  } else if (req.provider.apiType === "google") {
+  } else if (apiTypeEff === "google") {
     requestSpec.headers["x-goog-api-key"] = apiKey;
-  } else if (OPENAI_COMPATIBLE_TYPES[req.provider.apiType]) {
+  } else if (OPENAI_COMPATIBLE_TYPES[apiTypeEff]) {
     requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
   // Enable streaming
   const { url: streamUrl, body: streamBody } = enableStreaming(
-    req.provider.apiType,
+    apiTypeEff,
     requestSpec.url,
     requestSpec.body
   );
 
   try {
-    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[req.provider.apiType] || "";
+    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[apiTypeEff] || "";
     const fullUrl = `${baseUrl}${streamUrl}`;
 
     console.log(`\n[API] ──── Stream Request ────`);
     console.log(`[API]  POST ${fullUrl}`);
-    console.log(`[API]  Provider: ${req.provider.name} (${req.provider.modelId})`);
+    console.log(
+      `[API]  Provider: ${req.provider.name} (${req.provider.modelId})` +
+        (apiTypeEff !== req.provider.apiType ? ` [apiType ${req.provider.apiType}→${apiTypeEff}]` : "")
+    );
     console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
     console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
     console.log(`[API]  Body: ${truncate(JSON.stringify(streamBody), 300)}`);
@@ -1005,7 +1045,7 @@ export async function executeTaskStream(
         const data = line.slice(6).trim();
         if (data === "[DONE]") continue;
 
-        const chunk = parseStreamChunk(req.provider.apiType, data);
+        const chunk = parseStreamChunk(apiTypeEff, data);
         if (chunk.text) {
           accumulated += chunk.text;
           chunkCount++;
@@ -1075,9 +1115,10 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   const systemPrompt =
     req.systemPrompt || `You are acting as the ${req.role.name} (${req.role.slug}) role.`;
 
+  const apiTypeEff = effectiveApiType(req.provider);
   const modelId = (req.config?.model as string) || req.provider.modelId;
   const requestSpec = buildRequestBody(
-    req.provider.apiType,
+    apiTypeEff,
     modelId,
     enrichedInput,
     systemPrompt,
@@ -1087,44 +1128,47 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   );
 
   if (!requestSpec) {
-    logger.error(`[AI Executor] Unsupported API type: ${req.provider.apiType}`, { provider: req.provider.name });
+    logger.error(`[AI Executor] Unsupported API type: ${apiTypeEff}`, { provider: req.provider.name });
     return {
       output: "",
       durationMs: Date.now() - start,
       status: "error",
-      errorMsg: `Unsupported API type: ${req.provider.apiType}`,
+      errorMsg: `Unsupported API type: ${apiTypeEff}`,
     };
   }
 
-  const apiKey = resolveApiKeyFromConfig(req.config, req.provider.apiType);
+  const apiKey = resolveApiKeyFromConfig(req.config, apiTypeEff);
   if (!apiKey) {
-    const envVar = ENV_KEY_MAP[req.provider.apiType];
+    const envVar = ENV_KEY_MAP[apiTypeEff];
     return {
       output: "",
       durationMs: Date.now() - start,
       status: "error",
-      errorMsg: `No API key found for ${req.provider.name} (${req.provider.apiType}). Set ${envVar || "the API key"} environment variable or authenticate with a valid Division API key.`,
+      errorMsg: `No API key found for ${req.provider.name} (${apiTypeEff}). Set ${envVar || "the API key"} environment variable or authenticate with a valid Division API key.`,
     };
   }
 
   // Update headers with the resolved API key
-  if (req.provider.apiType === "openai") {
+  if (apiTypeEff === "openai") {
     requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
-  } else if (req.provider.apiType === "anthropic") {
+  } else if (apiTypeEff === "anthropic") {
     requestSpec.headers["x-api-key"] = apiKey;
-  } else if (req.provider.apiType === "google") {
+  } else if (apiTypeEff === "google") {
     requestSpec.headers["x-goog-api-key"] = apiKey;
-  } else if (OPENAI_COMPATIBLE_TYPES[req.provider.apiType]) {
+  } else if (OPENAI_COMPATIBLE_TYPES[apiTypeEff]) {
     requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
   try {
-    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[req.provider.apiType] || "";
+    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[apiTypeEff] || "";
     const fullUrl = `${baseUrl}${requestSpec.url}`;
 
     console.log(`\n[API] ──── Request ────`);
     console.log(`[API]  POST ${fullUrl}`);
-    console.log(`[API]  Provider: ${req.provider.name} (${req.provider.modelId})`);
+    console.log(
+      `[API]  Provider: ${req.provider.name} (${req.provider.modelId})` +
+        (apiTypeEff !== req.provider.apiType ? ` [apiType ${req.provider.apiType}→${apiTypeEff}]` : "")
+    );
     console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
     console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
     console.log(`[API]  Body: ${truncate(JSON.stringify(requestSpec.body), 300)}`);
@@ -1151,7 +1195,7 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     }
 
     const data = await response.json();
-    const parsed = parseResponse(req.provider.apiType, data);
+    const parsed = parseResponse(apiTypeEff, data);
     const durationMs = Date.now() - start;
 
     logger.info(`[AI Executor] Success: ${req.provider.displayName} (${durationMs}ms)`, {

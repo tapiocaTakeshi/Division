@@ -7,7 +7,7 @@ const PROVIDER_ENDPOINT_DEFAULTS: Record<string, { apiEndpoint: string; modelsEn
   openai: { apiEndpoint: "/v1/responses", modelsEndpoint: "/v1/models" },
   anthropic: { apiEndpoint: "/v1/messages", modelsEndpoint: "/v1/models" },
   google: { apiEndpoint: "", modelsEndpoint: "/v1beta/models" },
-  perplexity: { apiEndpoint: "/v1/sonar", modelsEndpoint: "" },
+  perplexity: { apiEndpoint: "/chat/completions", modelsEndpoint: "" },
   xai: { apiEndpoint: "/v1/chat/completions", modelsEndpoint: "/v1/models" },
   deepseek: { apiEndpoint: "/chat/completions", modelsEndpoint: "/models" },
   mistral: { apiEndpoint: "/v1/chat/completions", modelsEndpoint: "/v1/models" },

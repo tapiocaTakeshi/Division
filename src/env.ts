@@ -10,6 +10,16 @@
  * Must be imported before any database or Supabase client usage.
  */
 
+import { config as loadEnvFile } from "dotenv";
+import { resolve } from "path";
+
+// Local / non-Vercel: load .env then .env.local so provider API keys resolve (ANTHROPIC_API_KEY, etc.)
+if (!process.env.VERCEL) {
+  const root = resolve(__dirname, "..");
+  loadEnvFile({ path: resolve(root, ".env") });
+  loadEnvFile({ path: resolve(root, ".env.local"), override: true });
+}
+
 function setIfMissing(target: string, ...sources: string[]) {
   if (process.env[target]) return;
   for (const source of sources) {

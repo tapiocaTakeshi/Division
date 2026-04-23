@@ -42,7 +42,7 @@ const ROLE_MAX_TOKENS: Record<string, number> = {
   searcher: 8192,
   researcher: 16384,
   "deep-research": 32768,
-  "file-searcher": 16384,
+  "file-searcher": 163840,
   ideaman: 16384,
 };
 
@@ -315,28 +315,56 @@ function parseLeaderResponse(output: string): LeaderParsedResponse {
   }
 }
 
-/** Leader が file-searcher を省略することがあるため、欠けていれば先頭に挿入し dependsOn を +1 ずらす */
+/** file-searcher を常にタスク配列の先頭に配置する。
+ *  - 欠けていれば先頭に挿入し、全タスクの dependsOn を +1 ずらす。
+ *  - 途中/末尾にある場合は先頭に移動し、dependsOn インデックスを補正する。
+ */
 function ensureFileSearcherSubTask(tasks: SubTask[]): SubTask[] {
-  const hasFs = tasks.some(
+  const fsIdx = tasks.findIndex(
     (t) => t.role === "file-searcher" || t.role === "file_searcher"
   );
-  if (hasFs) return tasks;
 
-  const inserted: SubTask = {
-    role: "file-searcher",
-    mode: "chat",
-    input:
-      "プロジェクト内の既存UI、スタイル、テーマ、HTML/CSS、設定ファイルを検索し、このリクエストに関連する実装や資産を把握する。",
-    reason: "既存デザインとの整合と重複回避のため",
+  if (fsIdx === 0) return tasks;
+
+  if (fsIdx < 0) {
+    const inserted: SubTask = {
+      role: "file-searcher",
+      mode: "chat",
+      input:
+        "プロジェクト内の既存UI、スタイル、テーマ、HTML/CSS、設定ファイルを検索し、このリクエストに関連する実装や資産を把握する。",
+      reason: "既存デザインとの整合と重複回避のため",
+      dependsOn: [],
+    };
+
+    const shifted = tasks.map((t) => ({
+      ...t,
+      dependsOn: t.dependsOn?.map((d) => d + 1),
+    }));
+
+    return [inserted, ...shifted];
+  }
+
+  // fsIdx > 0: move the existing file-searcher task to the front.
+  // Index remap: old fsIdx -> 0, old i (i<fsIdx) -> i+1, old i (i>fsIdx) -> i.
+  const remap = (d: number): number => {
+    if (d === fsIdx) return 0;
+    if (d < fsIdx) return d + 1;
+    return d;
+  };
+
+  const movedFs: SubTask = {
+    ...tasks[fsIdx],
     dependsOn: [],
   };
 
-  const shifted = tasks.map((t) => ({
-    ...t,
-    dependsOn: t.dependsOn?.map((d) => d + 1),
-  }));
+  const rest = tasks
+    .filter((_, i) => i !== fsIdx)
+    .map((t) => ({
+      ...t,
+      dependsOn: t.dependsOn?.map(remap),
+    }));
 
-  return [inserted, ...shifted];
+  return [movedFs, ...rest];
 }
 
 /** Maps apiType to the corresponding environment variable name */

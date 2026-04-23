@@ -115,7 +115,27 @@ const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
 };
 
 function normalizeRoleSlug(slug: string): string {
-  return ROLE_ALIASES[slug] || slug;
+  const raw = String(slug ?? "").trim();
+  if (!raw) return "";
+  const canon = raw.toLowerCase().replace(/_/g, "-").replace(/\s+/g, "-");
+  return ROLE_ALIASES[canon] ?? canon;
+}
+
+/**
+ * file-searcher / coder（computer_use）は ai-executor がスナップショットを結合する。
+ * それ以外は Leader のサブタスク文だけでは本文を参照できないため、同じスナップショットを付与する。
+ */
+function attachLocalWorkspaceToSubtaskInput(
+  roleSlug: string,
+  mode: string | undefined,
+  enrichedInput: string,
+  bundle: string | undefined
+): string {
+  const b = (bundle || "").trim();
+  if (!b) return enrichedInput;
+  if (roleSlug === "file-searcher") return enrichedInput;
+  if (roleSlug === "coder" || mode === "computer_use") return enrichedInput;
+  return `# ローカルワークスペーススナップショット（クライアントが提供。API はユーザーの PC を直接読みません）\n\n${b}\n\n---\n\n## このタスクでの指示\n\n${enrichedInput}`;
 }
 
 // --- Types ---
@@ -315,7 +335,7 @@ function parseLeaderResponse(output: string): LeaderParsedResponse {
     }
 
     const tasks = parsed.tasks.map((t: Record<string, unknown>) => ({
-      role: String(t.role || ""),
+      role: normalizeRoleSlug(String(t.role || "")),
       mode: String(t.mode || "chat"),
       input: String(t.input || ""),
       reason: String(t.reason || ""),
@@ -337,9 +357,7 @@ function parseLeaderResponse(output: string): LeaderParsedResponse {
  *  - 途中/末尾にある場合は先頭に移動し、dependsOn インデックスを補正する。
  */
 function ensureFileSearcherSubTask(tasks: SubTask[]): SubTask[] {
-  const fsIdx = tasks.findIndex(
-    (t) => t.role === "file-searcher" || t.role === "file_searcher"
-  );
+  const fsIdx = tasks.findIndex((t) => t.role === "file-searcher");
 
   if (fsIdx === 0) return tasks;
 
@@ -707,6 +725,13 @@ export async function runAgent(
         enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
       }
     }
+
+    enrichedInput = attachLocalWorkspaceToSubtaskInput(
+      task.role,
+      task.mode,
+      enrichedInput,
+      req.localWorkspaceContext
+    );
 
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys, req.authenticated);
 
@@ -1385,6 +1410,13 @@ async function runAgentStreamCore(
         enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
       }
     }
+
+    enrichedInput = attachLocalWorkspaceToSubtaskInput(
+      task.role,
+      task.mode,
+      enrichedInput,
+      req.localWorkspaceContext
+    );
 
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys, req.authenticated);
 

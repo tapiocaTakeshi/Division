@@ -48,12 +48,13 @@ model Model {
 
 /// A role/task category (e.g. coding, search, planning, writing)
 model Role {
-  id          String   @id @default(uuid())
-  slug        String   @unique
-  name        String
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(uuid())
+  slug         String   @unique
+  name         String
+  description  String?
+  systemPrompt String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   assignments RoleAssignment[]
   taskLogs    TaskLog[]

@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { runAgent, runAgentStream, StreamEvent } from "../services/orchestrator";
 import { asyncHandler } from "../middleware/async-handler";
+import { normalizeChatHistory } from "../utils/normalize-chat-history";
 
 export const agentRouter = Router();
 
@@ -11,10 +12,16 @@ const agentRunSchema = z.object({
   apiKeys: z.record(z.string()).optional(),
   /** Override provider for specific roles, e.g. { coding: "gemini", search: "gpt" } */
   overrides: z.record(z.string()).optional(),
-  /** Chat history for context */
+  /**
+   * Chat history for context.
+   * OpenAI 互換の `system` / `tool` / `function` / `developer` も受け付け、
+   * サーバ側で `user` / `assistant` に正規化する。
+   */
   chatHistory: z.array(z.object({
-    role: z.enum(["user", "assistant"]),
+    role: z.string(),
     content: z.string(),
+    name: z.string().optional().nullable(),
+    tool_call_id: z.string().optional().nullable(),
   })).optional(),
   /** Absolute path to user's workspace for file-search / coder tools */
   workspacePath: z.string().optional(),
@@ -69,7 +76,12 @@ agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
 
   try {
     const result = await runAgent(
-      { ...parsed.data, authenticated: !!res.locals.authenticated, userId: res.locals.userId as string | undefined },
+      {
+        ...parsed.data,
+        chatHistory: normalizeChatHistory(parsed.data.chatHistory),
+        authenticated: !!res.locals.authenticated,
+        userId: res.locals.userId as string | undefined,
+      },
       (message) => { writeLine({ type: "log", message }); }
     );
     writeLine({ type: "result", data: result });
@@ -161,7 +173,15 @@ agentRouter.post("/stream", asyncHandler(async (req: Request, res: Response) => 
   };
 
   try {
-    await runAgentStream({ ...parsed.data, authenticated: !!res.locals.authenticated, userId: res.locals.userId as string | undefined }, sendEvent);
+    await runAgentStream(
+      {
+        ...parsed.data,
+        chatHistory: normalizeChatHistory(parsed.data.chatHistory),
+        authenticated: !!res.locals.authenticated,
+        userId: res.locals.userId as string | undefined,
+      },
+      sendEvent
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     const errorEvent: StreamEvent = {

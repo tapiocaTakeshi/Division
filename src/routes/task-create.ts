@@ -4,6 +4,7 @@ import { z } from "zod";
 import { executeTask } from "../services/ai-executor";
 import { asyncHandler } from "../middleware/async-handler";
 import { logger } from "../utils/logger";
+import { normalizeChatHistory } from "../utils/normalize-chat-history";
 
 export const taskCreateRouter = Router();
 
@@ -36,10 +37,16 @@ const createTasksSchema = z.object({
   projectId: z.string().min(1),
   input: z.string().min(1),
   apiKeys: z.record(z.string()).optional(),
-  /** Chat history for context */
+  /**
+   * Chat history for context.
+   * OpenAI 互換の `system` / `tool` / `function` / `developer` ロールも受け付け、
+   * サーバ側で `user` / `assistant` に正規化する（情報は本文にプレフィックスで残す）。
+   */
   chatHistory: z.array(z.object({
-    role: z.enum(["user", "assistant"]),
+    role: z.string(),
     content: z.string(),
+    name: z.string().optional().nullable(),
+    tool_call_id: z.string().optional().nullable(),
   })).optional(),
   /** Absolute path to user's workspace for file-search / coder tools */
   workspacePath: z.string().optional(),
@@ -244,7 +251,8 @@ taskCreateRouter.post(
       return;
     }
 
-    const { projectId, input, apiKeys, chatHistory, workspacePath, localWorkspaceContext } = parsed.data;
+    const { projectId, input, apiKeys, workspacePath, localWorkspaceContext } = parsed.data;
+    const chatHistory = normalizeChatHistory(parsed.data.chatHistory);
 
     // Verify project exists
     const project = await prisma.project.findUnique({

@@ -100,40 +100,95 @@ async function calculateCost(
 
 // ===== Webhook =====
 
+/** Timeouts and retry policy. Override via env if needed. */
+const WEBHOOK_TIMEOUT_MS = Number(process.env.USAGE_WEBHOOK_TIMEOUT_MS ?? 30_000);
+const WEBHOOK_MAX_ATTEMPTS = Math.max(1, Number(process.env.USAGE_WEBHOOK_MAX_ATTEMPTS ?? 4));
+const WEBHOOK_RETRY_BASE_MS = Math.max(100, Number(process.env.USAGE_WEBHOOK_RETRY_BASE_MS ?? 500));
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * 1 回分の HTTP POST。タイムアウトと retry は上位 `fireWebhook` で束ねる。
+ * 200 系は `ok`、429/5xx は `retryable`、それ以外の 4xx は `client_error` を返す。
+ */
+async function sendWebhookOnce(
+  url: string,
+  payload: WebhookPayload
+): Promise<
+  | { kind: "ok"; body: string }
+  | { kind: "retryable"; status: number | null; body: string }
+  | { kind: "client_error"; status: number; body: string }
+> {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        /**
+         * Edge Function 側はこのヘッダを優先して冪等性キーとして扱う。
+         * 同じ `usageId` なら何度叩いても二重に credit が引かれない。
+         */
+        "Idempotency-Key": payload.usageId,
+        ...(WEBHOOK_SECRET ? { Authorization: `Bearer ${WEBHOOK_SECRET}` } : {}),
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+    });
+
+    const body = await res.text().catch(() => "");
+
+    if (res.ok) return { kind: "ok", body };
+    if (res.status === 429 || res.status >= 500) {
+      return { kind: "retryable", status: res.status, body: body.slice(0, 500) };
+    }
+    return { kind: "client_error", status: res.status, body: body.slice(0, 500) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { kind: "retryable", status: null, body: msg };
+  }
+}
+
+/**
+ * Webhook 送信 + 指数バックオフ再送。冪等性は `Idempotency-Key: usageId` で担保されるので、
+ * 重複課金を恐れずに安全にリトライできる。
+ */
 async function fireWebhook(payload: WebhookPayload): Promise<{ status: string; response?: string }> {
   if (!WEBHOOK_URL) {
     return { status: "skipped", response: "No USAGE_WEBHOOK_URL configured" };
   }
 
-  try {
-    // If URL contains /functions/ (Supabase Edge Function), use as-is; otherwise append path
-    const url = WEBHOOK_URL.includes("/functions/")
-      ? WEBHOOK_URL
-      : `${WEBHOOK_URL}/api/webhook/usage`;
+  const url = WEBHOOK_URL.includes("/functions/")
+    ? WEBHOOK_URL
+    : `${WEBHOOK_URL}/api/webhook/usage`;
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(WEBHOOK_SECRET ? { Authorization: `Bearer ${WEBHOOK_SECRET}` } : {}),
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10000),
-    });
+  let lastErrorLine = "";
+  for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt++) {
+    const result = await sendWebhookOnce(url, payload);
 
-    const body = await res.text().catch(() => "");
-
-    if (!res.ok) {
-      logger.warn(`[Usage] Webhook failed: ${res.status} ${body.slice(0, 200)}`);
-      return { status: "failed", response: `${res.status}: ${body.slice(0, 200)}` };
+    if (result.kind === "ok") {
+      if (attempt > 1) {
+        logger.info(`[Usage] Webhook succeeded on attempt ${attempt}`);
+      }
+      return { status: "sent", response: result.body.slice(0, 500) };
     }
 
-    return { status: "sent", response: body.slice(0, 500) };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error(`[Usage] Webhook error: ${msg}`);
-    return { status: "error", response: msg };
+    if (result.kind === "client_error") {
+      logger.warn(`[Usage] Webhook client error (no retry): ${result.status} ${result.body.slice(0, 200)}`);
+      return { status: "failed", response: `${result.status}: ${result.body.slice(0, 200)}` };
+    }
+
+    lastErrorLine = result.status ? `${result.status}: ${result.body}` : result.body;
+    if (attempt < WEBHOOK_MAX_ATTEMPTS) {
+      const backoff = Math.round(WEBHOOK_RETRY_BASE_MS * 2 ** (attempt - 1) * (0.5 + Math.random()));
+      logger.warn(
+        `[Usage] Webhook attempt ${attempt}/${WEBHOOK_MAX_ATTEMPTS} failed (${lastErrorLine.slice(0, 160)}); retry in ${backoff}ms`
+      );
+      await sleep(backoff);
+    }
   }
+
+  logger.error(`[Usage] Webhook gave up after ${WEBHOOK_MAX_ATTEMPTS} attempts: ${lastErrorLine.slice(0, 240)}`);
+  return { status: "error", response: lastErrorLine.slice(0, 500) };
 }
 
 // ===== Main API =====

@@ -51,7 +51,9 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 - writer: 文章作成・ドキュメント
 
 【Layer 4 — レビュー】Layer 3に依存
-- reviewer: 品質確認・レビュー・改善提案
+- reviewer: 品質確認・レビュー・改善提案（dependsOn にレビュー対象の coder の index を必ず含める）
+
+オーケストラ実行時: 初回プラン完了後、reviewer の指摘を coder に渡し、coder→reviewer を最大2周ループ（REVIEWER_CODER_MAX_ROUNDS）します。プランに追加タスクは不要です。
 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます

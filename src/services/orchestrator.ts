@@ -228,9 +228,11 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 - writer: 文章作成・ドキュメント（Claude担当）
 
 【Layer 4 — レビュー】Layer 3に依存
-- reviewer: 品質確認・レビュー・改善提案（GPT担当）
+- reviewer: 品質確認・レビュー・改善提案（GPT担当）※ dependsOn には必ず「レビュー対象の coder」のタスク index を含める
 
 【最終統合】reviewer 完了後に自動実行（tasksに含めない）
+
+【オーケストラの自動動作】初回の DAG 完了後、reviewer → coder（レビュー指摘の反映）→ reviewer（再レビュー）のループを最大2周（環境変数 REVIEWER_CODER_MAX_ROUNDS で変更可、0で無効）実行します。タスク本数の増減は不要です。
 
 ## 利用可能なロール一覧
 ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, writer, reviewer
@@ -282,6 +284,58 @@ const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです。
 4. 見出し・リスト・表などを適切に使い、読みやすく構造化してください
 5. 冗長な重複は排除し、簡潔で実用的な成果物にまとめてください
 6. ユーザーのリクエストに直接答える形で出力してください`;
+
+// --- Reviewer ↔ Coder フィードバックループ（初回 DAG 完了後）---
+
+function getReviewerCoderMaxRounds(): number {
+  const raw = process.env.REVIEWER_CODER_MAX_ROUNDS;
+  if (raw === undefined || raw === "") return 2;
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < 0) return 0;
+  return Math.min(5, n);
+}
+
+/**
+ * 最後の reviewer と、その review 対象にできる coder を解決（reviewer.dependsOn を優先）。
+ */
+function findReviewerCoderPair(
+  subTasks: SubTask[],
+  getResult: (i: number) => { status: string; output?: string } | null | undefined,
+  taskOutputs: string[]
+): { reviewerIdx: number; coderIdx: number } | null {
+  if (getReviewerCoderMaxRounds() < 1) return null;
+  const reviewerIndices: number[] = [];
+  for (let i = 0; i < subTasks.length; i++) {
+    if (normalizeRoleSlug(subTasks[i].role) === "reviewer") reviewerIndices.push(i);
+  }
+  if (reviewerIndices.length === 0) return null;
+  const reviewerIdx = Math.max(...reviewerIndices);
+  if (getResult(reviewerIdx)?.status !== "success" || !String(taskOutputs[reviewerIdx] ?? "").trim()) {
+    return null;
+  }
+  const revDeps = subTasks[reviewerIdx].dependsOn || [];
+  let coderIdx = -1;
+  for (const d of revDeps) {
+    if (d < 0 || d >= subTasks.length) continue;
+    const t = subTasks[d];
+    if (normalizeRoleSlug(t.role) === "coder" || t.mode === "computer_use") {
+      coderIdx = d;
+      break;
+    }
+  }
+  if (coderIdx < 0) {
+    for (let j = reviewerIdx - 1; j >= 0; j--) {
+      const t = subTasks[j];
+      if (normalizeRoleSlug(t.role) === "coder" || t.mode === "computer_use") {
+        coderIdx = j;
+        break;
+      }
+    }
+  }
+  if (coderIdx < 0) return null;
+  if (getResult(coderIdx)?.status !== "success") return null;
+  return { reviewerIdx, coderIdx };
+}
 
 // --- API Key Resolution ---
 
@@ -631,7 +685,10 @@ export async function runAgent(
   const taskProviderNames: string[] = new Array(subTasks.length).fill("");
   const completed = new Set<number>();
 
-  async function executeSubTaskNonStream(i: number): Promise<void> {
+  async function executeSubTaskNonStream(
+    i: number,
+    opts?: { inputOverride?: string }
+  ): Promise<void> {
     const task = subTasks[i];
     task.role = normalizeRoleSlug(task.role);
 
@@ -712,27 +769,37 @@ export async function runAgent(
     }
     taskProviderNames[i] = provider.displayName;
 
-    // Build input with context from dependency tasks
-    let enrichedInput = task.input;
-    const deps = task.dependsOn || [];
-    if (deps.length > 0) {
-      const contextParts: string[] = [];
-      for (const depIdx of deps) {
-        if (taskOutputs[depIdx]) {
-          contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
+    let enrichedInput: string;
+    if (opts?.inputOverride !== undefined) {
+      enrichedInput = attachLocalWorkspaceToSubtaskInput(
+        task.role,
+        task.mode,
+        opts.inputOverride,
+        req.localWorkspaceContext
+      );
+    } else {
+      // Build input with context from dependency tasks
+      enrichedInput = task.input;
+      const deps = task.dependsOn || [];
+      if (deps.length > 0) {
+        const contextParts: string[] = [];
+        for (const depIdx of deps) {
+          if (taskOutputs[depIdx]) {
+            contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
+          }
+        }
+        if (contextParts.length > 0) {
+          enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
         }
       }
-      if (contextParts.length > 0) {
-        enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
-      }
-    }
 
-    enrichedInput = attachLocalWorkspaceToSubtaskInput(
-      task.role,
-      task.mode,
-      enrichedInput,
-      req.localWorkspaceContext
-    );
+      enrichedInput = attachLocalWorkspaceToSubtaskInput(
+        task.role,
+        task.mode,
+        enrichedInput,
+        req.localWorkspaceContext
+      );
+    }
 
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys, req.authenticated);
 
@@ -857,6 +924,26 @@ export async function runAgent(
 
     for (const idx of ready) {
       completed.add(idx);
+    }
+  }
+
+  // 4b. Reviewer 出力 → Coder 入力のフィードバックループ（最大 REVIEWER_CODER_MAX_ROUNDS 回）
+  const maxReviewRounds = getReviewerCoderMaxRounds();
+  if (maxReviewRounds > 0) {
+    const pair = findReviewerCoderPair(subTasks, (i) => results[i], taskOutputs);
+    if (pair) {
+      const { reviewerIdx, coderIdx } = pair;
+      let reviewText = String(taskOutputs[reviewerIdx] ?? "");
+      for (let round = 1; round <= maxReviewRounds; round++) {
+        if (!reviewText.trim()) break;
+        log(`[Agent] Reviewer↔Coder ループ: ${round}/${maxReviewRounds}`);
+        const coderOverride = `## レビューからの指摘（この内容に基づき実装を修正・改善してください）\n\n${reviewText}\n\n---\n\n## 直前のあなた（コーダー）の成果\n\n${taskOutputs[coderIdx]}\n\n---\n\n## 元のタスク指示\n\n${subTasks[coderIdx].input}`;
+        await executeSubTaskNonStream(coderIdx, { inputOverride: coderOverride });
+        if (results[coderIdx]?.status !== "success") break;
+        const reviewerOverride = `## 再レビュー対象: コーダーが指摘に対応して更新した成果\n\n${taskOutputs[coderIdx]}\n\n---\n\n## あなたのレビュー観点（元の指示）\n\n${subTasks[reviewerIdx].input}`;
+        await executeSubTaskNonStream(reviewerIdx, { inputOverride: reviewerOverride });
+        reviewText = String(taskOutputs[reviewerIdx] ?? "");
+      }
     }
   }
 
@@ -1310,7 +1397,10 @@ async function runAgentStreamCore(
   const completed = new Set<number>();
 
   /** Execute a single sub-task at the given index */
-  async function executeSubTask(i: number): Promise<void> {
+  async function executeSubTask(
+    i: number,
+    opts?: { inputOverride?: string }
+  ): Promise<void> {
     const task = subTasks[i];
     task.role = normalizeRoleSlug(task.role);
 
@@ -1398,27 +1488,37 @@ async function runAgentStreamCore(
     }
     taskProviderNames[i] = provider.displayName;
 
-    // Build enriched input with context from dependency tasks
-    let enrichedInput = task.input;
-    const deps = task.dependsOn || [];
-    if (deps.length > 0) {
-      const contextParts: string[] = [];
-      for (const depIdx of deps) {
-        if (taskOutputs[depIdx]) {
-          contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
+    let enrichedInput: string;
+    if (opts?.inputOverride !== undefined) {
+      enrichedInput = attachLocalWorkspaceToSubtaskInput(
+        task.role,
+        task.mode,
+        opts.inputOverride,
+        req.localWorkspaceContext
+      );
+    } else {
+      // Build enriched input with context from dependency tasks
+      enrichedInput = task.input;
+      const deps = task.dependsOn || [];
+      if (deps.length > 0) {
+        const contextParts: string[] = [];
+        for (const depIdx of deps) {
+          if (taskOutputs[depIdx]) {
+            contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
+          }
+        }
+        if (contextParts.length > 0) {
+          enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
         }
       }
-      if (contextParts.length > 0) {
-        enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
-      }
-    }
 
-    enrichedInput = attachLocalWorkspaceToSubtaskInput(
-      task.role,
-      task.mode,
-      enrichedInput,
-      req.localWorkspaceContext
-    );
+      enrichedInput = attachLocalWorkspaceToSubtaskInput(
+        task.role,
+        task.mode,
+        enrichedInput,
+        req.localWorkspaceContext
+      );
+    }
 
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys, req.authenticated);
 
@@ -1431,7 +1531,7 @@ async function runAgentStreamCore(
       role: task.role,
       provider: provider.displayName,
       model: provider.modelId,
-      input: task.input,
+      input: opts?.inputOverride ?? task.input,
       mode: task.mode,
     });
 
@@ -1587,6 +1687,28 @@ async function runAgentStreamCore(
 
     emit({ type: "wave_done", id: nextId(), waveIndex: waveNum, wave: waveNum, taskIds: ready.map(taskIdOf), taskIndices: ready });
     waveNum++;
+  }
+
+  // 5b. Reviewer 出力 → Coder 入力のフィードバックループ
+  const maxReviewRoundsStream = getReviewerCoderMaxRounds();
+  if (maxReviewRoundsStream > 0) {
+    const pairS = findReviewerCoderPair(subTasks, (i) => taskResults[i], taskOutputs);
+    if (pairS) {
+      const { reviewerIdx, coderIdx } = pairS;
+      let reviewTextS = String(taskOutputs[reviewerIdx] ?? "");
+      for (let round = 1; round <= maxReviewRoundsStream; round++) {
+        if (!reviewTextS.trim()) break;
+        logger.info(
+          `[Agent] Reviewer↔Coder loop: ${round}/${maxReviewRoundsStream}`
+        );
+        const coderOverrideS = `## レビューからの指摘（この内容に基づき実装を修正・改善してください）\n\n${reviewTextS}\n\n---\n\n## 直前のあなた（コーダー）の成果\n\n${taskOutputs[coderIdx]}\n\n---\n\n## 元のタスク指示\n\n${subTasks[coderIdx].input}`;
+        await executeSubTask(coderIdx, { inputOverride: coderOverrideS });
+        if (taskResults[coderIdx]?.status !== "success") break;
+        const reviewerOverrideS = `## 再レビュー対象: コーダーが指摘に対応して更新した成果\n\n${taskOutputs[coderIdx]}\n\n---\n\n## あなたのレビュー観点（元の指示）\n\n${subTasks[reviewerIdx].input}`;
+        await executeSubTask(reviewerIdx, { inputOverride: reviewerOverrideS });
+        reviewTextS = String(taskOutputs[reviewerIdx] ?? "");
+      }
+    }
   }
 
   // 6. Synthesis step — collect all outputs and pass to Coder/Writer

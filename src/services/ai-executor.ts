@@ -1303,13 +1303,26 @@ export async function executeTaskStream(
       };
     }
 
-    // Read SSE stream
-    let accumulated = "";
-    let accumulatedThinking = "";
-    let lastCitations: string[] | null = null;
-    let chunkCount = 0;
-    let streamError: string | null = null;
-    let lastStopReason: string | null = null;
+    /**
+     * 可変状態を 1 つのオブジェクトに集約する。
+     * TypeScript 5.9 以降、`let` 変数をクロージャ経由で更新するとナローイングが
+     * `never` に潰れて `.length` などにエラーが出るので、プロパティ経由で参照する。
+     */
+    const state: {
+      accumulated: string;
+      accumulatedThinking: string;
+      lastCitations: string[] | null;
+      chunkCount: number;
+      streamError: string | null;
+      lastStopReason: string | null;
+    } = {
+      accumulated: "",
+      accumulatedThinking: "",
+      lastCitations: null,
+      chunkCount: 0,
+      streamError: null,
+      lastStopReason: null,
+    };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -1321,23 +1334,23 @@ export async function executeTaskStream(
 
       const chunk = parseStreamChunk(apiTypeEff, data);
       if (chunk.error) {
-        streamError = chunk.error;
+        state.streamError = chunk.error;
         return false;
       }
       if (chunk.text) {
-        accumulated += chunk.text;
-        chunkCount++;
+        state.accumulated += chunk.text;
+        state.chunkCount++;
         onChunk(chunk.text);
       }
       if (chunk.thinking) {
-        accumulatedThinking += chunk.thinking;
+        state.accumulatedThinking += chunk.thinking;
         onThinkingChunk?.(chunk.thinking);
       }
       if (chunk.citations) {
-        lastCitations = chunk.citations;
+        state.lastCitations = chunk.citations;
       }
       if (chunk.stopReason) {
-        lastStopReason = chunk.stopReason;
+        state.lastStopReason = chunk.stopReason;
       }
       return true;
     };
@@ -1366,6 +1379,7 @@ export async function executeTaskStream(
     }
 
     const durationMs = Date.now() - start;
+    const { accumulated, accumulatedThinking, chunkCount, lastCitations, lastStopReason, streamError } = state;
     console.log(`[API] ──── Stream Complete ────`);
     console.log(`[API]  Duration: ${durationMs}ms`);
     console.log(`[API]  Chunks: ${chunkCount}`);

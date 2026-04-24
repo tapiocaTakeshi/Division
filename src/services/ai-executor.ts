@@ -201,6 +201,63 @@ function toolsFromMap(toolMap?: unknown): unknown[] | undefined {
 }
 
 /**
+ * Gemini `generateContent` expects `tools: [ { "function_declarations": [ ... ] } ]` (see ai.google.dev).
+ * toolMap may be:
+ * - one value `{ function_declarations: [...] }` (new format from provider-native-tool-maps), or
+ * - many values each a flat declaration — merged into a single `function_declarations` array.
+ */
+function buildGoogleToolsFromMap(toolMap?: unknown): unknown[] | undefined {
+  const fromMap = toolsFromMap(toolMap);
+  if (!fromMap?.length) return undefined;
+  if (
+    fromMap.length === 1 &&
+    fromMap[0] &&
+    typeof fromMap[0] === "object" &&
+    !Array.isArray(fromMap[0]) &&
+    "function_declarations" in (fromMap[0] as object)
+  ) {
+    return fromMap;
+  }
+  const decls: unknown[] = [];
+  for (const item of fromMap) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    if (
+      "name" in o &&
+      "parameters" in o &&
+      typeof o.name === "string"
+    ) {
+      decls.push({
+        name: o.name,
+        description: o.description,
+        parameters: o.parameters,
+      });
+    }
+  }
+  if (!decls.length) return undefined;
+  return [{ function_declarations: decls }];
+}
+
+/**
+ * OpenAI POST /v1/responses expects each tool to declare a `type` (e.g. "function").
+ * Definitions copied from other docs sometimes use `kind` instead; the API rejects
+ * `tools[].kind` with unknown_parameter.
+ */
+function normalizeOpenAIResponsesTools(tools: unknown[]): unknown[] {
+  return tools.map((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const o = { ...(raw as Record<string, unknown>) };
+    if ("kind" in o) {
+      if (o.type === undefined && typeof o.kind === "string") {
+        o.type = o.kind;
+      }
+      delete o.kind;
+    }
+    return o;
+  });
+}
+
+/**
  * Build the request body for each API type
  */
 function buildRequestBody(
@@ -249,6 +306,7 @@ function buildRequestBody(
       }
     }
     inputItems.push({ role: "user", content: input });
+    const openaiTools = tools ? normalizeOpenAIResponsesTools(tools) : undefined;
     return {
       url: resolvedEndpoint,
       headers: {
@@ -260,7 +318,7 @@ function buildRequestBody(
         instructions: systemPrompt,
         input: inputItems,
         max_output_tokens: maxTokens,
-        ...(tools ? { tools } : {}),
+        ...(openaiTools ? { tools: openaiTools } : {}),
       },
     };
   }
@@ -326,6 +384,7 @@ function buildRequestBody(
       }
     }
     contents.push({ role: "user", parts: [{ text: input }] });
+    const googleTools = buildGoogleToolsFromMap(toolMap);
     return {
       url: googleEndpoint,
       headers: {
@@ -341,7 +400,7 @@ function buildRequestBody(
           maxOutputTokens: maxTokens,
           thinkingConfig: { thinkingBudget: Math.min(Math.floor(maxTokens * 0.5), 32768) },
         },
-        ...(tools ? { tools } : {}),
+        ...(googleTools ? { tools: googleTools } : {}),
       },
     };
   }

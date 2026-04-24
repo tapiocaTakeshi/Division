@@ -7,6 +7,29 @@ import { logger } from "../utils/logger";
 
 export const taskCreateRouter = Router();
 
+/**
+ * RoleAssignment.config は JSON `{"model":"..."}` を前提に書かれているが、
+ * 実データにはモデル ID をそのまま保存したプレーン文字列（例: `"gpt-5.4"`）も混在する。
+ * JSON として解釈できない場合はモデル名とみなして `{ model: value }` を返し、
+ * leader が常に 500 で落ちるのを防ぐ。
+ */
+function parseAssignmentConfigSafe(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return {};
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  return { model: text };
+}
+
 // --- Schemas ---
 
 const createTasksSchema = z.object({
@@ -282,9 +305,7 @@ taskCreateRouter.post(
 
     const enrichedInput = `${formattedHistory}【ユーザーの最新のリクエスト】\n${input}${workspaceHint}`;
 
-    const savedConfig = leaderAssignment.config
-      ? JSON.parse(leaderAssignment.config)
-      : {};
+    const savedConfig = parseAssignmentConfigSafe(leaderAssignment.config);
     const leaderResult = await executeTask({
       provider: leaderAssignment.provider,
       config: { ...savedConfig, apiKey: leaderApiKey },

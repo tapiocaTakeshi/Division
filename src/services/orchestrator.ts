@@ -122,6 +122,30 @@ function normalizeRoleSlug(slug: string): string {
 }
 
 /**
+ * `RoleAssignment.config` は JSON 文字列 `{"model":"..."}` を想定しているが、
+ * 実データには古い形式（モデル ID をそのまま保存したプレーン文字列: `"gpt-5.4"` 等）
+ * が混在している。JSON.parse がそのまま落ちると Leader が常に失敗するため、
+ * 安全に吸収する。
+ */
+function parseAssignmentConfig(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return {};
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* fall through to legacy handling */
+    }
+  }
+  // Legacy data: assignment.config stored only the model id as a plain string.
+  return { model: text };
+}
+
+/**
  * file-searcher / coder（computer_use）は ai-executor がスナップショットを結合する。
  * それ以外は Leader のサブタスク文だけでは本文を参照できないため、同じスナップショットを付与する。
  */
@@ -599,7 +623,7 @@ export async function runAgent(
   }
 
   // Resolve model: config.model overrides provider.modelId
-  const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
+  const leaderConfig = parseAssignmentConfig(leaderAssignment.config);
   const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
   const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
 
@@ -748,7 +772,7 @@ export async function runAgent(
         });
       }
       if (assignment) {
-        const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
+        const taskConfig = parseAssignmentConfig(assignment.config);
         const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
         provider = { ...assignment.provider, modelId: taskModelId };
       }
@@ -975,7 +999,7 @@ export async function runAgent(
         });
       }
       if (synthesisAssignment) {
-        const synthConfig = synthesisAssignment.config ? JSON.parse(synthesisAssignment.config) : {};
+        const synthConfig = parseAssignmentConfig(synthesisAssignment.config);
         const synthModelId = (synthConfig.model as string) || synthesisAssignment.provider.modelId;
         synthesisProvider = { ...synthesisAssignment.provider, modelId: synthModelId };
       }
@@ -1269,7 +1293,7 @@ async function runAgentStreamCore(
   }
 
   // Resolve model: config.model overrides provider.modelId
-  const leaderConfig = leaderAssignment.config ? JSON.parse(leaderAssignment.config) : {};
+  const leaderConfig = parseAssignmentConfig(leaderAssignment.config);
   const leaderModelId = (leaderConfig.model as string) || leaderAssignment.provider.modelId;
   const leaderProvider = { ...leaderAssignment.provider, modelId: leaderModelId };
 
@@ -1461,7 +1485,7 @@ async function runAgentStreamCore(
         });
       }
       if (assignment) {
-        const taskConfig = assignment.config ? JSON.parse(assignment.config) : {};
+        const taskConfig = parseAssignmentConfig(assignment.config);
         const taskModelId = (taskConfig.model as string) || assignment.provider.modelId;
         provider = { ...assignment.provider, modelId: taskModelId };
       }
@@ -1753,7 +1777,7 @@ async function runAgentStreamCore(
         });
       }
       if (synthesisAssignment) {
-        const synthConfig = synthesisAssignment.config ? JSON.parse(synthesisAssignment.config) : {};
+        const synthConfig = parseAssignmentConfig(synthesisAssignment.config);
         const synthModelId = (synthConfig.model as string) || synthesisAssignment.provider.modelId;
         synthesisProvider = { ...synthesisAssignment.provider, modelId: synthModelId };
       }

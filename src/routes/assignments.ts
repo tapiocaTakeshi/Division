@@ -5,6 +5,28 @@ import { asyncHandler } from "../middleware/async-handler";
 
 export const assignmentRouter = Router();
 
+/**
+ * `RoleAssignment.config` は JSON `{"model":"..."}` を想定しているが、
+ * 旧データはプレーン文字列のモデル ID (`"gpt-5.4"` 等) が保存されているため、
+ * JSON.parse すると落ちる。プレーン文字列は `{ model }` とみなす。
+ */
+function parseAssignmentConfigSafe(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return {};
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  return { model: text };
+}
+
 const createAssignmentSchema = z.object({
   projectId: z.string().min(1),
   roleId: z.string().uuid(),
@@ -112,7 +134,7 @@ assignmentRouter.put("/:id", asyncHandler(async (req: Request, res: Response) =>
         res.status(400).json({ error: "Provider not found" });
         return;
       }
-      const existingConfig = existing.config ? JSON.parse(existing.config) : {};
+      const existingConfig = parseAssignmentConfigSafe(existing.config);
       const mergedConfig = { model: provider.modelId, ...existingConfig, ...config };
       data.config = JSON.stringify(mergedConfig);
     }

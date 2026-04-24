@@ -6,6 +6,28 @@ import { asyncHandler } from "../middleware/async-handler";
 
 export const taskRouter = Router();
 
+/**
+ * RoleAssignment.config は JSON `{"model":"..."}` を想定。だが古いデータには
+ * プレーン文字列のモデル ID が入っていることがあり、そのまま JSON.parse すると
+ * "Unexpected token 'g'" で落ちてしまう。ここで吸収する。
+ */
+function parseAssignmentConfigSafe(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return {};
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  return { model: text };
+}
+
 const executeTaskSchema = z.object({
   projectId: z.string().min(1),
   roleSlug: z.string().min(1),
@@ -105,7 +127,7 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
   }
 
   // Merge saved config with request-time config + role-specific maxTokens
-  const savedConfig = assignment.config ? JSON.parse(assignment.config) : {};
+  const savedConfig = parseAssignmentConfigSafe(assignment.config);
   const roleMaxTokens = ROLE_MAX_TOKENS[role.slug];
   const mergedConfig = {
     ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}),

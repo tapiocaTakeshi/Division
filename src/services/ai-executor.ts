@@ -200,12 +200,53 @@ function toolsFromMap(toolMap?: unknown): unknown[] | undefined {
   return tools.length > 0 ? tools : undefined;
 }
 
+/** OpenAI / Gemini: tool `parameters` は JSON Object（JSON Schema）必須。 */
+const MINIMAL_PARAMETER_SCHEMA = {
+  type: "object" as const,
+  properties: {} as Record<string, unknown>,
+};
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+function ensureJsonObjectParameters(params: unknown): Record<string, unknown> {
+  if (isPlainObject(params)) return params as Record<string, unknown>;
+  if (typeof params === "string" && params.trim()) {
+    try {
+      const p = JSON.parse(params) as unknown;
+      if (isPlainObject(p)) return p as Record<string, unknown>;
+    } catch {
+      /* fall through */
+    }
+  }
+  return { ...MINIMAL_PARAMETER_SCHEMA };
+}
+
 /**
- * Gemini `generateContent` expects `tools: [ { "function_declarations": [ ... ] } ]` (see ai.google.dev).
- * toolMap may be:
- * - one value `{ function_declarations: [...] }` (new format from provider-native-tool-maps), or
- * - many values each a flat declaration — merged into a single `function_declarations` array.
+ * Gemini `generateContent`: `tools: [ { function_declarations: [...] } ]`。
+ * function_declarations[].parameters も JSON オブジェクト必須。
  */
+function normalizeGeminiToolsPayload(tools: unknown[]): unknown[] {
+  return tools.map((block) => {
+    if (!block || !isPlainObject(block)) return block;
+    const b = block as Record<string, unknown>;
+    const fd = b.function_declarations;
+    if (!Array.isArray(fd)) return block;
+    return {
+      ...b,
+      function_declarations: fd.map((d) => {
+        if (!d || !isPlainObject(d)) return d;
+        const decl = { ...d } as Record<string, unknown>;
+        if (decl.name !== undefined) {
+          decl.parameters = ensureJsonObjectParameters(decl.parameters);
+        }
+        return decl;
+      }),
+    };
+  });
+}
+
 function buildGoogleToolsFromMap(toolMap?: unknown): unknown[] | undefined {
   const fromMap = toolsFromMap(toolMap);
   if (!fromMap?.length) return undefined;
@@ -216,7 +257,7 @@ function buildGoogleToolsFromMap(toolMap?: unknown): unknown[] | undefined {
     !Array.isArray(fromMap[0]) &&
     "function_declarations" in (fromMap[0] as object)
   ) {
-    return fromMap;
+    return normalizeGeminiToolsPayload(fromMap);
   }
   const decls: unknown[] = [];
   for (const item of fromMap) {
@@ -224,7 +265,6 @@ function buildGoogleToolsFromMap(toolMap?: unknown): unknown[] | undefined {
     const o = item as Record<string, unknown>;
     if (
       "name" in o &&
-      "parameters" in o &&
       typeof o.name === "string"
     ) {
       decls.push({
@@ -235,13 +275,14 @@ function buildGoogleToolsFromMap(toolMap?: unknown): unknown[] | undefined {
     }
   }
   if (!decls.length) return undefined;
-  return [{ function_declarations: decls }];
+  return normalizeGeminiToolsPayload([{ function_declarations: decls }]);
 }
 
 /**
- * OpenAI POST /v1/responses expects each tool to declare a `type` (e.g. "function").
- * Definitions copied from other docs sometimes use `kind` instead; the API rejects
- * `tools[].kind` with unknown_parameter.
+ * OpenAI POST /v1/responses (function tools): flat
+ * { type, name, description, parameters }.
+ * Chat Completions 形 { type, function: { name, description, parameters } } だと
+ * トップに `parameters` が無く 400: "Tool parameters must be a JSON object" になる。
  */
 function normalizeOpenAIResponsesTools(tools: unknown[]): unknown[] {
   return tools.map((raw) => {
@@ -252,6 +293,57 @@ function normalizeOpenAIResponsesTools(tools: unknown[]): unknown[] {
         o.type = o.kind;
       }
       delete o.kind;
+    }
+    // ネスト `function: { }`（Chat 互換）を Responses 用フラット形へ
+    if (o.type === "function" && o.function && isPlainObject(o.function)) {
+      const fn = o.function as Record<string, unknown>;
+      if (o.name === undefined) o.name = fn.name;
+      if (o.description === undefined) o.description = fn.description;
+      o.parameters = o.parameters ?? fn.parameters;
+      delete o.function;
+    }
+    if (o.type === "function") {
+      o.parameters = ensureJsonObjectParameters(o.parameters);
+    }
+    return o;
+  });
+}
+
+/**
+ * Perplexity / xAI / DeepSeek 等: `tools[].function.parameters` も同様に必須。
+ */
+function normalizeOpenAIChatStyleTools(tools: unknown[]): unknown[] {
+  return tools.map((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const o = { ...(raw as Record<string, unknown>) };
+    if (o.type === "function" && o.function && isPlainObject(o.function)) {
+      const fn = { ...(o.function as Record<string, unknown>) };
+      fn.parameters = ensureJsonObjectParameters(fn.parameters);
+      o.function = fn;
+    } else if (o.type === "function" && o.name !== undefined) {
+      // Responses 用フラット形が混ざった場合は Chat 用に `function` で包む
+      o.function = {
+        name: o.name,
+        description: (o.description as string) ?? "",
+        parameters: ensureJsonObjectParameters(o.parameters),
+      };
+      delete o.name;
+      delete o.description;
+      delete o.parameters;
+    }
+    return o;
+  });
+}
+
+function normalizeAnthropicTools(tools: unknown[]): unknown[] {
+  return tools.map((raw) => {
+    if (!raw || !isPlainObject(raw)) return raw;
+    const o = { ...(raw as Record<string, unknown>) };
+    if (o.name !== undefined && typeof o.name === "string") {
+      o.input_schema = ensureJsonObjectParameters(
+        o.input_schema !== undefined ? o.input_schema : o.parameters
+      );
+      delete o.parameters;
     }
     return o;
   });
@@ -364,7 +456,7 @@ function buildRequestBody(
         system: systemPrompt,
         messages,
         ...(thinkingConfig ? { thinking: thinkingConfig } : {}),
-        ...(tools ? { tools } : {}),
+        ...(tools ? { tools: normalizeAnthropicTools(tools) } : {}),
       },
     };
   }
@@ -407,6 +499,13 @@ function buildRequestBody(
 
   // OpenAI-compatible providers (perplexity, xai, deepseek, etc.)
   if (OPENAI_COMPATIBLE_TYPES[apiType] || resolvedEndpoint) {
+    /**
+     * Perplexity の /chat/completions は現状 function-calling の `tools` を
+     * 受け付けず 400 "Tool parameters must be a JSON object." になる。
+     * web 検索は sonar-* モデルが自動で行うため tools 不要 → 送らない。
+     */
+    const skipTools = apiType === "perplexity";
+    const effectiveTools = skipTools ? undefined : tools;
     const messages: Array<{ role: string; content: string }> = [
       { role: "system", content: systemPrompt },
     ];
@@ -430,7 +529,7 @@ function buildRequestBody(
         model: resolvedModelId,
         ...tokenField,
         messages,
-        ...(tools ? { tools } : {}),
+        ...(effectiveTools ? { tools: normalizeOpenAIChatStyleTools(effectiveTools) } : {}),
       },
     };
   }

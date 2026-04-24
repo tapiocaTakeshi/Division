@@ -170,12 +170,16 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
       },
     });
 
+    if (result.status === "error" && result.errorMsg) {
+      res.write(`data: ${JSON.stringify({ type: "error", message: result.errorMsg })}\n\n`);
+    }
     res.write(`data: ${JSON.stringify({
       type: "done",
       role: role.name,
       provider: assignment.provider.displayName,
       model: assignment.provider.modelId,
       status: result.status,
+      errorMsg: result.errorMsg || null,
       durationMs: result.durationMs,
     })}\n\n`);
     res.end();

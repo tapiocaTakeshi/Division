@@ -628,6 +628,45 @@ interface StreamChunkResult {
   text: string | null;
   thinking: string | null;
   citations: string[] | null;
+  /**
+   * SSE 内でプロバイダから届くエラー（Anthropic の `event: error`、
+   * OpenAI / compatible の `{"error":{...}}` など）。非 null の場合、呼び出し側は
+   * ストリームを打ち切って errorMsg として扱うべき。
+   */
+  error: string | null;
+  /**
+   * 最終的な停止理由。プロバイダ依存。Anthropic の `message_delta` の
+   * `stop_reason`（`end_turn` / `max_tokens` / `refusal` / `stop_sequence` / `tool_use`）、
+   * OpenAI Chat-Completions の `finish_reason`、Google の `finishReason` などを拾う。
+   */
+  stopReason: string | null;
+}
+
+const EMPTY_STREAM_CHUNK: StreamChunkResult = {
+  text: null,
+  thinking: null,
+  citations: null,
+  error: null,
+  stopReason: null,
+};
+
+function extractErrorMessage(err: unknown): string | null {
+  if (!err) return null;
+  if (typeof err === "string") return err;
+  if (typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    const inner = typeof o.message === "string" ? o.message : null;
+    const type = typeof o.type === "string" ? o.type : null;
+    if (inner && type) return `${type}: ${inner}`;
+    if (inner) return inner;
+    if (type) return type;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return null;
+    }
+  }
+  return String(err);
 }
 
 /**
@@ -640,41 +679,75 @@ function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
     // OpenAI Responses API: event type in "type" field
     if (apiType === "openai") {
       if (parsed.type === "response.output_text.delta" && parsed.delta) {
-        return { text: parsed.delta, thinking: null, citations: null };
+        return { ...EMPTY_STREAM_CHUNK, text: parsed.delta };
       }
-      return { text: null, thinking: null, citations: null };
+      if (parsed.type === "response.error" || parsed.type === "error") {
+        const msg = extractErrorMessage(parsed.error ?? parsed);
+        return { ...EMPTY_STREAM_CHUNK, error: msg };
+      }
+      if (parsed.type === "response.completed" || parsed.type === "response.incomplete") {
+        const reason =
+          (parsed.response?.incomplete_details?.reason as string | undefined) ||
+          (parsed.response?.status as string | undefined) ||
+          null;
+        return { ...EMPTY_STREAM_CHUNK, stopReason: reason };
+      }
+      return EMPTY_STREAM_CHUNK;
     }
 
     if (apiType === "anthropic") {
       if (parsed.type === "content_block_delta") {
         if (parsed.delta?.type === "thinking_delta" && parsed.delta?.thinking) {
-          return { text: null, thinking: parsed.delta.thinking, citations: null };
+          return { ...EMPTY_STREAM_CHUNK, thinking: parsed.delta.thinking };
+        }
+        if (parsed.delta?.type === "text_delta" && typeof parsed.delta?.text === "string") {
+          return { ...EMPTY_STREAM_CHUNK, text: parsed.delta.text };
         }
         if (parsed.delta?.text) {
-          return { text: parsed.delta.text, thinking: null, citations: null };
+          return { ...EMPTY_STREAM_CHUNK, text: parsed.delta.text };
         }
+        return EMPTY_STREAM_CHUNK;
       }
-      return { text: null, thinking: null, citations: null };
+      if (parsed.type === "message_delta") {
+        const reason = parsed.delta?.stop_reason as string | undefined;
+        return { ...EMPTY_STREAM_CHUNK, stopReason: reason ?? null };
+      }
+      if (parsed.type === "error") {
+        const msg = extractErrorMessage(parsed.error ?? parsed);
+        return { ...EMPTY_STREAM_CHUNK, error: msg };
+      }
+      return EMPTY_STREAM_CHUNK;
     }
 
     if (apiType === "google") {
-      const part = parsed.candidates?.[0]?.content?.parts?.[0];
-      if (part?.thought === true) {
-        return { text: null, thinking: part.text || null, citations: null };
+      const cand = parsed.candidates?.[0];
+      const part = cand?.content?.parts?.[0];
+      const finishReason = (cand?.finishReason as string | undefined) ?? null;
+      if (parsed.error) {
+        return { ...EMPTY_STREAM_CHUNK, error: extractErrorMessage(parsed.error) };
       }
-      return { text: part?.text || null, thinking: null, citations: null };
+      if (part?.thought === true) {
+        return { ...EMPTY_STREAM_CHUNK, thinking: part.text || null, stopReason: finishReason };
+      }
+      return { ...EMPTY_STREAM_CHUNK, text: part?.text || null, stopReason: finishReason };
     }
 
     // OpenAI-compatible (Perplexity, xAI, DeepSeek etc.): choices[0].delta.content
-    const content = parsed.choices?.[0]?.delta?.content;
+    if (parsed.error) {
+      return { ...EMPTY_STREAM_CHUNK, error: extractErrorMessage(parsed.error) };
+    }
+    const choice = parsed.choices?.[0];
+    const content = choice?.delta?.content;
     const citations = parsed.citations as string[] | undefined;
+    const finishReason = (choice?.finish_reason as string | undefined) ?? null;
     return {
+      ...EMPTY_STREAM_CHUNK,
       text: content || null,
-      thinking: null,
       citations: citations?.length ? citations : null,
+      stopReason: finishReason,
     };
   } catch {
-    return { text: null, thinking: null, citations: null };
+    return EMPTY_STREAM_CHUNK;
   }
 }
 
@@ -1235,11 +1308,41 @@ export async function executeTaskStream(
     let accumulatedThinking = "";
     let lastCitations: string[] | null = null;
     let chunkCount = 0;
+    let streamError: string | null = null;
+    let lastStopReason: string | null = null;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
 
-    while (true) {
+    const processLine = (rawLine: string): boolean => {
+      if (!rawLine.startsWith("data: ")) return true;
+      const data = rawLine.slice(6).trim();
+      if (!data || data === "[DONE]") return true;
+
+      const chunk = parseStreamChunk(apiTypeEff, data);
+      if (chunk.error) {
+        streamError = chunk.error;
+        return false;
+      }
+      if (chunk.text) {
+        accumulated += chunk.text;
+        chunkCount++;
+        onChunk(chunk.text);
+      }
+      if (chunk.thinking) {
+        accumulatedThinking += chunk.thinking;
+        onThinkingChunk?.(chunk.thinking);
+      }
+      if (chunk.citations) {
+        lastCitations = chunk.citations;
+      }
+      if (chunk.stopReason) {
+        lastStopReason = chunk.stopReason;
+      }
+      return true;
+    };
+
+    streamLoop: while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -1248,23 +1351,17 @@ export async function executeTaskStream(
       buffer = lines.pop() || "";
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
-        if (data === "[DONE]") continue;
-
-        const chunk = parseStreamChunk(apiTypeEff, data);
-        if (chunk.text) {
-          accumulated += chunk.text;
-          chunkCount++;
-          onChunk(chunk.text);
-        }
-        if (chunk.thinking) {
-          accumulatedThinking += chunk.thinking;
-          onThinkingChunk?.(chunk.thinking);
-        }
-        if (chunk.citations) {
-          lastCitations = chunk.citations;
-        }
+        if (!processLine(line)) break streamLoop;
+      }
+    }
+    /**
+     * バッファに改行なしで残った最後のイベントを捨てないために、末尾行も処理する。
+     * （Anthropic / OpenAI の SSE は通常末尾に空行を付けるが、プロキシによっては欠落する）
+     */
+    buffer += decoder.decode();
+    if (buffer.trim()) {
+      for (const line of buffer.split("\n")) {
+        if (!processLine(line)) break;
       }
     }
 
@@ -1278,6 +1375,50 @@ export async function executeTaskStream(
     }
     if (lastCitations) {
       console.log(`[API]  Citations: ${lastCitations.length} sources`);
+    }
+    if (lastStopReason) {
+      console.log(`[API]  Stop reason: ${lastStopReason}`);
+    }
+    if (streamError) {
+      console.log(`[API]  Stream error: ${truncate(streamError, 300)}`);
+    }
+
+    if (streamError) {
+      return {
+        output: accumulated,
+        durationMs,
+        status: "error",
+        errorMsg: `Stream error: ${streamError}`,
+        thinking: accumulatedThinking || undefined,
+        citations: lastCitations ?? undefined,
+      };
+    }
+
+    /**
+     * 本文 0 文字で終わったパターンを誤って success にしない。
+     * Anthropic の `refusal` / `max_tokens` や、思考中に枯渇して text を吐けなかった
+     * 場合をきちんと error として扱う。
+     */
+    if (!accumulated) {
+      const reason: string = lastStopReason ?? "unknown";
+      let hint: string;
+      if (reason === "refusal") {
+        hint = "model refused to answer";
+      } else if (reason === "max_tokens") {
+        hint = "output truncated before any text was emitted (increase max_tokens or lower thinking effort)";
+      } else if (reason === "end_turn") {
+        hint = "model ended its turn without producing text";
+      } else {
+        hint = `no text produced (stop_reason=${reason})`;
+      }
+      return {
+        output: "",
+        durationMs,
+        status: "error",
+        errorMsg: `Empty response from provider: ${hint}`,
+        thinking: accumulatedThinking || undefined,
+        citations: lastCitations ?? undefined,
+      };
     }
 
     return {

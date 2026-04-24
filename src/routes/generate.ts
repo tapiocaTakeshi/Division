@@ -10,10 +10,10 @@
 
 import { Router, Request, Response } from "express";
 import { z } from "zod";
-import { prisma } from "../db";
 import { executeTask, executeTaskStream } from "../services/ai-executor";
 import { asyncHandler } from "../middleware/async-handler";
 import { recordUsage } from "../services/credits";
+import { resolveProvider } from "../services/provider-resolver";
 
 export const generateRouter = Router();
 
@@ -88,7 +88,7 @@ generateRouter.post(
     const { provider: providerName, input, systemPrompt, maxTokens, apiKeys, workspacePath } = parsed.data;
     const authenticated = !!res.locals.authenticated;
 
-    const provider = await prisma.provider.findUnique({ where: { name: providerName } });
+    const provider = await resolveProvider(providerName);
     if (!provider) {
       res.status(404).json({ error: `Provider not found: ${providerName}` });
       return;
@@ -160,7 +160,7 @@ generateRouter.post(
     const { provider: providerName, input, systemPrompt, maxTokens, apiKeys, workspacePath } = parsed.data;
     const authenticated = !!res.locals.authenticated;
 
-    const provider = await prisma.provider.findUnique({ where: { name: providerName } });
+    const provider = await resolveProvider(providerName);
     if (!provider) {
       res.status(404).json({ error: `Provider not found: ${providerName}` });
       return;

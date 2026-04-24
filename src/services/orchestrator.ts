@@ -13,6 +13,7 @@ import { executeTask, executeTaskStream, executeCoderLoop } from "./ai-executor"
 import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
 import { recordUsage, estimateTokens } from "./credits";
+import { resolveProvider } from "./provider-resolver";
 
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
@@ -750,9 +751,7 @@ export async function runAgent(
 
     const overrideProviderName = req.overrides?.[task.role];
     if (overrideProviderName) {
-      const overrideProvider = await prisma.provider.findUnique({
-        where: { name: overrideProviderName },
-      });
+      const overrideProvider = await resolveProvider(overrideProviderName);
       if (overrideProvider) {
         provider = overrideProvider;
       }
@@ -1461,9 +1460,7 @@ async function runAgentStreamCore(
 
     const overrideProviderName = req.overrides?.[task.role];
     if (overrideProviderName) {
-      const overrideProvider = await prisma.provider.findUnique({
-        where: { name: overrideProviderName },
-      });
+      const overrideProvider = await resolveProvider(overrideProviderName);
       if (overrideProvider) {
         provider = overrideProvider;
       }

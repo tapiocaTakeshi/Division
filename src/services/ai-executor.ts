@@ -19,6 +19,8 @@ export interface ExecutionRequest {
     apiType: string;
     apiEndpoint?: string;
     modelId: string;
+    /** Map of tool name -> provider-specific tool definition (passed through to API) */
+    toolMap?: unknown;
   };
   config?: Record<string, unknown>;
   input: string;
@@ -183,6 +185,22 @@ import { logger } from "../utils/logger";
 import { executeNativeTool } from "./agent-tools";
 
 /**
+ * Convert a provider's toolMap (name -> definition) into the array shape
+ * expected by the provider's API. Values are passed through verbatim, so the
+ * caller is responsible for storing definitions in the format the target
+ * provider expects.
+ */
+function toolsFromMap(toolMap?: unknown): unknown[] | undefined {
+  if (!toolMap || typeof toolMap !== "object" || Array.isArray(toolMap)) {
+    return undefined;
+  }
+  const tools = Object.values(toolMap as Record<string, unknown>).filter(
+    (v) => v != null
+  );
+  return tools.length > 0 ? tools : undefined;
+}
+
+/**
  * Build the request body for each API type
  */
 function buildRequestBody(
@@ -192,10 +210,12 @@ function buildRequestBody(
   systemPrompt: string,
   config?: Record<string, unknown>,
   chatHistory?: ChatMessage[],
-  apiEndpoint?: string
+  apiEndpoint?: string,
+  toolMap?: unknown
 ): { url: string; headers: Record<string, string>; body: unknown } | null {
   const apiKey = config?.apiKey as string | undefined;
   const maxTokens = (config?.maxTokens as number) || 8192;
+  const tools = toolsFromMap(toolMap);
 
   // Fall back to the default model for this apiType when modelId is not set
   const resolvedModelId = modelId || DEFAULT_MODELS[apiType] || modelId;
@@ -240,6 +260,7 @@ function buildRequestBody(
         instructions: systemPrompt,
         input: inputItems,
         max_output_tokens: maxTokens,
+        ...(tools ? { tools } : {}),
       },
     };
   }
@@ -285,6 +306,7 @@ function buildRequestBody(
         system: systemPrompt,
         messages,
         ...(thinkingConfig ? { thinking: thinkingConfig } : {}),
+        ...(tools ? { tools } : {}),
       },
     };
   }
@@ -319,6 +341,7 @@ function buildRequestBody(
           maxOutputTokens: maxTokens,
           thinkingConfig: { thinkingBudget: Math.min(Math.floor(maxTokens * 0.5), 32768) },
         },
+        ...(tools ? { tools } : {}),
       },
     };
   }
@@ -348,6 +371,7 @@ function buildRequestBody(
         model: resolvedModelId,
         ...tokenField,
         messages,
+        ...(tools ? { tools } : {}),
       },
     };
   }
@@ -728,7 +752,8 @@ search_files の query にはコード上のキーワード（関数名、変数
       systemPrompt,
       req.config || undefined,
       chatHistory,
-      req.provider.apiEndpoint
+      req.provider.apiEndpoint,
+      req.provider.toolMap
     );
 
     if (!requestSpec) break;
@@ -957,7 +982,8 @@ export async function executeTaskStream(
     systemPrompt,
     req.config || undefined,
     req.chatHistory,
-    req.provider.apiEndpoint
+    req.provider.apiEndpoint,
+    req.provider.toolMap
   );
 
   if (!requestSpec) {
@@ -1156,7 +1182,8 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     systemPrompt,
     req.config || undefined,
     req.chatHistory,
-    req.provider.apiEndpoint
+    req.provider.apiEndpoint,
+    req.provider.toolMap
   );
 
   if (!requestSpec) {

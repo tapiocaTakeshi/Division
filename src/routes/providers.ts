@@ -12,6 +12,7 @@ const createProviderSchema = z.object({
   apiType: z.enum(["openai", "anthropic", "google", "perplexity", "xai", "deepseek", "custom"]),
   modelId: z.string().min(1),
   description: z.string().optional(),
+  toolMap: z.record(z.any()).optional(),
   isEnabled: z.boolean().optional(),
 });
 

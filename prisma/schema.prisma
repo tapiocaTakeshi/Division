@@ -20,6 +20,7 @@ model Provider {
   modelsEndpoint String   @default("") // models list endpoint path, e.g. "/v1/models"
   modelId        String   // default model ID for this provider
   description    String?
+  toolMap        Json?    // Map of tool name -> provider-specific tool definition
   isEnabled      Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt

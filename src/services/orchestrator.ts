@@ -664,6 +664,7 @@ export async function runAgent(
       apiEndpoint: string;
       modelId: string;
       isEnabled: boolean;
+      toolMap?: unknown;
     } | null = null;
 
     const overrideProviderName = req.overrides?.[task.role];
@@ -1341,6 +1342,7 @@ async function runAgentStreamCore(
       apiEndpoint: string;
       modelId: string;
       isEnabled: boolean;
+      toolMap?: unknown;
     } | null = null;
 
     const overrideProviderName = req.overrides?.[task.role];
@@ -1611,6 +1613,7 @@ async function runAgentStreamCore(
       apiEndpoint: string;
       modelId: string;
       isEnabled: boolean;
+      toolMap?: unknown;
     } | null = null;
 
     if (synthesisRole) {

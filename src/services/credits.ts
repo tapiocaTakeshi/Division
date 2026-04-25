@@ -193,11 +193,47 @@ async function fireWebhook(payload: WebhookPayload): Promise<{ status: string; r
 
 // ===== Main API =====
 
+const UNRESOLVED_USER_IDS = new Set(["", "env", "system"]);
+
+async function resolveBillableUserId(userId: string | undefined): Promise<string | undefined> {
+  const trimmed = (userId ?? "").trim();
+  if (trimmed && !UNRESOLVED_USER_IDS.has(trimmed)) return trimmed;
+
+  const configured = (process.env.DIVISION_DEFAULT_USER_ID || process.env.DEFAULT_USER_ID || "").trim();
+  if (configured) {
+    if (trimmed && trimmed !== configured) {
+      logger.info(`[Usage] Mapping unresolved userId "${trimmed}" to DIVISION_DEFAULT_USER_ID`);
+    }
+    return configured;
+  }
+
+  try {
+    const profiles = await prisma.$queryRaw<Array<{ id: string }>>`
+      select id::text as id
+      from public.profiles
+      order by created_at asc
+      limit 2
+    `;
+
+    if (profiles.length === 1) {
+      logger.info(
+        `[Usage] ${trimmed ? `Mapping unresolved userId "${trimmed}"` : "Using sole profile"} for billing`
+      );
+      return profiles[0].id;
+    }
+  } catch (err) {
+    logger.warn(`[Usage] Failed to resolve fallback billable user: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return trimmed || undefined;
+}
+
 /**
  * Record usage after an AI call completes.
  * Calculates cost from Model table, saves to UsageLog, fires webhook.
  */
 export async function recordUsage(record: UsageRecord): Promise<RecordUsageResult> {
+  const billableUserId = await resolveBillableUserId(record.userId);
   const cost = await calculateCost(
     record.providerId,
     record.modelId,
@@ -207,7 +243,7 @@ export async function recordUsage(record: UsageRecord): Promise<RecordUsageResul
 
   const usageLog = await prisma.usageLog.create({
     data: {
-      userId: record.userId,
+      userId: billableUserId,
       projectId: record.projectId,
       sessionId: record.sessionId,
       providerId: record.providerId,
@@ -226,11 +262,13 @@ export async function recordUsage(record: UsageRecord): Promise<RecordUsageResul
     `[Usage] ${record.providerId}/${record.modelId}: ${record.inputTokens}in/${record.outputTokens}out = $${cost.totalCostUsd.toFixed(6)}`
   );
 
-  // Fire webhook async (don't block the response)
+  // Credit deduction is billing-critical. In serverless runtimes, background
+  // promises can be frozen once the HTTP response finishes, so wait for the
+  // webhook and persist its result before returning.
   const webhookPayload: WebhookPayload = {
     event: "usage.recorded",
     usageId: usageLog.id,
-    userId: record.userId,
+    userId: billableUserId,
     projectId: record.projectId,
     sessionId: record.sessionId,
     providerId: record.providerId,
@@ -244,21 +282,21 @@ export async function recordUsage(record: UsageRecord): Promise<RecordUsageResul
     timestamp: usageLog.createdAt.toISOString(),
   };
 
-  fireWebhook(webhookPayload).then(async (result) => {
-    try {
-      await prisma.usageLog.update({
-        where: { id: usageLog.id },
-        data: {
-          webhookStatus: result.status,
-          webhookResponse: result.response?.slice(0, 1000),
-        },
-      });
-    } catch (e) {
-      logger.error(`[Usage] Failed to update webhook status: ${e}`);
-    }
-  });
+  const webhookResult = await fireWebhook(webhookPayload);
 
-  return { id: usageLog.id, cost, webhookStatus: "pending" };
+  try {
+    await prisma.usageLog.update({
+      where: { id: usageLog.id },
+      data: {
+        webhookStatus: webhookResult.status,
+        webhookResponse: webhookResult.response?.slice(0, 1000),
+      },
+    });
+  } catch (e) {
+    logger.error(`[Usage] Failed to update webhook status: ${e}`);
+  }
+
+  return { id: usageLog.id, cost, webhookStatus: webhookResult.status };
 }
 
 // ===== Legacy compatibility =====

@@ -61,29 +61,31 @@ const updateTaskSchema = z.object({
 
 // --- Leader Prompt for Task Creation ---
 
-const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下の5層パイプラインに基づいてタスクを分解してください。
+const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下のフローに基づいてタスクを分解してください。
 
 ## パイプライン構造（必ずこの順序で多層化する）
 
 【Layer 1 — 調査・発想】並列実行（dependsOn: []）
 - ideaman: 創造的ブレインストーミング・アイデア出し
 - searcher: ウェブ検索・情報収集
-- file-searcher: プロジェクト内ファイル検索・コード解析
 - researcher: 調査・分析・レポート
 
-【Layer 2 — 設計・デザイン】Layer 1に依存
+【Layer 2 — 設計・デザイン】Layer 1 の Markdown 出力に依存
 - designer: UI/UXデザイン・HTML/CSS生成・プロトタイプ
 - imager: 画像生成・ビジュアルコンテンツ
 - planner: 企画・設計・アーキテクチャ
 
-【Layer 3 — 実装・執筆】Layer 2に依存
+【Layer 3 — File Search】Layer 2 の Markdown 出力に依存
+- file-searcher: 設計・画像・計画の結果を受け、プロジェクト内の関連ファイル・既存コード・変更対象を調査
+
+【Layer 4 — 実装・執筆】File Search に依存
 - coder: コード生成・実装・デバッグ
 - writer: 文章作成・ドキュメント
 
-【Layer 4 — レビュー】Layer 3に依存
-- reviewer: 品質確認・レビュー・改善提案（dependsOn にレビュー対象の coder の index を必ず含める）
+【Layer 5 — レビュー】Layer 4に依存
+- reviewer: 品質確認・レビュー・改善提案（dependsOn にレビュー対象の coder または writer の index を必ず含める）
 
-オーケストラ実行時: 初回プラン完了後、reviewer の指摘を coder に渡し、coder→reviewer を最大2周ループ（REVIEWER_CODER_MAX_ROUNDS）します。プランに追加タスクは不要です。
+オーケストラ実行時: reviewer が Not OK の場合、reviewer → file-searcher → coder/writer → reviewer を最大2周ループ（REVIEWER_CODER_MAX_ROUNDS）します。プランに追加タスクは不要です。
 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます
@@ -95,7 +97,7 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
 8. 1タスクに複数作業を詰め込まず細かく分割
 9. 同じロールでも異なる観点なら別タスクに分ける
-10. **【必須】Layer 1 には次の4ロールを必ず1タスクずつ含めること（どれか1つでも欠けると不合格）: ideaman, searcher, file-searcher, researcher。デザインのみ・コード不要に見える依頼でも file-searcher を省略してはならない（既存のスタイル・HTML・設定ファイルの有無を調べる）。**
+10. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。Layer 3 には file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。**
 11. 各タスクに "mode" を指定:
     - "chat": テキスト生成タスク（デフォルト。searcher, researcher 等 Web検索ロールもこれ）
     - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
@@ -107,12 +109,13 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
   "tasks": [
     { "role": "ideaman", "mode": "chat", "title": "アイデア提案", "description": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [] },
     { "role": "searcher", "mode": "chat", "title": "技術調査", "description": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
-    { "role": "file-searcher", "mode": "chat", "title": "既存コード調査", "description": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装を把握するため", "dependsOn": [] },
     { "role": "researcher", "mode": "chat", "title": "技術トレンド調査", "description": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [] },
-    { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "coder", "mode": "computer_use", "title": "実装", "description": "設計とデザインに沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [4, 5] },
-    { "role": "reviewer", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案", "reason": "品質保証のため", "dependsOn": [6] }
+    { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2] },
+    { "role": "imager", "mode": "chat", "title": "画像・ビジュアル作成", "description": "調査・デザイン方針を元に画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2] },
+    { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2] },
+    { "role": "file-searcher", "mode": "chat", "title": "実装前ファイル調査", "description": "設計・画像・計画のMarkdownを元にプロジェクト内の関連ファイルと変更対象を調査", "reason": "既存コードとの接続点を特定するため", "dependsOn": [3, 4, 5] },
+    { "role": "coder", "mode": "computer_use", "title": "実装", "description": "File Search の調査結果に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [6] },
+    { "role": "reviewer", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [7] }
   ]
 }
 \`\`\``;
@@ -180,58 +183,72 @@ type ParsedTaskRow = {
   dependsOn?: number[];
 };
 
-/**
- * file-searcher を常にタスク配列の先頭に配置する。
- * - 欠けていれば先頭に挿入し、全タスクの dependsOn インデックスを +1 ずらす。
- * - 途中/末尾にある場合は先頭に移動し、dependsOn インデックスを補正する。
- */
-function ensureFileSearcherTask(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
-  const fsIdx = tasks.findIndex(
-    (t) => t.role === "file-searcher" || t.role === "file_searcher"
-  );
+function normalizeTaskRole(role: string): string {
+  return role === "file_searcher" ? "file-searcher" : role;
+}
 
-  if (fsIdx === 0) return tasks;
+function isImplementationTaskRow(t: ParsedTaskRow): boolean {
+  const role = normalizeTaskRole(t.role);
+  return role === "coder" || role === "writer" || t.mode === "computer_use";
+}
 
-  if (fsIdx < 0) {
-    const inserted: ParsedTaskRow = {
-      role: "file-searcher",
-      mode: "chat",
-      title: "既存コード・スタイルの調査",
-      description:
-        "プロジェクト内の既存UI、スタイル、テーマ、HTML/CSS、設定ファイルを検索し、リクエストに関連する実装や資産を把握する。",
-      reason: "既存デザインとの整合と重複回避のため",
-      dependsOn: [],
-    };
+function getTaskFlowGroup(task: ParsedTaskRow): number {
+  const role = normalizeTaskRole(task.role);
+  if (role === "ideaman" || role === "searcher" || role === "researcher") return 0;
+  if (role === "designer" || role === "imager" || role === "planner") return 1;
+  if (role === "file-searcher") return 2;
+  if (isImplementationTaskRow(task)) return 3;
+  if (role === "reviewer") return 4;
+  return 1;
+}
 
-    const shifted = tasks.map((t) => ({
-      ...t,
-      dependsOn: t.dependsOn?.map((d) => d + 1),
-    }));
+function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
+  const base = tasks.some((t) => normalizeTaskRole(t.role) === "file-searcher")
+    ? tasks
+    : [
+        ...tasks,
+        {
+          role: "file-searcher",
+          mode: "chat",
+          title: "実装前ファイル調査",
+          description:
+            "設計・画像・計画のMarkdownを元に、プロジェクト内の関連ファイル、既存実装、変更対象、注意点を調査する。",
+          reason: "実装/執筆前に既存コードとの接続点を特定するため",
+          dependsOn: [],
+        },
+      ];
 
-    return [inserted, ...shifted];
+  const ordered = base
+    .map((task, oldIndex) => ({ task: { ...task, role: normalizeTaskRole(task.role) }, oldIndex }))
+    .sort((a, b) => {
+      const byGroup = getTaskFlowGroup(a.task) - getTaskFlowGroup(b.task);
+      return byGroup !== 0 ? byGroup : a.oldIndex - b.oldIndex;
+    })
+    .map(({ task }) => task);
+
+  const indicesByRole = (roles: string[]) =>
+    ordered
+      .map((t, i) => (roles.includes(normalizeTaskRole(t.role)) ? i : -1))
+      .filter((i) => i >= 0);
+
+  const layer1 = indicesByRole(["ideaman", "searcher", "researcher"]);
+  const layer2 = indicesByRole(["designer", "imager", "planner"]);
+  const fileSearchers = indicesByRole(["file-searcher"]);
+  const implementers = ordered
+    .map((t, i) => (isImplementationTaskRow(t) ? i : -1))
+    .filter((i) => i >= 0);
+  const reviewers = indicesByRole(["reviewer"]);
+
+  for (let i = 0; i < ordered.length; i++) {
+    const role = normalizeTaskRole(ordered[i].role);
+    if (layer1.includes(i)) ordered[i].dependsOn = [];
+    else if (layer2.includes(i)) ordered[i].dependsOn = layer1.length ? [...layer1] : [];
+    else if (role === "file-searcher") ordered[i].dependsOn = layer2.length ? [...layer2] : [...layer1];
+    else if (implementers.includes(i)) ordered[i].dependsOn = fileSearchers.length ? [...fileSearchers] : layer2.length ? [...layer2] : [...layer1];
+    else if (reviewers.includes(i)) ordered[i].dependsOn = implementers.length ? [...implementers] : fileSearchers.length ? [...fileSearchers] : [];
   }
 
-  // fsIdx > 0: move the existing file-searcher task to the front.
-  // Index remap: old fsIdx -> 0, old i (i<fsIdx) -> i+1, old i (i>fsIdx) -> i.
-  const remap = (d: number): number => {
-    if (d === fsIdx) return 0;
-    if (d < fsIdx) return d + 1;
-    return d;
-  };
-
-  const movedFs: ParsedTaskRow = {
-    ...tasks[fsIdx],
-    dependsOn: [],
-  };
-
-  const rest = tasks
-    .filter((_, i) => i !== fsIdx)
-    .map((t) => ({
-      ...t,
-      dependsOn: t.dependsOn?.map(remap),
-    }));
-
-  return [movedFs, ...rest];
+  return ordered;
 }
 
 // --- Routes ---
@@ -306,9 +323,9 @@ taskCreateRouter.post(
       : "";
 
     const workspaceHint = localWorkspaceContext?.trim()
-      ? `\n\n【実行環境】IDE/CLI から localWorkspaceContext（ワークスペーススナップショット）が付与されます。API はローカルディスクを直接読みません。Layer 1 に file-searcher を必ず含めてください。\n`
+      ? `\n\n【実行環境】IDE/CLI から localWorkspaceContext（ワークスペーススナップショット）が付与されます。API はローカルディスクを直接読みません。設計後の Layer 3 に file-searcher を必ず含めてください。\n`
       : workspacePath
-        ? `\n\n【実行環境】ローカルプロジェクトが開かれています（タスク実行時に workspacePath が渡されます）。Layer 1 に file-searcher を必ず含めてください。\n`
+        ? `\n\n【実行環境】ローカルプロジェクトが開かれています（タスク実行時に workspacePath が渡されます）。設計後の Layer 3 に file-searcher を必ず含めてください。\n`
         : "";
 
     const enrichedInput = `${formattedHistory}【ユーザーの最新のリクエスト】\n${input}${workspaceHint}`;
@@ -362,10 +379,10 @@ taskCreateRouter.post(
       );
 
       const beforeFs = parsedTasks.length;
-      parsedTasks = ensureFileSearcherTask(parsedTasks);
+      parsedTasks = normalizeDiagramTaskFlow(parsedTasks);
       if (parsedTasks.length > beforeFs) {
         logger.info(
-          `[TaskCreate] Session ${sessionId} - Injected missing file-searcher task; dependsOn indices shifted`
+          `[TaskCreate] Session ${sessionId} - Injected missing file-searcher task and normalized diagram flow`
         );
       }
     } catch (err) {

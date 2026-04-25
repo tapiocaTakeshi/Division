@@ -233,31 +233,33 @@ export interface OrchestratorResult {
 
 // --- Leader Prompt ---
 
-const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下の5層パイプラインに基づいてタスクを分解してください。
+const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下のフローに基づいてタスクを分解してください。
 
 ## パイプライン構造（必ずこの順序で多層化する）
 
 【Layer 1 — 調査・発想】並列実行（dependsOn: []）
 - ideaman: 創造的ブレインストーミング・アイデア出し・革新的コンセプト提案（Claude担当）
 - searcher: ウェブ検索・情報収集（Perplexity担当）
-- file-searcher: プロジェクト内ファイル検索・コード解析・既存コード理解（GPT担当）
 - researcher: 調査・分析・レポート（Perplexity Deep Research担当）
 
-【Layer 2 — 設計・デザイン】Layer 1に依存（dependsOn で Layer 1 のタスクを参照）
+【Layer 2 — 設計・デザイン】Layer 1 の Markdown 出力に依存（dependsOn で ideaman/searcher/researcher を参照）
 - designer: UI/UXデザイン・HTML/CSS生成・ランディングページ・プロトタイプ（Gemini担当。完全に自己完結したHTMLを生成）
 - imager: 画像生成・ビジュアルコンテンツ・イラスト（GPT Image担当）
 - planner: 企画・設計・アーキテクチャ・戦略立案（Gemini担当）
 
-【Layer 3 — 実装・執筆】Layer 2に依存
+【Layer 3 — File Search】Layer 2 の Markdown 出力に依存
+- file-searcher: 設計・画像・計画の結果を受け、プロジェクト内の関連ファイル・既存コード・変更対象を調査し、Coder/Writer がその Markdown だけで実装/執筆できるレポートを作る（GPT担当）
+
+【Layer 4 — 実装・執筆】File Search に依存
 - coder: コード生成・実装・デバッグ（Claude担当）
 - writer: 文章作成・ドキュメント（Claude担当）
 
-【Layer 4 — レビュー】Layer 3に依存
-- reviewer: 品質確認・レビュー・改善提案（GPT担当）※ dependsOn には必ず「レビュー対象の coder」のタスク index を含める
+【Layer 5 — レビュー】Layer 4に依存
+- reviewer: 品質確認・レビュー・改善提案（GPT担当）※ dependsOn には必ず「レビュー対象の coder または writer」のタスク index を含める
 
 【最終統合】reviewer 完了後に自動実行（tasksに含めない）
 
-【オーケストラの自動動作】初回の DAG 完了後、reviewer → coder（レビュー指摘の反映）→ reviewer（再レビュー）のループを最大2周（環境変数 REVIEWER_CODER_MAX_ROUNDS で変更可、0で無効）実行します。タスク本数の増減は不要です。
+【オーケストラの自動動作】初回の DAG 完了後、reviewer が Not OK の場合は reviewer → file-searcher（指摘を踏まえ再調査）→ coder/writer（修正・改善）→ reviewer（再レビュー）のループを最大2周（環境変数 REVIEWER_CODER_MAX_ROUNDS で変更可、0で無効）実行します。タスク本数の増減は不要です。
 
 ## 利用可能なロール一覧
 ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, writer, reviewer
@@ -265,7 +267,7 @@ ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます（0, 1, 2...）
 2. dependsOn で依存先のインデックスを指定。空=並列実行
-3. **【必須】Layer 1 には次の4ロールを必ず1タスクずつ含めること: ideaman, searcher, file-searcher, researcher。デザインのみの依頼でも file-searcher を省略してはならない（既存のスタイル・HTML・設定を調べる）。** それ以外のロール（designer 等）はリクエストに応じて選択可。
+3. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。Layer 3 には file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。**
 4. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること
 5. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
 6. タスクは最低5個以上。複雑な場合は8〜15個に細分化
@@ -285,12 +287,13 @@ ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, 
   "tasks": [
     { "role": "ideaman", "mode": "chat", "input": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため" },
     { "role": "searcher", "mode": "chat", "input": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため" },
-    { "role": "file-searcher", "mode": "chat", "input": "プロジェクト内の関連ファイルとコードを調査", "reason": "既存実装の把握のため" },
     { "role": "researcher", "mode": "chat", "input": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため" },
-    { "role": "designer", "mode": "chat", "input": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "planner", "mode": "chat", "input": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "coder", "mode": "computer_use", "input": "設計とデザインに沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [4, 5] },
-    { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案", "reason": "品質保証のため", "dependsOn": [6] }
+    { "role": "designer", "mode": "chat", "input": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2] },
+    { "role": "imager", "mode": "chat", "input": "調査・デザイン方針を元に必要な画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2] },
+    { "role": "planner", "mode": "chat", "input": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2] },
+    { "role": "file-searcher", "mode": "chat", "input": "設計・画像・計画のMarkdownを元にプロジェクト内の関連ファイルと変更対象を調査", "reason": "実装前に既存コードとの接続点を特定するため", "dependsOn": [3, 4, 5] },
+    { "role": "coder", "mode": "computer_use", "input": "File Search の調査結果に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [6] },
+    { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [7] }
   ],
   "finalRole": "coder"
 }
@@ -323,11 +326,87 @@ function getReviewerCoderMaxRounds(): number {
 /**
  * 最後の reviewer と、その review 対象にできる coder を解決（reviewer.dependsOn を優先）。
  */
-function findReviewerCoderPair(
+function isImplementationTask(t: SubTask): boolean {
+  const role = normalizeRoleSlug(t.role);
+  return role === "coder" || role === "writer" || t.mode === "computer_use";
+}
+
+function reviewerLooksOk(reviewText: string): boolean {
+  const text = reviewText.toLowerCase();
+  if (/\bnot\s+ok\b/.test(text) || /not\s+okay/.test(text) || /ng\b/.test(text)) return false;
+  if (text.includes("不合格") || text.includes("要修正") || text.includes("未対応")) return false;
+  return /\bok\b/.test(text) || text.includes("合格") || text.includes("問題なし") || text.includes("承認");
+}
+
+function getFlowGroup(task: SubTask): number {
+  const role = normalizeRoleSlug(task.role);
+  if (role === "ideaman" || role === "searcher" || role === "researcher") return 0;
+  if (role === "designer" || role === "imager" || role === "planner") return 1;
+  if (role === "file-searcher") return 2;
+  if (isImplementationTask(task)) return 3;
+  if (role === "reviewer") return 4;
+  return 1;
+}
+
+function normalizeDiagramFlow(tasks: SubTask[]): SubTask[] {
+  const base = tasks.some((t) => normalizeRoleSlug(t.role) === "file-searcher")
+    ? tasks
+    : [
+        ...tasks,
+        {
+          role: "file-searcher",
+          mode: "chat",
+          input:
+            "設計・画像・計画のMarkdownを元に、プロジェクト内の関連ファイル、既存実装、変更対象、注意点を調査し、後続のCoder/Writerが実行できる詳細なMarkdownレポートを作成する。",
+          reason: "実装/執筆前に既存コードとの接続点を特定するため",
+          dependsOn: [],
+        },
+      ];
+
+  const orderedWithOldIndex = base
+    .map((task, oldIndex) => ({ task, oldIndex }))
+    .sort((a, b) => {
+      const byGroup = getFlowGroup(a.task) - getFlowGroup(b.task);
+      return byGroup !== 0 ? byGroup : a.oldIndex - b.oldIndex;
+    });
+
+  const ordered = orderedWithOldIndex.map(({ task }) => ({ ...task }));
+  const indicesByRole = (roles: string[]) =>
+    ordered
+      .map((t, i) => (roles.includes(normalizeRoleSlug(t.role)) ? i : -1))
+      .filter((i) => i >= 0);
+
+  const layer1 = indicesByRole(["ideaman", "searcher", "researcher"]);
+  const layer2 = indicesByRole(["designer", "imager", "planner"]);
+  const fileSearchers = indicesByRole(["file-searcher"]);
+  const implementers = ordered
+    .map((t, i) => (isImplementationTask(t) ? i : -1))
+    .filter((i) => i >= 0);
+  const reviewers = indicesByRole(["reviewer"]);
+
+  for (let i = 0; i < ordered.length; i++) {
+    const role = normalizeRoleSlug(ordered[i].role);
+    if (layer1.includes(i)) {
+      ordered[i].dependsOn = [];
+    } else if (layer2.includes(i)) {
+      ordered[i].dependsOn = layer1.length ? [...layer1] : [];
+    } else if (role === "file-searcher") {
+      ordered[i].dependsOn = layer2.length ? [...layer2] : [...layer1];
+    } else if (implementers.includes(i)) {
+      ordered[i].dependsOn = fileSearchers.length ? [...fileSearchers] : layer2.length ? [...layer2] : [...layer1];
+    } else if (reviewers.includes(i)) {
+      ordered[i].dependsOn = implementers.length ? [...implementers] : fileSearchers.length ? [...fileSearchers] : [];
+    }
+  }
+
+  return ordered;
+}
+
+function findReviewerImplementationFlow(
   subTasks: SubTask[],
   getResult: (i: number) => { status: string; output?: string } | null | undefined,
   taskOutputs: string[]
-): { reviewerIdx: number; coderIdx: number } | null {
+): { reviewerIdx: number; implementationIdx: number; fileSearcherIdx: number | null } | null {
   if (getReviewerCoderMaxRounds() < 1) return null;
   const reviewerIndices: number[] = [];
   for (let i = 0; i < subTasks.length; i++) {
@@ -339,27 +418,44 @@ function findReviewerCoderPair(
     return null;
   }
   const revDeps = subTasks[reviewerIdx].dependsOn || [];
-  let coderIdx = -1;
+  let implementationIdx = -1;
   for (const d of revDeps) {
     if (d < 0 || d >= subTasks.length) continue;
     const t = subTasks[d];
-    if (normalizeRoleSlug(t.role) === "coder" || t.mode === "computer_use") {
-      coderIdx = d;
+    if (isImplementationTask(t)) {
+      implementationIdx = d;
       break;
     }
   }
-  if (coderIdx < 0) {
+  if (implementationIdx < 0) {
     for (let j = reviewerIdx - 1; j >= 0; j--) {
       const t = subTasks[j];
-      if (normalizeRoleSlug(t.role) === "coder" || t.mode === "computer_use") {
-        coderIdx = j;
+      if (isImplementationTask(t)) {
+        implementationIdx = j;
         break;
       }
     }
   }
-  if (coderIdx < 0) return null;
-  if (getResult(coderIdx)?.status !== "success") return null;
-  return { reviewerIdx, coderIdx };
+  if (implementationIdx < 0) return null;
+  if (getResult(implementationIdx)?.status !== "success") return null;
+
+  let fileSearcherIdx: number | null = null;
+  const implDeps = subTasks[implementationIdx].dependsOn || [];
+  for (const d of implDeps) {
+    if (d >= 0 && d < subTasks.length && normalizeRoleSlug(subTasks[d].role) === "file-searcher") {
+      fileSearcherIdx = d;
+      break;
+    }
+  }
+  if (fileSearcherIdx === null) {
+    for (let j = implementationIdx - 1; j >= 0; j--) {
+      if (normalizeRoleSlug(subTasks[j].role) === "file-searcher") {
+        fileSearcherIdx = j;
+        break;
+      }
+    }
+  }
+  return { reviewerIdx, implementationIdx, fileSearcherIdx };
 }
 
 // --- API Key Resolution ---
@@ -423,62 +519,12 @@ function parseLeaderResponse(output: string): LeaderParsedResponse {
 
     const finalRole = parsed.finalRole === "coder" ? "coder" : "writer";
 
-    return { tasks: ensureFileSearcherSubTask(tasks), finalRole };
+    return { tasks: normalizeDiagramFlow(tasks), finalRole };
   } catch (err) {
     throw new Error(
       `Failed to parse Leader response: ${err instanceof Error ? err.message : String(err)}\nRaw output: ${output}`
     );
   }
-}
-
-/** file-searcher を常にタスク配列の先頭に配置する。
- *  - 欠けていれば先頭に挿入し、全タスクの dependsOn を +1 ずらす。
- *  - 途中/末尾にある場合は先頭に移動し、dependsOn インデックスを補正する。
- */
-function ensureFileSearcherSubTask(tasks: SubTask[]): SubTask[] {
-  const fsIdx = tasks.findIndex((t) => t.role === "file-searcher");
-
-  if (fsIdx === 0) return tasks;
-
-  if (fsIdx < 0) {
-    const inserted: SubTask = {
-      role: "file-searcher",
-      mode: "chat",
-      input:
-        "プロジェクト内の既存UI、スタイル、テーマ、HTML/CSS、設定ファイルを検索し、このリクエストに関連する実装や資産を把握する。",
-      reason: "既存デザインとの整合と重複回避のため",
-      dependsOn: [],
-    };
-
-    const shifted = tasks.map((t) => ({
-      ...t,
-      dependsOn: t.dependsOn?.map((d) => d + 1),
-    }));
-
-    return [inserted, ...shifted];
-  }
-
-  // fsIdx > 0: move the existing file-searcher task to the front.
-  // Index remap: old fsIdx -> 0, old i (i<fsIdx) -> i+1, old i (i>fsIdx) -> i.
-  const remap = (d: number): number => {
-    if (d === fsIdx) return 0;
-    if (d < fsIdx) return d + 1;
-    return d;
-  };
-
-  const movedFs: SubTask = {
-    ...tasks[fsIdx],
-    dependsOn: [],
-  };
-
-  const rest = tasks
-    .filter((_, i) => i !== fsIdx)
-    .map((t) => ({
-      ...t,
-      dependsOn: t.dependsOn?.map(remap),
-    }));
-
-  return [movedFs, ...rest];
 }
 
 /** Maps apiType to the corresponding environment variable name */
@@ -950,20 +996,30 @@ export async function runAgent(
     }
   }
 
-  // 4b. Reviewer 出力 → Coder 入力のフィードバックループ（最大 REVIEWER_CODER_MAX_ROUNDS 回）
+  // 4b. Reviewer Not OK → File Search → Coder/Writer → Reviewer のフィードバックループ
   const maxReviewRounds = getReviewerCoderMaxRounds();
   if (maxReviewRounds > 0) {
-    const pair = findReviewerCoderPair(subTasks, (i) => results[i], taskOutputs);
+    const pair = findReviewerImplementationFlow(subTasks, (i) => results[i], taskOutputs);
     if (pair) {
-      const { reviewerIdx, coderIdx } = pair;
+      const { reviewerIdx, implementationIdx, fileSearcherIdx } = pair;
       let reviewText = String(taskOutputs[reviewerIdx] ?? "");
       for (let round = 1; round <= maxReviewRounds; round++) {
         if (!reviewText.trim()) break;
-        log(`[Agent] Reviewer↔Coder ループ: ${round}/${maxReviewRounds}`);
-        const coderOverride = `## レビューからの指摘（この内容に基づき実装を修正・改善してください）\n\n${reviewText}\n\n---\n\n## 直前のあなた（コーダー）の成果\n\n${taskOutputs[coderIdx]}\n\n---\n\n## 元のタスク指示\n\n${subTasks[coderIdx].input}`;
-        await executeSubTaskNonStream(coderIdx, { inputOverride: coderOverride });
-        if (results[coderIdx]?.status !== "success") break;
-        const reviewerOverride = `## 再レビュー対象: コーダーが指摘に対応して更新した成果\n\n${taskOutputs[coderIdx]}\n\n---\n\n## あなたのレビュー観点（元の指示）\n\n${subTasks[reviewerIdx].input}`;
+        if (reviewerLooksOk(reviewText)) {
+          log(`[Agent] Reviewer OK: フィードバックループを終了`);
+          break;
+        }
+        log(`[Agent] Reviewer→FileSearch→Implementation→Reviewer ループ: ${round}/${maxReviewRounds}`);
+        if (fileSearcherIdx !== null) {
+          const fileSearchOverride = `## レビュー結果（Not OK のため再調査してください）\n\n${reviewText}\n\n---\n\n## 直前の成果物\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示\n\n${subTasks[fileSearcherIdx].input}`;
+          await executeSubTaskNonStream(fileSearcherIdx, { inputOverride: fileSearchOverride });
+          if (results[fileSearcherIdx]?.status !== "success") break;
+        }
+        const latestFileSearch = fileSearcherIdx !== null ? taskOutputs[fileSearcherIdx] : "";
+        const implementationOverride = `## レビューからの指摘（この内容に基づき修正・改善してください）\n\n${reviewText}\n\n---\n\n## 再調査された File Search Markdown\n\n${latestFileSearch}\n\n---\n\n## 直前のあなたの成果\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元のタスク指示\n\n${subTasks[implementationIdx].input}`;
+        await executeSubTaskNonStream(implementationIdx, { inputOverride: implementationOverride });
+        if (results[implementationIdx]?.status !== "success") break;
+        const reviewerOverride = `## 再レビュー対象: 指摘に対応して更新した成果\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 参照した File Search Markdown\n\n${latestFileSearch}\n\n---\n\n## あなたのレビュー観点（元の指示）\n\n${subTasks[reviewerIdx].input}`;
         await executeSubTaskNonStream(reviewerIdx, { inputOverride: reviewerOverride });
         reviewText = String(taskOutputs[reviewerIdx] ?? "");
       }
@@ -1650,20 +1706,26 @@ async function runAgentStreamCore(
     };
     taskOutputs[i] = result.output;
 
-    // Record usage & cost (webhook fires async)
+    // Record usage & cost (wait for webhook so serverless does not drop it)
     if (result.status === "success") {
       const inputTokens = Math.ceil(enrichedInput.length / 3);
       const outputTokens = Math.ceil((result.output || "").length / 3);
-      recordUsage({
-        userId: req.userId,
-        projectId: req.projectId,
-        sessionId,
-        providerId: provider.id,
-        modelId: provider.modelId,
-        role: task.role,
-        inputTokens,
-        outputTokens,
-      }).catch(() => {});
+      try {
+        await recordUsage({
+          userId: req.userId,
+          projectId: req.projectId,
+          sessionId,
+          providerId: provider.id,
+          modelId: provider.modelId,
+          role: task.role,
+          inputTokens,
+          outputTokens,
+        });
+      } catch (usageErr) {
+        logger.warn(
+          `[AgentStream] Usage error for ${task.role}: ${usageErr instanceof Error ? usageErr.message : String(usageErr)}`
+        );
+      }
     }
   }
 
@@ -1710,22 +1772,29 @@ async function runAgentStreamCore(
     waveNum++;
   }
 
-  // 5b. Reviewer 出力 → Coder 入力のフィードバックループ
+  // 5b. Reviewer Not OK → File Search → Coder/Writer → Reviewer のフィードバックループ
   const maxReviewRoundsStream = getReviewerCoderMaxRounds();
   if (maxReviewRoundsStream > 0) {
-    const pairS = findReviewerCoderPair(subTasks, (i) => taskResults[i], taskOutputs);
+    const pairS = findReviewerImplementationFlow(subTasks, (i) => taskResults[i], taskOutputs);
     if (pairS) {
-      const { reviewerIdx, coderIdx } = pairS;
+      const { reviewerIdx, implementationIdx, fileSearcherIdx } = pairS;
       let reviewTextS = String(taskOutputs[reviewerIdx] ?? "");
       for (let round = 1; round <= maxReviewRoundsStream; round++) {
         if (!reviewTextS.trim()) break;
+        if (reviewerLooksOk(reviewTextS)) break;
         logger.info(
-          `[Agent] Reviewer↔Coder loop: ${round}/${maxReviewRoundsStream}`
+          `[Agent] Reviewer→FileSearch→Implementation→Reviewer loop: ${round}/${maxReviewRoundsStream}`
         );
-        const coderOverrideS = `## レビューからの指摘（この内容に基づき実装を修正・改善してください）\n\n${reviewTextS}\n\n---\n\n## 直前のあなた（コーダー）の成果\n\n${taskOutputs[coderIdx]}\n\n---\n\n## 元のタスク指示\n\n${subTasks[coderIdx].input}`;
-        await executeSubTask(coderIdx, { inputOverride: coderOverrideS });
-        if (taskResults[coderIdx]?.status !== "success") break;
-        const reviewerOverrideS = `## 再レビュー対象: コーダーが指摘に対応して更新した成果\n\n${taskOutputs[coderIdx]}\n\n---\n\n## あなたのレビュー観点（元の指示）\n\n${subTasks[reviewerIdx].input}`;
+        if (fileSearcherIdx !== null) {
+          const fileSearchOverrideS = `## レビュー結果（Not OK のため再調査してください）\n\n${reviewTextS}\n\n---\n\n## 直前の成果物\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示\n\n${subTasks[fileSearcherIdx].input}`;
+          await executeSubTask(fileSearcherIdx, { inputOverride: fileSearchOverrideS });
+          if (taskResults[fileSearcherIdx]?.status !== "success") break;
+        }
+        const latestFileSearchS = fileSearcherIdx !== null ? taskOutputs[fileSearcherIdx] : "";
+        const implementationOverrideS = `## レビューからの指摘（この内容に基づき修正・改善してください）\n\n${reviewTextS}\n\n---\n\n## 再調査された File Search Markdown\n\n${latestFileSearchS}\n\n---\n\n## 直前のあなたの成果\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元のタスク指示\n\n${subTasks[implementationIdx].input}`;
+        await executeSubTask(implementationIdx, { inputOverride: implementationOverrideS });
+        if (taskResults[implementationIdx]?.status !== "success") break;
+        const reviewerOverrideS = `## 再レビュー対象: 指摘に対応して更新した成果\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 参照した File Search Markdown\n\n${latestFileSearchS}\n\n---\n\n## あなたのレビュー観点（元の指示）\n\n${subTasks[reviewerIdx].input}`;
         await executeSubTask(reviewerIdx, { inputOverride: reviewerOverrideS });
         reviewTextS = String(taskOutputs[reviewerIdx] ?? "");
       }

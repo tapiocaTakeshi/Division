@@ -17,10 +17,18 @@ import { knockRouter } from "./routes/knock";
 import { previewRouter } from "./routes/preview";
 import { webhookRouter } from "./routes/webhook";
 import { divisionAuth } from "./middleware/auth";
+import { webhookTrigger } from "./middleware/webhook-trigger";
 const app = express();
 
 // localWorkspaceContext（IDE スナップショット）が大きくなり得るため余裕を持たせる
 app.use(express.json({ limit: "50mb" }));
+
+/**
+ * 全 API 呼び出しを Supabase webhook (`USAGE_WEBHOOK_URL`) に通知する。
+ * `res.on("finish")` で発火するため、認証ミドルウェアの位置に関わらず
+ * `res.locals.userId` がセット済み・レスポンス完了後に走る。
+ */
+app.use(webhookTrigger);
 
 // Health check
 app.get("/health", (_req, res) => {

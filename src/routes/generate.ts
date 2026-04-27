@@ -71,6 +71,16 @@ function resolveApiKey(
   return undefined;
 }
 
+const DIRECT_GENERATE_GUARDRAILS = `You are a direct text generation endpoint.
+
+No tools are available in this mode. Do not emit tool calls, XML tool_call tags, JSON tool requests, or statements like "I will read/check files" as an action.
+Use only the context already present in the user's input. If required information is missing, explain what is missing and continue with the best possible answer.`;
+
+function buildGenerateSystemPrompt(systemPrompt?: string): string {
+  const trimmed = systemPrompt?.trim();
+  return trimmed ? `${trimmed}\n\n${DIRECT_GENERATE_GUARDRAILS}` : DIRECT_GENERATE_GUARDRAILS;
+}
+
 /**
  * POST /api/generate
  *
@@ -105,7 +115,7 @@ generateRouter.post(
       config: { apiKey, ...(maxTokens ? { maxTokens } : {}) },
       input,
       role: { slug: "generate", name: "Generate" },
-      systemPrompt,
+      systemPrompt: buildGenerateSystemPrompt(systemPrompt),
       workspacePath,
     });
 
@@ -207,7 +217,7 @@ generateRouter.post(
           config: { apiKey, ...(maxTokens ? { maxTokens } : {}) },
           input,
           role: { slug: "generate", name: "Generate" },
-          systemPrompt,
+          systemPrompt: buildGenerateSystemPrompt(systemPrompt),
           workspacePath,
         },
         (text) => sendEvent("chunk", { type: "chunk", text }),

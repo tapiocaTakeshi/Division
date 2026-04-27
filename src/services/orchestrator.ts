@@ -1300,9 +1300,7 @@ export async function runAgent(
     );
 
     const isCoderRole = task.role === "coder" || task.mode === "computer_use";
-    const roleSystemPrompt = isCoderRole
-      ? ROLE_SYSTEM_PROMPTS.coder ?? role.systemPrompt
-      : role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
+    const roleSystemPrompt = role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const effectiveProvider = isCoderRole
       ? { ...provider, toolMap: undefined }
@@ -2158,9 +2156,7 @@ async function runAgentStreamCore(
     });
 
     const isCoderRole = task.role === "coder" || task.mode === "computer_use";
-    const roleSystemPrompt = isCoderRole
-      ? ROLE_SYSTEM_PROMPTS.coder ?? role.systemPrompt
-      : role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
+    const roleSystemPrompt = role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const effectiveProvider = isCoderRole
       ? { ...provider, toolMap: undefined }

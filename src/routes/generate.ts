@@ -76,6 +76,8 @@ const DIRECT_GENERATE_GUARDRAILS = `You are a direct text generation endpoint.
 No tools are available in this mode. Do not emit tool calls, XML tool_call tags, JSON tool requests, or statements like "I will read/check files" as an action.
 Use only the context already present in the user's input. If required information is missing, explain what is missing and continue with the best possible answer.`;
 
+const DEFAULT_STREAM_MAX_TOKENS = 16384;
+
 function buildGenerateSystemPrompt(systemPrompt?: string): string {
   const trimmed = systemPrompt?.trim();
   return trimmed ? `${trimmed}\n\n${DIRECT_GENERATE_GUARDRAILS}` : DIRECT_GENERATE_GUARDRAILS;
@@ -214,7 +216,7 @@ generateRouter.post(
       const result = await executeTaskStream(
         {
           provider: { ...provider, toolMap: undefined },
-          config: { apiKey, ...(maxTokens ? { maxTokens } : {}) },
+          config: { apiKey, maxTokens: maxTokens ?? DEFAULT_STREAM_MAX_TOKENS },
           input,
           role: { slug: "generate", name: "Generate" },
           systemPrompt: buildGenerateSystemPrompt(systemPrompt),

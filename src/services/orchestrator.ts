@@ -155,6 +155,34 @@ const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
 - **localWorkspaceContext が渡されている場合**: それはユーザーのマシンで収集されたスナップショットです。API はローカルディスクを直接読みません。スナップショットを一次資料としてレポートしてください`,
 };
 
+/**
+ * Coder への入力に強制ガードを差し込む。System prompt が無視されたときの保険として、
+ * ユーザーメッセージ側にも「前置き禁止・コードブロック必須・ツール禁止」を明記する。
+ */
+function wrapCoderInput(input: string): string {
+  const guardrails = `## 出力ルール（最優先・無視不可）
+- このオーケストレーション環境では **bash / file_read / file_write / text_editor / search 等のツールは一切利用できません**。「Let me look at...」「まず○○を調査します」「以下を確認します」のような調査・分析の前置きを書かず、与えられた情報だけで今すぐ最終成果物を出してください。
+- 応答の **最初の見出しは必ず \`### 1. 実装プラン\`** で始めてください。
+- 応答には **必ず 1 つ以上の三連バッククォートで囲ったコードブロック** を含めてください。コードブロックが無い応答はシステム上エラー扱いとなり、同じ誤りを繰り返すとタスクが中止されます。
+- ファイル本体は \`\`\`<lang>:<filepath> 形式（例: \`\`\`tsx:src/components/Foo.tsx）で **完全な内容** を出力してください。省略・「...」・「以下省略」は禁止です。
+- 上流エージェント（file-searcher / Layer 2 / Leader Todos）の成果物に既に必要な情報が揃っています。追加の調査宣言は不要です。
+
+---
+
+`;
+  return `${guardrails}${input}`;
+}
+
+/**
+ * Coder の応答にコードブロックが含まれているかを判定する。
+ * 含まれていなければ「単なる前置き応答」とみなし、フィードバックループで再試行する。
+ */
+function coderOutputHasCode(output: string): boolean {
+  if (!output) return false;
+  const fenceCount = (output.match(/```/g) ?? []).length;
+  return fenceCount >= 2;
+}
+
 function normalizeRoleSlug(slug: string): string {
   const raw = String(slug ?? "").trim();
   if (!raw) return "";
@@ -1305,17 +1333,31 @@ export async function runAgent(
     const effectiveProvider = isCoderRole
       ? { ...provider, toolMap: undefined }
       : provider;
+    const finalInput = isCoderRole ? wrapCoderInput(enrichedInput) : enrichedInput;
 
     const result = await executeTask({
       provider: effectiveProvider,
       config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-      input: enrichedInput,
+      input: finalInput,
       role: { slug: role.slug, name: role.name },
       mode: task.mode,
       workspacePath: req.workspacePath,
       localWorkspaceContext: req.localWorkspaceContext,
       ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
     });
+
+    if (
+      isCoderRole &&
+      result.status === "success" &&
+      !coderOutputHasCode(result.output)
+    ) {
+      const guardMsg = `Coder output had no code block (length=${result.output?.length ?? 0}); marking as failure to avoid feedback loop`;
+      log(`[Agent] ${guardMsg}`);
+      logger.warn(`[Agent] ${guardMsg}`, { role: task.role, provider: provider.name });
+      result.status = "error";
+      result.errorMsg =
+        "Coder did not produce a code block. The response only contained an analytical preamble. Output must include at least one fenced code block.";
+    }
 
     if (result.status === "success") {
       log(`[Agent] Done: [${task.role}] → ${provider.displayName} (${result.durationMs}ms)`);
@@ -2161,12 +2203,13 @@ async function runAgentStreamCore(
     const effectiveProvider = isCoderRole
       ? { ...provider, toolMap: undefined }
       : provider;
+    const finalInput = isCoderRole ? wrapCoderInput(enrichedInput) : enrichedInput;
 
     const result = await executeTaskStream(
       {
         provider: effectiveProvider,
         config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-        input: enrichedInput,
+        input: finalInput,
         role: { slug: role.slug, name: role.name },
         mode: task.mode,
         workspacePath: req.workspacePath,
@@ -2176,6 +2219,18 @@ async function runAgentStreamCore(
       (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
       (text) => emit({ type: "task_thinking_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text })
     );
+
+    if (
+      isCoderRole &&
+      result.status === "success" &&
+      !coderOutputHasCode(result.output)
+    ) {
+      const guardMsg = `Coder output had no code block (length=${result.output?.length ?? 0}); marking as failure to avoid feedback loop`;
+      logger.warn(`[Agent] ${guardMsg}`, { role: task.role, provider: provider.name });
+      result.status = "error";
+      result.errorMsg =
+        "Coder did not produce a code block. The response only contained an analytical preamble. Output must include at least one fenced code block.";
+    }
 
     // Log to DB
     const taskLog = await prisma.taskLog.create({

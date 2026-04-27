@@ -70,6 +70,9 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 - searcher: ウェブ検索・情報収集
 - researcher: 調査・分析・レポート
 
+【Leader Design Brief】Layer 1 → Layer 2 のハンドオフで Leader が自動挿入（tasksには含めない）
+- Leader は ideaman / searcher / researcher の Markdown を統合し、designer / imager / planner に渡す Design Brief Markdown を生成する
+
 【Layer 2 — 設計・デザイン】Layer 1 の Markdown 出力に依存
 - designer: UI/UXデザイン・HTML/CSS生成・プロトタイプ
 - imager: 画像生成・ビジュアルコンテンツ
@@ -85,10 +88,13 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 - coder: コード生成・実装・デバッグ
 - writer: 文章作成・ドキュメント
 
+【Leader Review Brief】Layer 5 → Layer 6 のハンドオフで Leader が自動挿入（tasksには含めない）
+- Leader は coder / writer の出力を受け、Reviewer が短時間で評価できる Review Brief を生成する
+
 【Layer 6 — レビュー】Layer 5に依存
 - reviewer: 品質確認・レビュー・改善提案（dependsOn にレビュー対象の coder または writer の index を必ず含める）
 
-オーケストラ実行時: reviewer が Not OK の場合、reviewer → Leader Todos → file-searcher → coder/writer → reviewer を最大2周ループ（REVIEWER_CODER_MAX_ROUNDS）します。プランに追加タスクは不要です。
+オーケストラ実行時: reviewer が Not OK の場合、reviewer → Leader Todos → file-searcher → coder/writer → Leader Review Brief → reviewer を reviewer が OK を出すまで（最大20周。REVIEWER_CODER_MAX_ROUNDS で変更可）ループします。プランに追加タスクは不要です。
 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます
@@ -100,7 +106,7 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
 8. 1タスクに複数作業を詰め込まず細かく分割
 9. 同じロールでも異なる観点なら別タスクに分ける
-10. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。Leader Todos はオーケストラが自動生成するため tasks には含めないこと。**
+10. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。Leader Design Brief / Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
 11. 各タスクに "mode" を指定:
     - "chat": テキスト生成タスク（デフォルト。searcher, researcher 等 Web検索ロールもこれ）
     - "computer_use": コード実行・テストが必要なタスク（coder ロール用）

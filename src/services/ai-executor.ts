@@ -1499,8 +1499,9 @@ export async function executeTaskStream(
      * Anthropic の `refusal` / `max_tokens` や、思考中に枯渇して text を吐けなかった
      * 場合をきちんと error として扱う。
      */
-    if (!accumulated && lastStopReason === "tool_use" && completedAnthropicToolCall) {
-      const output = nativeToolCallToJsonOutput(completedAnthropicToolCall);
+    if (lastStopReason === "tool_use" && completedAnthropicToolCall) {
+      const toolJson = nativeToolCallToJsonOutput(completedAnthropicToolCall);
+      const output = accumulated ? `${accumulated}\n\n${toolJson}` : toolJson;
       return {
         output,
         durationMs,

@@ -9,7 +9,7 @@
  */
 
 import { prisma } from "../db";
-import { executeTask, executeTaskStream, executeCoderLoop } from "./ai-executor";
+import { executeTask, executeTaskStream } from "./ai-executor";
 import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
 import { recordUsage, estimateTokens } from "./credits";
@@ -59,6 +59,46 @@ const ROLE_SYNTHESIS_MAX_TOKENS: Record<string, number> = {
 
 // --- Role-Specific System Prompts ---
 const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
+  coder: `あなたは Division の Coder エージェントです。Layer 1 / Layer 2 / file-searcher / Leader Todos の出力を読み取り、**動作する完全なコード**を Markdown コードブロックで出力します。
+
+## 役割
+1. 上流エージェント（file-searcher・designer・planner 等）の成果物を厳密に読み解く
+2. 既存コードのスタイル・命名規則・依存関係を踏襲する
+3. **必ず完全なコード本体を出力する**（疑似コードや「ここに○○を追加」といった省略は禁止）
+4. ファイル単位で「新規 / 変更 / 削除」を明示し、変更ファイルは変更後の全文を出力する
+5. ビルド・テスト・型チェックの観点でレビュアが評価できる粒度で書く
+
+## 重要なルール
+- **このオーケストレーション環境ではあなた自身はツールを実行できません**。\`bash\` / \`file_read\` / \`file_write\` / \`text_editor\` 等のツール呼び出し（JSON や \`<tool_call>\`）を返してはいけません。
+- 代わりに、**変更すべきファイルごとに完全なコードブロックを直接出力**してください。実際の書き込みは Reviewer/CLI 側が行います。
+- コードを省略したり「...」「以下省略」と書くことは絶対に禁止です。出力トークン上限まで使い切って構いません。
+- file-searcher が読み取ったコードと矛盾しないようにしてください（既存の関数シグネチャ・型定義を尊重）。
+
+## 出力フォーマット（このセクション順で必ず記載）
+### 1. 実装プラン
+- 何を、なぜ、どう実装するかを箇条書きで簡潔に説明
+- 影響範囲（関数・ファイル・モジュール）
+
+### 2. ファイル一覧
+| ファイル | 操作 | 概要 |
+|---|---|---|
+| src/foo.ts | 新規 | ... |
+| src/bar.ts | 変更 | ... |
+
+### 3. コード本体
+ファイルごとに以下のフォーマットで **完全なコード**を出力:
+
+\`\`\`<language>:<filepath>
+// ファイルの完全な内容（変更ファイルは変更後の全文）
+\`\`\`
+
+### 4. 検証方針
+- ビルド・テスト・型チェック・手動確認の手順
+- レビュア向けの注目ポイント
+
+## Flutter / Dart の注意
+- Flutter の場合、独自のカラー指定（\`Color(0xFF...)\` 等）は避け、テーマや既存定数を使用してください。`,
+
   designer: `あなたは優秀なUIデザイナー兼フロントエンドエンジニアです。
 リクエストに基づいて、**完全に自己完結した単一のHTMLファイル**を生成してください。
 
@@ -1259,34 +1299,25 @@ export async function runAgent(
       `[Agent] Executing: [${task.role}] → ${provider.displayName}`
     );
 
-    const roleSystemPrompt = role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
-    const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const isCoderRole = task.role === "coder" || task.mode === "computer_use";
+    const roleSystemPrompt = isCoderRole
+      ? ROLE_SYSTEM_PROMPTS.coder ?? role.systemPrompt
+      : role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
+    const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
+    const effectiveProvider = isCoderRole
+      ? { ...provider, toolMap: undefined }
+      : provider;
 
-    const result = isCoderRole
-      ? await executeCoderLoop(
-          {
-            provider,
-            config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-            input: enrichedInput,
-            role: { slug: role.slug, name: role.name },
-            mode: task.mode,
-            workspacePath: req.workspacePath,
-            localWorkspaceContext: req.localWorkspaceContext,
-            ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
-          },
-          (msg) => log(`  [coder] ${msg.trim()}`)
-        )
-      : await executeTask({
-          provider,
-          config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-          input: enrichedInput,
-          role: { slug: role.slug, name: role.name },
-          mode: task.mode,
-          workspacePath: req.workspacePath,
-          localWorkspaceContext: req.localWorkspaceContext,
-          ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
-        });
+    const result = await executeTask({
+      provider: effectiveProvider,
+      config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
+      input: enrichedInput,
+      role: { slug: role.slug, name: role.name },
+      mode: task.mode,
+      workspacePath: req.workspacePath,
+      localWorkspaceContext: req.localWorkspaceContext,
+      ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+    });
 
     if (result.status === "success") {
       log(`[Agent] Done: [${task.role}] → ${provider.displayName} (${result.durationMs}ms)`);
@@ -2126,38 +2157,29 @@ async function runAgentStreamCore(
       mode: task.mode,
     });
 
-    const roleSystemPrompt = role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
-    const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const isCoderRole = task.role === "coder" || task.mode === "computer_use";
+    const roleSystemPrompt = isCoderRole
+      ? ROLE_SYSTEM_PROMPTS.coder ?? role.systemPrompt
+      : role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
+    const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
+    const effectiveProvider = isCoderRole
+      ? { ...provider, toolMap: undefined }
+      : provider;
 
-    const result = isCoderRole
-      ? await executeCoderLoop(
-          {
-            provider,
-            config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-            input: enrichedInput,
-            role: { slug: role.slug, name: role.name },
-            mode: task.mode,
-            workspacePath: req.workspacePath,
-            localWorkspaceContext: req.localWorkspaceContext,
-            ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
-          },
-          (msg) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text: msg })
-        )
-      : await executeTaskStream(
-          {
-            provider,
-            config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-            input: enrichedInput,
-            role: { slug: role.slug, name: role.name },
-            mode: task.mode,
-            workspacePath: req.workspacePath,
-            localWorkspaceContext: req.localWorkspaceContext,
-            ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
-          },
-          (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
-          (text) => emit({ type: "task_thinking_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text })
-        );
+    const result = await executeTaskStream(
+      {
+        provider: effectiveProvider,
+        config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
+        input: enrichedInput,
+        role: { slug: role.slug, name: role.name },
+        mode: task.mode,
+        workspacePath: req.workspacePath,
+        localWorkspaceContext: req.localWorkspaceContext,
+        ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+      },
+      (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
+      (text) => emit({ type: "task_thinking_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text })
+    );
 
     // Log to DB
     const taskLog = await prisma.taskLog.create({

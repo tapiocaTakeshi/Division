@@ -101,7 +101,7 @@ generateRouter.post(
     const apiKey = resolveApiKey(provider.apiType, apiKeys, authenticated);
 
     const result = await executeTask({
-      provider,
+      provider: { ...provider, toolMap: undefined },
       config: { apiKey, ...(maxTokens ? { maxTokens } : {}) },
       input,
       role: { slug: "generate", name: "Generate" },
@@ -203,7 +203,7 @@ generateRouter.post(
     try {
       const result = await executeTaskStream(
         {
-          provider,
+          provider: { ...provider, toolMap: undefined },
           config: { apiKey, ...(maxTokens ? { maxTokens } : {}) },
           input,
           role: { slug: "generate", name: "Generate" },

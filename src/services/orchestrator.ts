@@ -247,19 +247,22 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 - imager: 画像生成・ビジュアルコンテンツ・イラスト（GPT Image担当）
 - planner: 企画・設計・アーキテクチャ・戦略立案（Gemini担当）
 
-【Layer 3 — File Search】Layer 2 の Markdown 出力に依存
-- file-searcher: 設計・画像・計画の結果を受け、プロジェクト内の関連ファイル・既存コード・変更対象を調査し、Coder/Writer がその Markdown だけで実装/執筆できるレポートを作る（GPT担当）
+【Layer 3 — Leader Todos】Layer 2 の Markdown 出力を Leader が再統合（tasksには含めない）
+- Leader は designer / imager / planner の Markdown を受け取り、File Search に渡す具体的な Todos Markdown を自動生成する。
 
-【Layer 4 — 実装・執筆】File Search に依存
+【Layer 4 — File Search】Leader Todos に依存
+- file-searcher: Leader Todos と設計・画像・計画の結果を受け、プロジェクト内の関連ファイル・既存コード・変更対象を調査し、Coder/Writer がその Markdown だけで実装/執筆できるレポートを作る（GPT担当）
+
+【Layer 5 — 実装・執筆】File Search に依存
 - coder: コード生成・実装・デバッグ（Claude担当）
 - writer: 文章作成・ドキュメント（Claude担当）
 
-【Layer 5 — レビュー】Layer 4に依存
+【Layer 6 — レビュー】Layer 5に依存
 - reviewer: 品質確認・レビュー・改善提案（GPT担当）※ dependsOn には必ず「レビュー対象の coder または writer」のタスク index を含める
 
 【最終統合】reviewer 完了後に自動実行（tasksに含めない）
 
-【オーケストラの自動動作】初回の DAG 完了後、reviewer が Not OK の場合は reviewer → file-searcher（指摘を踏まえ再調査）→ coder/writer（修正・改善）→ reviewer（再レビュー）のループを最大2周（環境変数 REVIEWER_CODER_MAX_ROUNDS で変更可、0で無効）実行します。タスク本数の増減は不要です。
+【オーケストラの自動動作】初回の DAG 完了後、reviewer が Not OK の場合は reviewer → Leader Todos（指摘をタスク化）→ file-searcher（指摘を踏まえ再調査）→ coder/writer（修正・改善）→ reviewer（再レビュー）のループを最大2周（環境変数 REVIEWER_CODER_MAX_ROUNDS で変更可、0で無効）実行します。タスク本数の増減は不要です。
 
 ## 利用可能なロール一覧
 ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, writer, reviewer
@@ -267,7 +270,7 @@ ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます（0, 1, 2...）
 2. dependsOn で依存先のインデックスを指定。空=並列実行
-3. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。Layer 3 には file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。**
+3. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。Leader Todos はオーケストラが自動生成するため tasks には含めないこと。**
 4. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること
 5. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
 6. タスクは最低5個以上。複雑な場合は8〜15個に細分化
@@ -291,7 +294,7 @@ ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, 
     { "role": "designer", "mode": "chat", "input": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2] },
     { "role": "imager", "mode": "chat", "input": "調査・デザイン方針を元に必要な画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2] },
     { "role": "planner", "mode": "chat", "input": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2] },
-    { "role": "file-searcher", "mode": "chat", "input": "設計・画像・計画のMarkdownを元にプロジェクト内の関連ファイルと変更対象を調査", "reason": "実装前に既存コードとの接続点を特定するため", "dependsOn": [3, 4, 5] },
+    { "role": "file-searcher", "mode": "chat", "input": "Leader Todos と設計・画像・計画のMarkdownを元にプロジェクト内の関連ファイルと変更対象を調査", "reason": "実装前に既存コードとの接続点を特定するため", "dependsOn": [3, 4, 5] },
     { "role": "coder", "mode": "computer_use", "input": "File Search の調査結果に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [6] },
     { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [7] }
   ],
@@ -312,6 +315,36 @@ const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです。
 4. 見出し・リスト・表などを適切に使い、読みやすく構造化してください
 5. 冗長な重複は排除し、簡潔で実用的な成果物にまとめてください
 6. ユーザーのリクエストに直接答える形で出力してください`;
+
+const LEADER_TODOS_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。
+上流エージェントのMarkdownを統合し、File Search エージェントに渡すための実行可能な Todos Markdown を作成してください。
+
+ルール:
+1. 出力は Markdown のみ。
+2. 最初に "## Todos" 見出しを置く。
+3. File Search が調査すべきファイル、検索キーワード、確認観点、実装/執筆前の注意点を具体化する。
+4. Coder/Writer が後続で迷わないよう、優先順位と完了条件を明示する。
+5. ツール呼び出しやJSONは出力しない。`;
+
+function isFileSearcherTask(task: SubTask): boolean {
+  return normalizeRoleSlug(task.role) === "file-searcher";
+}
+
+function buildDependencyMarkdown(
+  task: SubTask,
+  taskOutputs: string[],
+  taskRoleNames: string[],
+  taskProviderNames: string[]
+): string {
+  const deps = task.dependsOn || [];
+  const contextParts: string[] = [];
+  for (const depIdx of deps) {
+    if (taskOutputs[depIdx]) {
+      contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
+    }
+  }
+  return contextParts.join("\n\n");
+}
 
 // --- Reviewer ↔ Coder フィードバックループ（初回 DAG 完了後）---
 
@@ -357,7 +390,7 @@ function normalizeDiagramFlow(tasks: SubTask[]): SubTask[] {
           role: "file-searcher",
           mode: "chat",
           input:
-            "設計・画像・計画のMarkdownを元に、プロジェクト内の関連ファイル、既存実装、変更対象、注意点を調査し、後続のCoder/Writerが実行できる詳細なMarkdownレポートを作成する。",
+            "Leader Todos と設計・画像・計画のMarkdownを元に、プロジェクト内の関連ファイル、既存実装、変更対象、注意点を調査し、後続のCoder/Writerが実行できる詳細なMarkdownレポートを作成する。",
           reason: "実装/執筆前に既存コードとの接続点を特定するため",
           dependsOn: [],
         },
@@ -573,6 +606,52 @@ function resolveApiKey(
   }
 
   return undefined;
+}
+
+async function createLeaderTodosMarkdown(params: {
+  req: OrchestratorRequest;
+  leaderProvider: {
+    name: string;
+    displayName: string;
+    apiBaseUrl: string;
+    apiType: string;
+    apiEndpoint?: string;
+    modelId: string;
+    toolMap?: unknown;
+  };
+  leaderApiKey?: string;
+  fileSearchInput: string;
+  upstreamMarkdown: string;
+}): Promise<string> {
+  const input = `## ユーザーの元のリクエスト
+${augmentLeaderInput(params.req)}
+
+## 上流エージェントのMarkdown
+${params.upstreamMarkdown || "(上流Markdownなし)"}
+
+## File Search への元の指示
+${params.fileSearchInput}
+
+上記を統合し、File Search に渡す Todos Markdown を作成してください。`;
+
+  const result = await executeTask({
+    provider: { ...params.leaderProvider, toolMap: undefined },
+    config: { apiKey: params.leaderApiKey, maxTokens: 8192 },
+    input,
+    role: { slug: "leader", name: "Leader" },
+    systemPrompt: LEADER_TODOS_SYSTEM_PROMPT,
+    chatHistory: params.req.chatHistory,
+  });
+
+  if (result.status !== "success" || !result.output.trim()) {
+    logger.warn(`[Agent] Leader Todos generation failed: ${result.errorMsg || "empty output"}`);
+    return `## Todos
+
+- File Search は上流Markdownと元の指示をもとに、関連ファイル、検索キーワード、変更対象、注意点を調査する。
+- 情報が不足している場合は、不足内容をMarkdownに明記する。`;
+  }
+
+  return result.output;
 }
 
 /**
@@ -839,36 +918,37 @@ export async function runAgent(
     taskProviderNames[i] = provider.displayName;
 
     let enrichedInput: string;
+    let upstreamMarkdownForTodos = "";
     if (opts?.inputOverride !== undefined) {
-      enrichedInput = attachLocalWorkspaceToSubtaskInput(
-        task.role,
-        task.mode,
-        opts.inputOverride,
-        req.localWorkspaceContext
-      );
+      enrichedInput = opts.inputOverride;
+      upstreamMarkdownForTodos = opts.inputOverride;
     } else {
       // Build input with context from dependency tasks
       enrichedInput = task.input;
-      const deps = task.dependsOn || [];
-      if (deps.length > 0) {
-        const contextParts: string[] = [];
-        for (const depIdx of deps) {
-          if (taskOutputs[depIdx]) {
-            contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
-          }
-        }
-        if (contextParts.length > 0) {
-          enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
-        }
+      upstreamMarkdownForTodos = buildDependencyMarkdown(task, taskOutputs, taskRoleNames, taskProviderNames);
+      if (upstreamMarkdownForTodos) {
+        enrichedInput = `## これまでの他のエージェントの作業結果:\n${upstreamMarkdownForTodos}\n\n## あなたへの指示:\n${task.input}`;
       }
-
-      enrichedInput = attachLocalWorkspaceToSubtaskInput(
-        task.role,
-        task.mode,
-        enrichedInput,
-        req.localWorkspaceContext
-      );
     }
+
+    if (isFileSearcherTask(task)) {
+      log(`[Agent] Leader Todos: File Search 用のTodosを生成`);
+      const leaderTodos = await createLeaderTodosMarkdown({
+        req,
+        leaderProvider,
+        leaderApiKey,
+        fileSearchInput: enrichedInput,
+        upstreamMarkdown: upstreamMarkdownForTodos,
+      });
+      enrichedInput = `## Leader Todos\n\n${leaderTodos}\n\n---\n\n## File Search の入力Markdown\n\n${enrichedInput}`;
+    }
+
+    enrichedInput = attachLocalWorkspaceToSubtaskInput(
+      task.role,
+      task.mode,
+      enrichedInput,
+      req.localWorkspaceContext
+    );
 
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys, req.authenticated);
 
@@ -1566,36 +1646,36 @@ async function runAgentStreamCore(
     taskProviderNames[i] = provider.displayName;
 
     let enrichedInput: string;
+    let upstreamMarkdownForTodos = "";
     if (opts?.inputOverride !== undefined) {
-      enrichedInput = attachLocalWorkspaceToSubtaskInput(
-        task.role,
-        task.mode,
-        opts.inputOverride,
-        req.localWorkspaceContext
-      );
+      enrichedInput = opts.inputOverride;
+      upstreamMarkdownForTodos = opts.inputOverride;
     } else {
       // Build enriched input with context from dependency tasks
       enrichedInput = task.input;
-      const deps = task.dependsOn || [];
-      if (deps.length > 0) {
-        const contextParts: string[] = [];
-        for (const depIdx of deps) {
-          if (taskOutputs[depIdx]) {
-            contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
-          }
-        }
-        if (contextParts.length > 0) {
-          enrichedInput = `## これまでの他のエージェントの作業結果:\n${contextParts.join("\n")}\n\n## あなたへの指示:\n${task.input}`;
-        }
+      upstreamMarkdownForTodos = buildDependencyMarkdown(task, taskOutputs, taskRoleNames, taskProviderNames);
+      if (upstreamMarkdownForTodos) {
+        enrichedInput = `## これまでの他のエージェントの作業結果:\n${upstreamMarkdownForTodos}\n\n## あなたへの指示:\n${task.input}`;
       }
-
-      enrichedInput = attachLocalWorkspaceToSubtaskInput(
-        task.role,
-        task.mode,
-        enrichedInput,
-        req.localWorkspaceContext
-      );
     }
+
+    if (isFileSearcherTask(task)) {
+      const leaderTodos = await createLeaderTodosMarkdown({
+        req,
+        leaderProvider,
+        leaderApiKey,
+        fileSearchInput: enrichedInput,
+        upstreamMarkdown: upstreamMarkdownForTodos,
+      });
+      enrichedInput = `## Leader Todos\n\n${leaderTodos}\n\n---\n\n## File Search の入力Markdown\n\n${enrichedInput}`;
+    }
+
+    enrichedInput = attachLocalWorkspaceToSubtaskInput(
+      task.role,
+      task.mode,
+      enrichedInput,
+      req.localWorkspaceContext
+    );
 
     const apiKey = resolveApiKey(provider.name, provider.apiType, req.apiKeys, req.authenticated);
 

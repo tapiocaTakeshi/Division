@@ -75,17 +75,20 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 - imager: 画像生成・ビジュアルコンテンツ
 - planner: 企画・設計・アーキテクチャ
 
-【Layer 3 — File Search】Layer 2 の Markdown 出力に依存
-- file-searcher: 設計・画像・計画の結果を受け、プロジェクト内の関連ファイル・既存コード・変更対象を調査
+【Layer 3 — Leader Todos】Layer 2 の Markdown 出力を Leader が再統合（tasksには含めない）
+- Leader は designer / imager / planner の Markdown を受け取り、File Search に渡す具体的な Todos Markdown を自動生成する
 
-【Layer 4 — 実装・執筆】File Search に依存
+【Layer 4 — File Search】Leader Todos に依存
+- file-searcher: Leader Todos と設計・画像・計画の結果を受け、プロジェクト内の関連ファイル・既存コード・変更対象を調査
+
+【Layer 5 — 実装・執筆】File Search に依存
 - coder: コード生成・実装・デバッグ
 - writer: 文章作成・ドキュメント
 
-【Layer 5 — レビュー】Layer 4に依存
+【Layer 6 — レビュー】Layer 5に依存
 - reviewer: 品質確認・レビュー・改善提案（dependsOn にレビュー対象の coder または writer の index を必ず含める）
 
-オーケストラ実行時: reviewer が Not OK の場合、reviewer → file-searcher → coder/writer → reviewer を最大2周ループ（REVIEWER_CODER_MAX_ROUNDS）します。プランに追加タスクは不要です。
+オーケストラ実行時: reviewer が Not OK の場合、reviewer → Leader Todos → file-searcher → coder/writer → reviewer を最大2周ループ（REVIEWER_CODER_MAX_ROUNDS）します。プランに追加タスクは不要です。
 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます
@@ -97,7 +100,7 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
 8. 1タスクに複数作業を詰め込まず細かく分割
 9. 同じロールでも異なる観点なら別タスクに分ける
-10. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。Layer 3 には file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。**
+10. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。Leader Todos はオーケストラが自動生成するため tasks には含めないこと。**
 11. 各タスクに "mode" を指定:
     - "chat": テキスト生成タスク（デフォルト。searcher, researcher 等 Web検索ロールもこれ）
     - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
@@ -113,7 +116,7 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
     { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2] },
     { "role": "imager", "mode": "chat", "title": "画像・ビジュアル作成", "description": "調査・デザイン方針を元に画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2] },
     { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2] },
-    { "role": "file-searcher", "mode": "chat", "title": "実装前ファイル調査", "description": "設計・画像・計画のMarkdownを元にプロジェクト内の関連ファイルと変更対象を調査", "reason": "既存コードとの接続点を特定するため", "dependsOn": [3, 4, 5] },
+    { "role": "file-searcher", "mode": "chat", "title": "実装前ファイル調査", "description": "Leader Todos と設計・画像・計画のMarkdownを元にプロジェクト内の関連ファイルと変更対象を調査", "reason": "既存コードとの接続点を特定するため", "dependsOn": [3, 4, 5] },
     { "role": "coder", "mode": "computer_use", "title": "実装", "description": "File Search の調査結果に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [6] },
     { "role": "reviewer", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [7] }
   ]
@@ -212,7 +215,7 @@ function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
           mode: "chat",
           title: "実装前ファイル調査",
           description:
-            "設計・画像・計画のMarkdownを元に、プロジェクト内の関連ファイル、既存実装、変更対象、注意点を調査する。",
+            "Leader Todos と設計・画像・計画のMarkdownを元に、プロジェクト内の関連ファイル、既存実装、変更対象、注意点を調査する。",
           reason: "実装/執筆前に既存コードとの接続点を特定するため",
           dependsOn: [],
         },
@@ -323,9 +326,9 @@ taskCreateRouter.post(
       : "";
 
     const workspaceHint = localWorkspaceContext?.trim()
-      ? `\n\n【実行環境】IDE/CLI から localWorkspaceContext（ワークスペーススナップショット）が付与されます。API はローカルディスクを直接読みません。設計後の Layer 3 に file-searcher を必ず含めてください。\n`
+      ? `\n\n【実行環境】IDE/CLI から localWorkspaceContext（ワークスペーススナップショット）が付与されます。API はローカルディスクを直接読みません。設計後に Leader Todos を挟み、その後の File Search タスクとして file-searcher を必ず含めてください。\n`
       : workspacePath
-        ? `\n\n【実行環境】ローカルプロジェクトが開かれています（タスク実行時に workspacePath が渡されます）。設計後の Layer 3 に file-searcher を必ず含めてください。\n`
+        ? `\n\n【実行環境】ローカルプロジェクトが開かれています（タスク実行時に workspacePath が渡されます）。設計後に Leader Todos を挟み、その後の File Search タスクとして file-searcher を必ず含めてください。\n`
         : "";
 
     const enrichedInput = `${formattedHistory}【ユーザーの最新のリクエスト】\n${input}${workspaceHint}`;

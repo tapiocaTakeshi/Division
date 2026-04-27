@@ -543,6 +543,41 @@ interface ParsedResponse {
   citations?: string[];
 }
 
+interface NativeToolCall {
+  tool: string;
+  args: Record<string, unknown>;
+}
+
+function nativeToolCallToJsonOutput(call: NativeToolCall): string {
+  return "```json\n" + JSON.stringify({ tool: call.tool, args: call.args }, null, 2) + "\n```";
+}
+
+function parseJsonObjectFragment(raw: string): Record<string, unknown> {
+  const text = raw.trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return isPlainObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function extractAnthropicToolCallFromMessage(data: unknown): NativeToolCall | null {
+  if (!isPlainObject(data)) return null;
+  const content = data.content as unknown;
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (!isPlainObject(block)) continue;
+    if (block.type !== "tool_use" || typeof block.name !== "string") continue;
+    return {
+      tool: block.name,
+      args: isPlainObject(block.input) ? block.input : {},
+    };
+  }
+  return null;
+}
+
 /**
  * Parse the response from each API type, extracting thinking and citations
  */
@@ -576,8 +611,9 @@ function parseResponse(apiType: string, data: unknown): ParsedResponse {
     const content = d.content as Array<{ type: string; text?: string; thinking?: string }>;
     const thinkingParts = content?.filter((c) => c.type === "thinking").map((c) => c.thinking ?? "");
     const textParts = content?.filter((c) => c.type === "text").map((c) => c.text ?? "");
+    const toolCall = extractAnthropicToolCallFromMessage(data);
     return {
-      output: textParts?.join("") || JSON.stringify(data),
+      output: textParts?.join("") || (toolCall ? nativeToolCallToJsonOutput(toolCall) : JSON.stringify(data)),
       thinking: thinkingParts?.length ? thinkingParts.join("") : undefined,
     };
   }
@@ -1315,6 +1351,8 @@ export async function executeTaskStream(
       chunkCount: number;
       streamError: string | null;
       lastStopReason: string | null;
+      activeAnthropicToolCall: { name: string; inputJson: string } | null;
+      completedAnthropicToolCall: NativeToolCall | null;
     } = {
       accumulated: "",
       accumulatedThinking: "",
@@ -1322,16 +1360,56 @@ export async function executeTaskStream(
       chunkCount: 0,
       streamError: null,
       lastStopReason: null,
+      activeAnthropicToolCall: null,
+      completedAnthropicToolCall: null,
     };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+
+    const captureAnthropicToolCall = (data: string): void => {
+      if (apiTypeEff !== "anthropic") return;
+      try {
+        const parsed = JSON.parse(data) as Record<string, unknown>;
+        if (parsed.type === "content_block_start" && isPlainObject(parsed.content_block)) {
+          const block = parsed.content_block;
+          if (block.type === "tool_use" && typeof block.name === "string") {
+            const initialInput =
+              isPlainObject(block.input) && Object.keys(block.input).length > 0
+                ? JSON.stringify(block.input)
+                : "";
+            state.activeAnthropicToolCall = { name: block.name, inputJson: initialInput };
+          }
+          return;
+        }
+        if (
+          parsed.type === "content_block_delta" &&
+          isPlainObject(parsed.delta) &&
+          parsed.delta.type === "input_json_delta" &&
+          typeof parsed.delta.partial_json === "string" &&
+          state.activeAnthropicToolCall
+        ) {
+          state.activeAnthropicToolCall.inputJson += parsed.delta.partial_json;
+          return;
+        }
+        if (parsed.type === "content_block_stop" && state.activeAnthropicToolCall) {
+          state.completedAnthropicToolCall = {
+            tool: state.activeAnthropicToolCall.name,
+            args: parseJsonObjectFragment(state.activeAnthropicToolCall.inputJson),
+          };
+          state.activeAnthropicToolCall = null;
+        }
+      } catch {
+        /* Ignore malformed SSE payloads; normal chunk parsing handles errors. */
+      }
+    };
 
     const processLine = (rawLine: string): boolean => {
       if (!rawLine.startsWith("data: ")) return true;
       const data = rawLine.slice(6).trim();
       if (!data || data === "[DONE]") return true;
 
+      captureAnthropicToolCall(data);
       const chunk = parseStreamChunk(apiTypeEff, data);
       if (chunk.error) {
         state.streamError = chunk.error;
@@ -1379,7 +1457,15 @@ export async function executeTaskStream(
     }
 
     const durationMs = Date.now() - start;
-    const { accumulated, accumulatedThinking, chunkCount, lastCitations, lastStopReason, streamError } = state;
+    const {
+      accumulated,
+      accumulatedThinking,
+      chunkCount,
+      lastCitations,
+      lastStopReason,
+      streamError,
+      completedAnthropicToolCall,
+    } = state;
     console.log(`[API] ──── Stream Complete ────`);
     console.log(`[API]  Duration: ${durationMs}ms`);
     console.log(`[API]  Chunks: ${chunkCount}`);
@@ -1413,6 +1499,17 @@ export async function executeTaskStream(
      * Anthropic の `refusal` / `max_tokens` や、思考中に枯渇して text を吐けなかった
      * 場合をきちんと error として扱う。
      */
+    if (!accumulated && lastStopReason === "tool_use" && completedAnthropicToolCall) {
+      const output = nativeToolCallToJsonOutput(completedAnthropicToolCall);
+      return {
+        output,
+        durationMs,
+        status: "success",
+        thinking: accumulatedThinking || undefined,
+        citations: lastCitations ?? undefined,
+      };
+    }
+
     if (!accumulated) {
       const reason: string = lastStopReason ?? "unknown";
       let hint: string;

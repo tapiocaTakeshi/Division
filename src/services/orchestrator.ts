@@ -34,31 +34,47 @@ const ROLE_ALIASES: Record<string, string> = {
 };
 
 // --- Role-Specific Max Tokens ---
-// High-output roles (designer, coder, writer) keep large limits.
-// Other roles get reduced output to leave more room for input context.
+// 各ロールに割り当てられているモデルの output 上限に合わせて最大化する。
+//  - Anthropic Opus 4.6  : 32,000
+//  - Google  Gemini 2.5 Pro: 65,536
+//  - OpenAI  GPT-5.x      : 131,072
+//  - Perplexity sonar-pro : 8,192
 const ROLE_MAX_TOKENS: Record<string, number> = {
-  designer: 32768,
-  coder: 32768,
-  coding: 32768,
-  writer: 16384,
-  planner: 16384,
-  planning: 16384,
-  reviewer: 16384,
+  // Gemini 2.5 Pro (HTML / Markdown / 画像メタ)
+  designer: 65536,
+  imager: 65536,
+  planner: 65536,
+  planning: 65536,
+  "design": 65536,
+
+  // Anthropic Opus 4.6 (コード・レビュー・ファイル調査の Markdown)
+  coder: 32000,
+  coding: 32000,
+  reviewer: 32000,
+  "review": 32000,
+  "file-searcher": 32000,
+  "file-search": 32000,
+
+  // OpenAI GPT-5.x (Leader / Writer / Ideaman の Markdown)
+  writer: 131072,
+  writing: 131072,
+  ideaman: 131072,
+  leader: 131072,
+
+  // Perplexity sonar-pro (Web 検索系)
   searcher: 8192,
-  researcher: 16384,
-  "deep-research": 32768,
-  "file-searcher": 245760,
-  ideaman: 16384,
+  search: 8192,
+  researcher: 8192,
+  research: 8192,
+  "deep-research": 8192,
 };
 
 // --- Synthesis Max Tokens (used when coder/writer is the final synthesizer) ---
-// Regular task invocations use ROLE_MAX_TOKENS (reduced). When coder or writer
-// acts as the synthesizer, they get a larger window so they can fully
-// incorporate every upstream agent output into the final answer.
+// 統合は最終成果物なのでモデルの上限まで使い切る。
 const ROLE_SYNTHESIS_MAX_TOKENS: Record<string, number> = {
-  coder: 65536,
-  writer: 65536,
-  designer: 65536,
+  coder: 32000,         // Opus 4.6
+  writer: 131072,       // GPT-5.x
+  designer: 65536,      // Gemini 2.5 Pro
 };
 
 // Role 別の system prompt は Supabase の Role.systemPrompt を必ず使用する（フォールバック無し）。
@@ -193,10 +209,7 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 - searcher: ウェブ検索・情報収集（Perplexity担当）
 - researcher: 調査・分析・レポート（Perplexity Deep Research担当）
 
-【Leader Design Brief】Layer 1 → Layer 2 のハンドオフで Leader が自動挿入（tasksには含めない）
-- Leader は ideaman / searcher / researcher の Markdown を統合し、設計層が即着手できる Design Brief Markdown を生成する
-
-【Layer 2 — 設計・デザイン】Layer 1 の Markdown 出力に依存（dependsOn で ideaman/searcher/researcher を参照）
+【Layer 2 — 設計・デザイン】Layer 1 の Markdown 出力に直接依存（Leader による中間統合は行わず、ideaman/searcher/researcher の Markdown をそのまま受け取る）
 - designer: UI/UXデザイン・HTML/CSS生成・ランディングページ・プロトタイプ（Gemini担当。完全に自己完結したHTMLを生成）
 - imager: 画像生成・ビジュアルコンテンツ・イラスト（GPT Image担当）
 - planner: 企画・設計・アーキテクチャ・戦略立案（Gemini担当）
@@ -227,7 +240,7 @@ ideaman, searcher, file-searcher, researcher, designer, imager, planner, coder, 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます（0, 1, 2...）
 2. dependsOn で依存先のインデックスを指定。空=並列実行
-3. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。Leader Design Brief / Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
+3. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
 4. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること
 5. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
 6. タスクは最低5個以上。複雑な場合は8〜15個に細分化
@@ -283,16 +296,6 @@ const LEADER_TODOS_SYSTEM_PROMPT = `あなたはAIチームのリーダーです
 4. Coder/Writer が後続で迷わないよう、優先順位と完了条件を明示する。
 5. ツール呼び出しやJSONは出力しない。`;
 
-const LEADER_DESIGN_BRIEF_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。
-調査・発想エージェント（Idea man / Search / Research）のMarkdownを統合し、設計層（Designer / Image / Planner）が即着手できる Design Brief Markdown を作成してください。
-
-ルール:
-1. 出力は Markdown のみ。
-2. 最初に "## Design Brief" 見出しを置く。
-3. 「採用するアイデア」「制約・前提」「重要な参考事例」「設計層への指示（designer / imager / planner ごと）」を箇条書きで具体化する。
-4. 矛盾する情報は最も信頼できるものを採用し、根拠を明記する。
-5. ツール呼び出しやJSONは出力しない。`;
-
 const LEADER_REVIEW_BRIEF_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。
 Coder または Writer の成果物を Leader として品質ゲートで評価し、Reviewer に渡せる状態か判断したうえで、Reviewer 向けの Review Brief をテキストで作成してください。
 
@@ -323,23 +326,8 @@ function isFileSearcherTask(task: SubTask): boolean {
   return normalizeRoleSlug(task.role) === "file-searcher";
 }
 
-function isDesignLayerTask(task: SubTask): boolean {
-  const role = normalizeRoleSlug(task.role);
-  return role === "designer" || role === "imager" || role === "planner";
-}
-
 function isReviewerTask(task: SubTask): boolean {
   return normalizeRoleSlug(task.role) === "reviewer";
-}
-
-function hasLayer1Dependency(task: SubTask, allTasks: SubTask[]): boolean {
-  const deps = task.dependsOn || [];
-  return deps.some((d) => {
-    const upstream = allTasks[d];
-    if (!upstream) return false;
-    const role = normalizeRoleSlug(upstream.role);
-    return role === "ideaman" || role === "searcher" || role === "researcher";
-  });
 }
 
 function hasImplementationDependency(task: SubTask, allTasks: SubTask[]): boolean {
@@ -657,7 +645,7 @@ ${params.fileSearchInput}
 
   const result = await executeTask({
     provider: { ...params.leaderProvider, toolMap: undefined },
-    config: { apiKey: params.leaderApiKey, maxTokens: 8192 },
+    config: { apiKey: params.leaderApiKey, maxTokens: 65536 },
     input,
     role: { slug: "leader", name: "Leader" },
     systemPrompt: LEADER_TODOS_SYSTEM_PROMPT,
@@ -670,54 +658,6 @@ ${params.fileSearchInput}
 
 - File Search は上流Markdownと元の指示をもとに、関連ファイル、検索キーワード、変更対象、注意点を調査する。
 - 情報が不足している場合は、不足内容をMarkdownに明記する。`;
-  }
-
-  return result.output;
-}
-
-async function createLeaderDesignBriefMarkdown(params: {
-  req: OrchestratorRequest;
-  leaderProvider: {
-    name: string;
-    displayName: string;
-    apiBaseUrl: string;
-    apiType: string;
-    apiEndpoint?: string;
-    modelId: string;
-    toolMap?: unknown;
-  };
-  leaderApiKey?: string;
-  designLayerInput: string;
-  upstreamMarkdown: string;
-  targetRoleSlug: string;
-}): Promise<string> {
-  const input = `## ユーザーの元のリクエスト
-${augmentLeaderInput(params.req)}
-
-## 上流エージェント（Idea man / Search / Research）のMarkdown
-${params.upstreamMarkdown || "(上流Markdownなし)"}
-
-## 設計層への元の指示（対象ロール: ${params.targetRoleSlug}）
-${params.designLayerInput}
-
-上記を統合し、設計層が即着手できる Design Brief Markdown を作成してください。`;
-
-  const result = await executeTask({
-    provider: { ...params.leaderProvider, toolMap: undefined },
-    config: { apiKey: params.leaderApiKey, maxTokens: 8192 },
-    input,
-    role: { slug: "leader", name: "Leader" },
-    systemPrompt: LEADER_DESIGN_BRIEF_SYSTEM_PROMPT,
-    chatHistory: params.req.chatHistory,
-  });
-
-  if (result.status !== "success" || !result.output.trim()) {
-    logger.warn(`[Agent] Leader Design Brief generation failed: ${result.errorMsg || "empty output"}`);
-    return `## Design Brief
-
-- 採用するアイデア: 上流Markdownの主要結論を踏襲する。
-- 制約・前提: 上流Markdownに記載された前提を維持する。
-- 設計層への指示: ${params.targetRoleSlug} は元の指示に従って設計を進める。`;
   }
 
   return result.output;
@@ -780,7 +720,7 @@ ${params.latestImplementation || "(成果物なし)"}
 
   const result = await executeTask({
     provider: { ...params.leaderProvider, toolMap: undefined },
-    config: { apiKey: params.leaderApiKey, maxTokens: 4096 },
+    config: { apiKey: params.leaderApiKey, maxTokens: 16384 },
     input,
     role: { slug: "leader", name: "Leader" },
     systemPrompt: LEADER_PROGRESS_CHECK_SYSTEM_PROMPT,
@@ -845,7 +785,7 @@ ${params.reviewerInput}
 
   const result = await executeTask({
     provider: { ...params.leaderProvider, toolMap: undefined },
-    config: { apiKey: params.leaderApiKey, maxTokens: 8192 },
+    config: { apiKey: params.leaderApiKey, maxTokens: 65536 },
     input,
     role: { slug: "leader", name: "Leader" },
     systemPrompt: LEADER_REVIEW_BRIEF_SYSTEM_PROMPT,
@@ -1151,21 +1091,6 @@ export async function runAgent(
         upstreamMarkdown: upstreamMarkdownForTodos,
       });
       enrichedInput = `## Leader Todos\n\n${leaderTodos}\n\n---\n\n## File Search の入力Markdown\n\n${enrichedInput}`;
-    } else if (
-      isDesignLayerTask(task) &&
-      hasLayer1Dependency(task, subTasks) &&
-      opts?.inputOverride === undefined
-    ) {
-      log(`[Agent] Leader Design Brief: ${task.role} 用のDesign Briefを生成`);
-      const designBrief = await createLeaderDesignBriefMarkdown({
-        req,
-        leaderProvider,
-        leaderApiKey,
-        designLayerInput: task.input,
-        upstreamMarkdown: upstreamMarkdownForTodos,
-        targetRoleSlug: task.role,
-      });
-      enrichedInput = `## Leader Design Brief\n\n${designBrief}\n\n---\n\n## ${task.role} への元の指示\n\n${task.input}`;
     } else if (
       isReviewerTask(task) &&
       hasImplementationDependency(task, subTasks) &&
@@ -1992,20 +1917,6 @@ async function runAgentStreamCore(
         upstreamMarkdown: upstreamMarkdownForTodos,
       });
       enrichedInput = `## Leader Todos\n\n${leaderTodos}\n\n---\n\n## File Search の入力Markdown\n\n${enrichedInput}`;
-    } else if (
-      isDesignLayerTask(task) &&
-      hasLayer1Dependency(task, subTasks) &&
-      opts?.inputOverride === undefined
-    ) {
-      const designBrief = await createLeaderDesignBriefMarkdown({
-        req,
-        leaderProvider,
-        leaderApiKey,
-        designLayerInput: task.input,
-        upstreamMarkdown: upstreamMarkdownForTodos,
-        targetRoleSlug: task.role,
-      });
-      enrichedInput = `## Leader Design Brief\n\n${designBrief}\n\n---\n\n## ${task.role} への元の指示\n\n${task.input}`;
     } else if (
       isReviewerTask(task) &&
       hasImplementationDependency(task, subTasks) &&

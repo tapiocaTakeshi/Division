@@ -43,18 +43,26 @@ const executeTaskSchema = z.object({
   localWorkspaceContext: z.string().optional(),
 });
 
+// 各ロールに割り当てられているモデルの output 上限まで使い切る。
+//  - Anthropic Opus 4.6  : 32,000
+//  - Google  Gemini 2.5 Pro: 65,536
+//  - OpenAI  GPT-5.x      : 131,072
+//  - Perplexity sonar-pro : 8,192
 const ROLE_MAX_TOKENS: Record<string, number> = {
   designer: 65536,
-  coder: 65536,
-  writer: 32768,
-  planner: 8192,
-  reviewer: 8192,
-  searcher: 4096,
+  imager: 65536,
+  planner: 65536,
+
+  coder: 32000,
+  reviewer: 32000,
+  "file-searcher": 32000,
+
+  writer: 131072,
+  ideaman: 131072,
+  leader: 131072,
+
+  searcher: 8192,
   researcher: 8192,
-  "file-searcher": 245760,
-  ideaman: 8192,
-  leader: 4096,
-  imager: 4096,
 };
 
 /**

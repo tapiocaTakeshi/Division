@@ -76,7 +76,9 @@ const DIRECT_GENERATE_GUARDRAILS = `You are a direct text generation endpoint.
 No tools are available in this mode. Do not emit tool calls, XML tool_call tags, JSON tool requests, or statements like "I will read/check files" as an action.
 Use only the context already present in the user's input. If required information is missing, explain what is missing and continue with the best possible answer.`;
 
-const DEFAULT_STREAM_MAX_TOKENS = 16384;
+// /api/generate/stream のデフォルトはモダンモデルで安全に使える上限まで引き上げる。
+// （Anthropic Opus 4.6: 32K, Gemini 2.5 Pro: 64K, GPT-5.x: 128K — Opus が下限なので 32K）
+const DEFAULT_STREAM_MAX_TOKENS = 32000;
 
 function buildGenerateSystemPrompt(systemPrompt?: string): string {
   const trimmed = systemPrompt?.trim();

@@ -9,6 +9,32 @@ import {
   isCoderRoleSlug,
 } from "../services/coder-guard";
 
+/**
+ * file-searcher は ai-executor 内でスナップショットを結合するためここでは付与しない。
+ * それ以外（coder / writer / designer など）は orchestrator 経由ではなく直接 /api/tasks/execute
+ * を叩くフローでも、元コードを完全に無視した「ゼロから書き直し」にならないようスナップショットを付与する。
+ */
+function attachLocalWorkspaceContext(
+  roleSlug: string,
+  input: string,
+  bundle: string | undefined
+): string {
+  const b = (bundle || "").trim();
+  if (!b) return input;
+  if (roleSlug === "file-searcher") return input;
+  return `# ローカルワークスペーススナップショット（クライアントが提供。API はユーザーの PC を直接読みません）
+
+> **重要**: このスナップショットがあなたのプロジェクトの「現在の真実」です。新規にゼロから作り直さず、必要な箇所だけを差分で更新してください。既存ファイルパス・既存スタイル・既存コンポーネント名を必ず維持してください。
+
+${b}
+
+---
+
+## このタスクでの指示
+
+${input}`;
+}
+
 export const taskRouter = Router();
 
 /**
@@ -162,8 +188,16 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
     ? { ...assignment.provider, toolMap: undefined }
     : assignment.provider;
 
-  // 3. Coder では入力にもガードを差し込む（system prompt が無視されたときの保険）。
-  const finalInput = isCoderRole ? wrapCoderInput(input) : input;
+  // 3. file-searcher 以外には先にローカルワークスペーススナップショットを差し込む
+  //    （これをやらないと coder は元コードを完全に無視して書き直しを始める）。
+  const inputWithWorkspace = attachLocalWorkspaceContext(
+    role.slug,
+    input,
+    localWorkspaceContext
+  );
+
+  // 4. Coder では入力にもガードを差し込む（system prompt が無視されたときの保険）。
+  const finalInput = isCoderRole ? wrapCoderInput(inputWithWorkspace) : inputWithWorkspace;
 
   const execReq = {
     provider: effectiveProvider,

@@ -251,16 +251,26 @@ function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
     "file-searcher",
   ]);
   const layer2 = indicesByRole(["designer", "imager", "planner"]);
+  const fileSearchers = indicesByRole(["file-searcher"]);
   const implementers = ordered
     .map((t, i) => (isImplementationTaskRow(t) ? i : -1))
     .filter((i) => i >= 0);
   const reviewers = indicesByRole(["reviewer"]);
 
+  const dedupSorted = (arr: number[]) =>
+    Array.from(new Set(arr)).sort((a, b) => a - b);
+
   for (let i = 0; i < ordered.length; i++) {
     if (layer1.includes(i)) ordered[i].dependsOn = [];
     else if (layer2.includes(i)) ordered[i].dependsOn = layer1.length ? [...layer1] : [];
-    else if (implementers.includes(i)) ordered[i].dependsOn = layer2.length ? [...layer2] : [...layer1];
-    else if (reviewers.includes(i)) ordered[i].dependsOn = implementers.length ? [...implementers] : [...layer2, ...layer1];
+    else if (implementers.includes(i)) {
+      const baseDeps = layer2.length ? [...layer2] : [...layer1];
+      ordered[i].dependsOn = dedupSorted([...baseDeps, ...fileSearchers]);
+    } else if (reviewers.includes(i)) {
+      ordered[i].dependsOn = implementers.length
+        ? [...implementers]
+        : dedupSorted([...layer2, ...layer1]);
+    }
   }
 
   return ordered;

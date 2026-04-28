@@ -114,20 +114,34 @@ function parseAssignmentConfig(raw: string | null | undefined): Record<string, u
 }
 
 /**
- * file-searcher / coder（computer_use）は ai-executor がスナップショットを結合する。
- * それ以外は Leader のサブタスク文だけでは本文を参照できないため、同じスナップショットを付与する。
+ * file-searcher は ai-executor 内でスナップショットを結合するためここでは付与しない。
+ * それ以外（coder / writer / designer など）は Leader のサブタスク文だけでは本文を参照できず、
+ * 元コードを完全に無視した「ゼロから書き直し」になりやすい。常に同じスナップショットを直接付与する。
+ *
+ * 以前は coder / computer_use のときも ai-executor が結合する想定でスキップしていたが、
+ * 実際の executeTask / executeTaskStream は file-searcher 専用処理しか持っておらず
+ * coder にスナップショットが渡らないバグになっていたため、coder にも付与する。
  */
 function attachLocalWorkspaceToSubtaskInput(
   roleSlug: string,
-  mode: string | undefined,
+  _mode: string | undefined,
   enrichedInput: string,
   bundle: string | undefined
 ): string {
   const b = (bundle || "").trim();
   if (!b) return enrichedInput;
   if (roleSlug === "file-searcher") return enrichedInput;
-  if (roleSlug === "coder" || mode === "computer_use") return enrichedInput;
-  return `# ローカルワークスペーススナップショット（クライアントが提供。API はユーザーの PC を直接読みません）\n\n${b}\n\n---\n\n## このタスクでの指示\n\n${enrichedInput}`;
+  return `# ローカルワークスペーススナップショット（クライアントが提供。API はユーザーの PC を直接読みません）
+
+> **重要**: このスナップショットがあなたのプロジェクトの「現在の真実」です。新規にゼロから作り直さず、必要な箇所だけを差分で更新してください。既存ファイルパス・既存スタイル・既存コンポーネント名を必ず維持してください。
+
+${b}
+
+---
+
+## このタスクでの指示
+
+${enrichedInput}`;
 }
 
 // --- Types ---
@@ -430,10 +444,14 @@ function normalizeDiagramFlow(tasks: SubTask[]): SubTask[] {
     "file-searcher",
   ]);
   const layer2 = indicesByRole(["designer", "imager", "planner"]);
+  const fileSearchers = indicesByRole(["file-searcher"]);
   const implementers = ordered
     .map((t, i) => (isImplementationTask(t) ? i : -1))
     .filter((i) => i >= 0);
   const reviewers = indicesByRole(["reviewer"]);
+
+  const dedupSorted = (arr: number[]) =>
+    Array.from(new Set(arr)).sort((a, b) => a - b);
 
   for (let i = 0; i < ordered.length; i++) {
     if (layer1.includes(i)) {
@@ -441,9 +459,14 @@ function normalizeDiagramFlow(tasks: SubTask[]): SubTask[] {
     } else if (layer2.includes(i)) {
       ordered[i].dependsOn = layer1.length ? [...layer1] : [];
     } else if (implementers.includes(i)) {
-      ordered[i].dependsOn = layer2.length ? [...layer2] : [...layer1];
+      // Implementer (coder / writer) は Layer 2 の設計だけだと既存コードを見ない
+      // ので、必ず file-searcher の調査結果も直接の依存に含める。
+      const baseDeps = layer2.length ? [...layer2] : [...layer1];
+      ordered[i].dependsOn = dedupSorted([...baseDeps, ...fileSearchers]);
     } else if (reviewers.includes(i)) {
-      ordered[i].dependsOn = implementers.length ? [...implementers] : [...layer2, ...layer1];
+      ordered[i].dependsOn = implementers.length
+        ? [...implementers]
+        : dedupSorted([...layer2, ...layer1]);
     }
   }
 

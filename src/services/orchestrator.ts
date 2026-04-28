@@ -14,6 +14,10 @@ import type { ChatMessage } from "./ai-executor";
 import { logger } from "../utils/logger";
 import { recordUsage, estimateTokens } from "./credits";
 import { resolveProvider } from "./provider-resolver";
+import {
+  wrapCoderInput as sharedWrapCoderInput,
+  coderOutputHasCode as sharedCoderOutputHasCode,
+} from "./coder-guard";
 
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
@@ -57,131 +61,10 @@ const ROLE_SYNTHESIS_MAX_TOKENS: Record<string, number> = {
   designer: 65536,
 };
 
-// --- Role-Specific System Prompts ---
-const ROLE_SYSTEM_PROMPTS: Record<string, string> = {
-  coder: `あなたは Division の Coder エージェントです。Layer 1 / Layer 2 / file-searcher / Leader Todos の出力を読み取り、**動作する完全なコード**を Markdown コードブロックで出力します。
-
-## 役割
-1. 上流エージェント（file-searcher・designer・planner 等）の成果物を厳密に読み解く
-2. 既存コードのスタイル・命名規則・依存関係を踏襲する
-3. **必ず完全なコード本体を出力する**（疑似コードや「ここに○○を追加」といった省略は禁止）
-4. ファイル単位で「新規 / 変更 / 削除」を明示し、変更ファイルは変更後の全文を出力する
-5. ビルド・テスト・型チェックの観点でレビュアが評価できる粒度で書く
-
-## 重要なルール
-- **このオーケストレーション環境ではあなた自身はツールを実行できません**。\`bash\` / \`file_read\` / \`file_write\` / \`text_editor\` 等のツール呼び出し（JSON や \`<tool_call>\`）を返してはいけません。
-- 代わりに、**変更すべきファイルごとに完全なコードブロックを直接出力**してください。実際の書き込みは Reviewer/CLI 側が行います。
-- コードを省略したり「...」「以下省略」と書くことは絶対に禁止です。出力トークン上限まで使い切って構いません。
-- file-searcher が読み取ったコードと矛盾しないようにしてください（既存の関数シグネチャ・型定義を尊重）。
-
-## 出力フォーマット（このセクション順で必ず記載）
-### 1. 実装プラン
-- 何を、なぜ、どう実装するかを箇条書きで簡潔に説明
-- 影響範囲（関数・ファイル・モジュール）
-
-### 2. ファイル一覧
-| ファイル | 操作 | 概要 |
-|---|---|---|
-| src/foo.ts | 新規 | ... |
-| src/bar.ts | 変更 | ... |
-
-### 3. コード本体
-ファイルごとに以下のフォーマットで **完全なコード**を出力:
-
-\`\`\`<language>:<filepath>
-// ファイルの完全な内容（変更ファイルは変更後の全文）
-\`\`\`
-
-### 4. 検証方針
-- ビルド・テスト・型チェック・手動確認の手順
-- レビュア向けの注目ポイント
-
-## Flutter / Dart の注意
-- Flutter の場合、独自のカラー指定（\`Color(0xFF...)\` 等）は避け、テーマや既存定数を使用してください。`,
-
-  designer: `あなたは優秀なUIデザイナー兼フロントエンドエンジニアです。
-リクエストに基づいて、**完全に自己完結した単一のHTMLファイル**を生成してください。
-
-ルール:
-1. 出力は <!DOCTYPE html> から </html> まで、完全なHTMLドキュメントにしてください
-2. CSSは <style> タグ内にインラインで記述してください（外部ファイル参照禁止）
-3. JavaScriptは <script> タグ内にインラインで記述してください（外部ファイル参照禁止）
-4. モダンで美しいデザインにしてください（グラデーション、シャドウ、アニメーション等を活用）
-5. レスポンシブデザイン対応にしてください
-6. 必ず \`\`\`html で囲んで出力してください
-7. 外部CDN（Google Fonts, Font Awesome, Tailwind CDN等）は使用して構いません
-8. インタラクティブな要素（ホバー効果、クリックイベント等）を積極的に入れてください
-9. ダークモード対応も考慮してください
-10. HTMLの前後に説明テキストを入れず、HTMLコードブロックのみを出力してください`,
-
-  "file-searcher": `あなたはプロジェクトのファイル構造・コードベースを徹底的に調査し、**非常に詳細で長いMarkdownレポート**を生成する専門家です。
-
-あなたの出力は、後続のcoder・designer・writerが**このレポートだけで実装できる**レベルの情報量を持つ必要があります。
-出力トークンの制限を最大限使い切ってください。短い要約ではなく、詳細な分析レポートを出力してください。
-
-## 出力構成（この順序で網羅的に記載）
-
-### 1. プロジェクト全体構造
-- ディレクトリツリー（深さ3階層以上）
-- 各ディレクトリの役割と責務の説明
-
-### 2. 関連ファイル一覧と概要
-- ユーザーのリクエストに関連する全ファイルのパスと概要
-- 各ファイルの行数、主要なexport、依存関係
-
-### 3. コードの詳細分析
-- 関連する関数・クラス・型定義・インターフェースの**完全なコード**をコードブロックで掲載
-- 関数のシグネチャだけでなく、実装の中身も含めてください
-- コンポーネントのprops、state、イベントハンドラも記載
-
-### 4. ファイル間の依存関係
-- import/export の関係性マップ
-- データフロー（どのファイルからどのファイルへデータが流れるか）
-
-### 5. 設定・環境
-- package.json の関連依存パッケージ
-- 設定ファイル（tsconfig, eslint, tailwind等）の関連設定
-
-### 6. 変更が必要な箇所の特定
-- ユーザーのリクエストを達成するために変更が必要なファイルと箇所を具体的に列挙
-- 変更の影響範囲と注意点
-
-## ルール
-- **絶対に省略しないでください** — 「...」や「以下省略」は禁止です
-- コードは必ず \`\`\`言語名 で囲んでください
-- ファイルパスは常にフルパスで記載してください
-- 推測ではなく、実際に読み取った内容のみを報告してください
-- **出力は最低でも 2 万文字以上**を目安にし、可能なら **3～8 万文字規模**の詳細レポートを出してください（トークン上限まで使ってよい）
-- **localWorkspaceContext が渡されている場合**: それはユーザーのマシンで収集されたスナップショットです。API はローカルディスクを直接読みません。スナップショットを一次資料としてレポートしてください`,
-};
-
-/**
- * Coder への入力に強制ガードを差し込む。System prompt が無視されたときの保険として、
- * ユーザーメッセージ側にも「前置き禁止・コードブロック必須・ツール禁止」を明記する。
- */
-function wrapCoderInput(input: string): string {
-  const guardrails = `## 出力ルール（最優先・無視不可）
-- このオーケストレーション環境では **bash / file_read / file_write / text_editor / search 等のツールは一切利用できません**。「Let me look at...」「まず○○を調査します」「以下を確認します」のような調査・分析の前置きを書かず、与えられた情報だけで今すぐ最終成果物を出してください。
-- 応答の **最初の見出しは必ず \`### 1. 実装プラン\`** で始めてください。
-- 応答には **必ず 1 つ以上の三連バッククォートで囲ったコードブロック** を含めてください。コードブロックが無い応答はシステム上エラー扱いとなり、同じ誤りを繰り返すとタスクが中止されます。
-- ファイル本体は \`\`\`<lang>:<filepath> 形式（例: \`\`\`tsx:src/components/Foo.tsx）で **完全な内容** を出力してください。省略・「...」・「以下省略」は禁止です。
-- 上流エージェント（file-searcher / Layer 2 / Leader Todos）の成果物に既に必要な情報が揃っています。追加の調査宣言は不要です。
-
----
-
-`;
-  return `${guardrails}${input}`;
-}
-
-/**
- * Coder の応答にコードブロックが含まれているかを判定する。
- * 含まれていなければ「単なる前置き応答」とみなし、フィードバックループで再試行する。
- */
-function coderOutputHasCode(output: string): boolean {
-  if (!output) return false;
-  const fenceCount = (output.match(/```/g) ?? []).length;
-  return fenceCount >= 2;
-}
+// Role 別の system prompt は Supabase の Role.systemPrompt を必ず使用する（フォールバック無し）。
+// Coder ガードは coder-guard.ts に切り出し済み。
+const wrapCoderInput = sharedWrapCoderInput;
+const coderOutputHasCode = sharedCoderOutputHasCode;
 
 function normalizeRoleSlug(slug: string): string {
   const raw = String(slug ?? "").trim();
@@ -1328,7 +1211,7 @@ export async function runAgent(
     );
 
     const isCoderRole = task.role === "coder" || task.mode === "computer_use";
-    const roleSystemPrompt = role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
+    const roleSystemPrompt = role.systemPrompt ?? undefined;
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const effectiveProvider = isCoderRole
       ? { ...provider, toolMap: undefined }
@@ -2198,7 +2081,7 @@ async function runAgentStreamCore(
     });
 
     const isCoderRole = task.role === "coder" || task.mode === "computer_use";
-    const roleSystemPrompt = role.systemPrompt ?? ROLE_SYSTEM_PROMPTS[task.role];
+    const roleSystemPrompt = role.systemPrompt ?? undefined;
     const roleMaxTokens = ROLE_MAX_TOKENS[task.role];
     const effectiveProvider = isCoderRole
       ? { ...provider, toolMap: undefined }

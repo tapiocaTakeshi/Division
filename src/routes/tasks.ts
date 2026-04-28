@@ -3,6 +3,11 @@ import { prisma } from "../db";
 import { z } from "zod";
 import { executeTask, executeTaskStream } from "../services/ai-executor";
 import { asyncHandler } from "../middleware/async-handler";
+import {
+  wrapCoderInput,
+  coderOutputHasCode,
+  isCoderRoleSlug,
+} from "../services/coder-guard";
 
 export const taskRouter = Router();
 
@@ -135,11 +140,29 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
     ...config,
   };
 
+  // Coder ロールは「ツールコール JSON しか返さない」「Let me analyze で止まる」現象が
+  // 頻発するため、orchestrator と同じ多層ガードをこのルートでも適用する。
+  const isCoderRole = isCoderRoleSlug(role.slug);
+
+  // 1. DB の Role.systemPrompt を必ず使う。フォールバックは持たない。
+  const roleSystemPrompt =
+    (role as { systemPrompt?: string | null }).systemPrompt ?? undefined;
+
+  // 2. Coder では provider.toolMap を剥がし、Anthropic 等が native tool 呼び出しを
+  //    返す経路を物理的に遮断する。
+  const effectiveProvider = isCoderRole
+    ? { ...assignment.provider, toolMap: undefined }
+    : assignment.provider;
+
+  // 3. Coder では入力にもガードを差し込む（system prompt が無視されたときの保険）。
+  const finalInput = isCoderRole ? wrapCoderInput(input) : input;
+
   const execReq = {
-    provider: assignment.provider,
+    provider: effectiveProvider,
     config: mergedConfig,
-    input,
+    input: finalInput,
     role: { slug: role.slug, name: role.name },
+    ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
     workspacePath,
     localWorkspaceContext,
   };
@@ -156,6 +179,17 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
       (text) => { res.write(`data: ${JSON.stringify({ type: "chunk", text })}\n\n`); },
       (text) => { res.write(`data: ${JSON.stringify({ type: "thinking", text })}\n\n`); }
     );
+
+    // Coder は「コードブロック無し / ツールコール JSON だけ」をエラー扱いにする。
+    if (
+      isCoderRole &&
+      result.status === "success" &&
+      !coderOutputHasCode(result.output)
+    ) {
+      result.status = "error";
+      result.errorMsg =
+        "Coder did not produce any code block. Ignored output (likely tool-call JSON or analytical preamble).";
+    }
 
     await prisma.taskLog.create({
       data: {
@@ -188,6 +222,16 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
 
   // Non-streaming mode
   const result = await executeTask(execReq);
+
+  if (
+    isCoderRole &&
+    result.status === "success" &&
+    !coderOutputHasCode(result.output)
+  ) {
+    result.status = "error";
+    result.errorMsg =
+      "Coder did not produce any code block. Ignored output (likely tool-call JSON or analytical preamble).";
+  }
 
   await prisma.taskLog.create({
     data: {

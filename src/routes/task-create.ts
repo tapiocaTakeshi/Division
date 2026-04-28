@@ -65,33 +65,31 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 
 ## パイプライン構造（必ずこの順序で多層化する）
 
-【Layer 1 — 調査・発想】並列実行（dependsOn: []）
+【Layer 1 — 調査・発想・既存コード把握】並列実行（dependsOn: []）
 - ideaman: 創造的ブレインストーミング・アイデア出し
 - searcher: ウェブ検索・情報収集
 - researcher: 調査・分析・レポート
+- file-searcher: プロジェクト内の **すべてのフォルダ・ファイル** を最初から読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる
 
 【Leader Design Brief】Layer 1 → Layer 2 のハンドオフで Leader が自動挿入（tasksには含めない）
-- Leader は ideaman / searcher / researcher の Markdown を統合し、designer / imager / planner に渡す Design Brief Markdown を生成する
+- Leader は ideaman / searcher / researcher / file-searcher の Markdown を統合し、designer / imager / planner に渡す Design Brief Markdown を生成する
 
-【Layer 2 — 設計・デザイン】Layer 1 の Markdown 出力に依存
+【Layer 2 — 設計・デザイン】Layer 1 のすべての Markdown 出力に依存
 - designer: UI/UXデザイン・HTML/CSS生成・プロトタイプ
 - imager: 画像生成・ビジュアルコンテンツ
 - planner: 企画・設計・アーキテクチャ
 
 【Layer 3 — Leader Todos】Layer 2 の Markdown 出力を Leader が再統合（tasksには含めない）
-- Leader は designer / imager / planner の Markdown を受け取り、File Search に渡す具体的な Todos Markdown を自動生成する
+- Leader は file-searcher / designer / imager / planner の Markdown を受け取り、Coder/Writer に渡す具体的な Todos Markdown を自動生成する
 
-【Layer 4 — File Search】Leader Todos に依存
-- file-searcher: Leader Todos と設計・画像・計画の結果を受け、プロジェクト内の関連ファイル・既存コード・変更対象を調査
-
-【Layer 5 — 実装・執筆】File Search に依存
+【Layer 4 — 実装・執筆】Layer 2（および Leader Todos）に依存
 - coder: コード生成・実装・デバッグ
 - writer: 文章作成・ドキュメント
 
-【Leader Review Brief】Layer 5 → Layer 6 のハンドオフで Leader が自動挿入（tasksには含めない）
+【Leader Review Brief】Layer 4 → Layer 5 のハンドオフで Leader が自動挿入（tasksには含めない）
 - Leader は coder / writer の出力を受け、Reviewer が短時間で評価できる Review Brief を生成する
 
-【Layer 6 — レビュー】Layer 5に依存
+【Layer 5 — レビュー】Layer 4に依存
 - reviewer: 品質確認・レビュー・改善提案（dependsOn にレビュー対象の coder または writer の index を必ず含める）
 
 オーケストラ実行時: reviewer が Not OK の場合、reviewer → Leader Todos → file-searcher → coder/writer → Leader Review Brief → reviewer を reviewer が OK を出すまで（最大20周。REVIEWER_CODER_MAX_ROUNDS で変更可）ループします。プランに追加タスクは不要です。
@@ -101,14 +99,14 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 2. dependsOn で依存先インデックスを指定。空=並列実行
 3. 各タスクにわかりやすいtitleとdescriptionを付ける
 4. titleは短く簡潔に（50文字以内）
-5. descriptionはそのタスクで何をすべきか具体的に記述
+5. descriptionはそのタスクで何をすべきか具体的に記述。file-searcher の description は「プロジェクト内のすべてのフォルダ・ファイルを読み込んで構造を把握する」ことを必ず含めること
 6. 必ず以下のJSON形式のみで回答。説明文は一切不要
 7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
 8. 1タスクに複数作業を詰め込まず細かく分割
 9. 同じロールでも異なる観点なら別タスクに分ける
-10. **【必須】Layer 1 には ideaman, searcher, researcher を必ず1タスクずつ含めること。Layer 2 には designer, imager, planner を必ず1タスクずつ含めること。file-searcher を必ず1タスク含め、必ず designer/imager/planner の後に置くこと。Leader Design Brief / Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
+10. **【必須】Layer 1 には ideaman, searcher, researcher, file-searcher を必ず1タスクずつ含め、すべて dependsOn: [] で並列実行すること。Layer 2 には designer, imager, planner を必ず1タスクずつ含め、Layer 1 のすべての index に依存させること。Leader Design Brief / Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
 11. 各タスクに "mode" を指定:
-    - "chat": テキスト生成タスク（デフォルト。searcher, researcher 等 Web検索ロールもこれ）
+    - "chat": テキスト生成タスク（デフォルト。searcher, researcher, file-searcher 等もこれ）
     - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
     - "function_calling": 使用しない（廃止）
     ※ searcher / researcher ロールは Perplexity が Web 検索するため mode="chat" にすること
@@ -119,11 +117,11 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
     { "role": "ideaman", "mode": "chat", "title": "アイデア提案", "description": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [] },
     { "role": "searcher", "mode": "chat", "title": "技術調査", "description": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
     { "role": "researcher", "mode": "chat", "title": "技術トレンド調査", "description": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [] },
-    { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "調査結果を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2] },
-    { "role": "imager", "mode": "chat", "title": "画像・ビジュアル作成", "description": "調査・デザイン方針を元に画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2] },
-    { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "調査とアイデアを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2] },
-    { "role": "file-searcher", "mode": "chat", "title": "実装前ファイル調査", "description": "Leader Todos と設計・画像・計画のMarkdownを元にプロジェクト内の関連ファイルと変更対象を調査", "reason": "既存コードとの接続点を特定するため", "dependsOn": [3, 4, 5] },
-    { "role": "coder", "mode": "computer_use", "title": "実装", "description": "File Search の調査結果に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [6] },
+    { "role": "file-searcher", "mode": "chat", "title": "プロジェクト全体スキャン", "description": "プロジェクト内のすべてのフォルダ・ファイルを読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる", "reason": "サーチ／リサーチと同じタイミングで既存コードベース全体を把握するため", "dependsOn": [] },
+    { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "調査・既存コードを元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "imager", "mode": "chat", "title": "画像・ビジュアル作成", "description": "調査・デザイン方針を元に画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "調査・既存コードを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "coder", "mode": "computer_use", "title": "実装", "description": "Layer 1〜2 の調査・設計に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [4, 5, 6] },
     { "role": "reviewer", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [7] }
   ]
 }
@@ -203,11 +201,17 @@ function isImplementationTaskRow(t: ParsedTaskRow): boolean {
 
 function getTaskFlowGroup(task: ParsedTaskRow): number {
   const role = normalizeTaskRole(task.role);
-  if (role === "ideaman" || role === "searcher" || role === "researcher") return 0;
+  if (
+    role === "ideaman" ||
+    role === "searcher" ||
+    role === "researcher" ||
+    role === "file-searcher"
+  ) {
+    return 0;
+  }
   if (role === "designer" || role === "imager" || role === "planner") return 1;
-  if (role === "file-searcher") return 2;
-  if (isImplementationTaskRow(task)) return 3;
-  if (role === "reviewer") return 4;
+  if (isImplementationTaskRow(task)) return 2;
+  if (role === "reviewer") return 3;
   return 1;
 }
 
@@ -219,10 +223,10 @@ function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
         {
           role: "file-searcher",
           mode: "chat",
-          title: "実装前ファイル調査",
+          title: "プロジェクト全体スキャン",
           description:
-            "Leader Todos と設計・画像・計画のMarkdownを元に、プロジェクト内の関連ファイル、既存実装、変更対象、注意点を調査する。",
-          reason: "実装/執筆前に既存コードとの接続点を特定するため",
+            "プロジェクト内のすべてのフォルダ・ファイルを最初から読み込んで構造を把握し、ユーザーのリクエストに関連する既存実装・変更候補・注意点を Markdown レポートにまとめる。",
+          reason: "サーチ／リサーチと同じタイミングで既存コードベース全体を把握するため",
           dependsOn: [],
         },
       ];
@@ -240,21 +244,23 @@ function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
       .map((t, i) => (roles.includes(normalizeTaskRole(t.role)) ? i : -1))
       .filter((i) => i >= 0);
 
-  const layer1 = indicesByRole(["ideaman", "searcher", "researcher"]);
+  const layer1 = indicesByRole([
+    "ideaman",
+    "searcher",
+    "researcher",
+    "file-searcher",
+  ]);
   const layer2 = indicesByRole(["designer", "imager", "planner"]);
-  const fileSearchers = indicesByRole(["file-searcher"]);
   const implementers = ordered
     .map((t, i) => (isImplementationTaskRow(t) ? i : -1))
     .filter((i) => i >= 0);
   const reviewers = indicesByRole(["reviewer"]);
 
   for (let i = 0; i < ordered.length; i++) {
-    const role = normalizeTaskRole(ordered[i].role);
     if (layer1.includes(i)) ordered[i].dependsOn = [];
     else if (layer2.includes(i)) ordered[i].dependsOn = layer1.length ? [...layer1] : [];
-    else if (role === "file-searcher") ordered[i].dependsOn = layer2.length ? [...layer2] : [...layer1];
-    else if (implementers.includes(i)) ordered[i].dependsOn = fileSearchers.length ? [...fileSearchers] : layer2.length ? [...layer2] : [...layer1];
-    else if (reviewers.includes(i)) ordered[i].dependsOn = implementers.length ? [...implementers] : fileSearchers.length ? [...fileSearchers] : [];
+    else if (implementers.includes(i)) ordered[i].dependsOn = layer2.length ? [...layer2] : [...layer1];
+    else if (reviewers.includes(i)) ordered[i].dependsOn = implementers.length ? [...implementers] : [...layer2, ...layer1];
   }
 
   return ordered;

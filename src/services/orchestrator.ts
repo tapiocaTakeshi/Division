@@ -18,6 +18,7 @@ import {
   wrapCoderInput as sharedWrapCoderInput,
   coderOutputHasCode as sharedCoderOutputHasCode,
 } from "./coder-guard";
+import { loadDivisionGuide } from "../utils/division-guide";
 
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
@@ -524,6 +525,30 @@ function hasImplementationDependency(task: SubTask, allTasks: SubTask[]): boolea
     if (!upstream) return false;
     return isImplementationTask(upstream);
   });
+}
+
+/**
+ * Reviewer タスクの dependsOn から、評価対象になる実装者ロールスラグ（coder/writer）を返す。
+ * 見つからなければ Reviewer より前にある最も近い実装者をフォールバックで使う。
+ * Brief Gate の `.division/<ROLE>.md` ロード（CODER.md / WRITING.md）に利用される。
+ */
+function findImplementationRoleSlugForReviewer(
+  reviewer: SubTask,
+  allTasks: SubTask[]
+): string | undefined {
+  const deps = reviewer.dependsOn || [];
+  for (const d of deps) {
+    const t = allTasks[d];
+    if (t && isImplementationTask(t)) return normalizeRoleSlug(t.role);
+  }
+  const reviewerIdx = allTasks.indexOf(reviewer);
+  if (reviewerIdx > 0) {
+    for (let j = reviewerIdx - 1; j >= 0; j--) {
+      const t = allTasks[j];
+      if (isImplementationTask(t)) return normalizeRoleSlug(t.role);
+    }
+  }
+  return undefined;
 }
 
 function buildDependencyMarkdown(
@@ -1053,11 +1078,39 @@ async function createLeaderReviewBriefText(params: {
   leaderApiKey?: string;
   reviewerInput: string;
   implementationOutputs: string;
+  /**
+   * 評価対象の実装者ロールスラグ（例: "coder" / "writer"）。
+   * 指定されると `.division/<ROLE>.md`（例: CODER.md / WRITING.md）を読み込み、
+   * Brief Gate の入力先頭にロールガイドとして連結する。
+   * ワークスペース側 `.division/` を最優先、無ければ Division API リポジトリ同梱版にフォールバック。
+   */
+  implementationRoleSlug?: string;
 }): Promise<LeaderReviewBriefResult> {
-  const input = `## ユーザーの元のリクエスト
+  const guide = params.implementationRoleSlug
+    ? loadDivisionGuide(params.implementationRoleSlug, params.req.workspacePath)
+    : null;
+
+  const guideSection = guide
+    ? `## ${params.implementationRoleSlug?.toUpperCase()} ロールガイド（.division/${guide.filename}）
+
+> 以下は実装者ロールに紐づく評価基準書です。Brief Gate はこのガイドを優先的に参照し、
+> VERDICT / FEEDBACK / BRIEF を判定してください。
+
+${guide.content.trim()}
+
+---
+
+`
+    : "";
+
+  const implementerLabel = params.implementationRoleSlug
+    ? params.implementationRoleSlug.charAt(0).toUpperCase() + params.implementationRoleSlug.slice(1)
+    : "Coder/Writer";
+
+  const input = `${guideSection}## ユーザーの元のリクエスト
 ${augmentLeaderInput(params.req)}
 
-## Coder/Writer の成果物
+## ${implementerLabel} の成果物
 ${params.implementationOutputs || "(実装/執筆出力なし)"}
 
 ## Reviewer への元の指示
@@ -1396,12 +1449,14 @@ export async function runAgent(
       opts?.inputOverride === undefined
     ) {
       log(`[Agent] Leader Brief Gate: Coder/Writer の成果物を判定`);
+      const implementationRoleSlugForBrief = findImplementationRoleSlugForReviewer(task, subTasks);
       const briefResult = await createLeaderReviewBriefText({
         req,
         leaderProvider,
         leaderApiKey,
         reviewerInput: task.input,
         implementationOutputs: upstreamMarkdownForTodos,
+        implementationRoleSlug: implementationRoleSlugForBrief,
       });
       if (briefResult.verdict === "Not OK") {
         log(`[Agent] Brief Gate Not OK → Reviewer をスキップし File Search への再調査要求を出力`);
@@ -1731,6 +1786,7 @@ export async function runAgent(
           leaderApiKey,
           reviewerInput: subTasks[reviewerIdx].input,
           implementationOutputs: upstreamMarkdownForGate,
+          implementationRoleSlug: normalizeRoleSlug(subTasks[implementationIdx].role),
         });
 
         if (briefResult.verdict === "Not OK") {
@@ -2333,12 +2389,14 @@ async function runAgentStreamCore(
       hasImplementationDependency(task, subTasks) &&
       opts?.inputOverride === undefined
     ) {
+      const implementationRoleSlugForBriefStream = findImplementationRoleSlugForReviewer(task, subTasks);
       const briefResult = await createLeaderReviewBriefText({
         req,
         leaderProvider,
         leaderApiKey,
         reviewerInput: task.input,
         implementationOutputs: upstreamMarkdownForTodos,
+        implementationRoleSlug: implementationRoleSlugForBriefStream,
       });
       if (briefResult.verdict === "Not OK") {
         const synthOutput = `VERDICT: Not OK (Brief Gate)\n\n## Brief Gate からのフィードバック\n\n${briefResult.feedback || "(フィードバック未提供)"}\n\n## 参考: 暫定 Brief\n\n${briefResult.brief}`;
@@ -2766,6 +2824,7 @@ async function runAgentStreamCore(
           leaderApiKey,
           reviewerInput: subTasks[reviewerIdx].input,
           implementationOutputs: upstreamMarkdownForGateS,
+          implementationRoleSlug: normalizeRoleSlug(subTasks[implementationIdx].role),
         });
 
         if (briefResultS.verdict === "Not OK") {

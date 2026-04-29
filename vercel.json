@@ -2,7 +2,8 @@
     "version": 2,
     "functions": {
         "api/**/*.ts": {
-            "maxDuration": 800
+            "maxDuration": 800,
+            "includeFiles": ".division/**"
         }
     },
     "rewrites": [

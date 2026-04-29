@@ -1397,7 +1397,19 @@ export async function runAgent(
           log(`[Agent] Round ${round}/${maxReviewRounds}: Brief Gate Not OK → File Search に再調査要求（Todos 再生成なし）`);
           if (fileSearcherIdx !== null) {
             const focusBlock = progressFocus ? `\n\n## 進捗確認 Leader からの FOCUS\n\n${progressFocus}\n` : "";
-            const fileSearchOverride = `## Brief Gate からの再調査要求\n\n${reviewerOutput}${focusBlock}\n\n---\n\n## 直前の成果物\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示（Todos は変更不要、不足情報のみ補完）\n\n${subTasks[fileSearcherIdx].input}`;
+            // Layer 2 (designer / imager / planner) の最新 Markdown を再投入。
+            // Leader Todos の再生成は upstreamMarkdownForTodos = override をそのまま使うので、
+            // ここに含めれば Layer 2 も読み直される。
+            const layer2Markdown = buildDependencyMarkdown(
+              subTasks[fileSearcherIdx],
+              taskOutputs,
+              taskRoleNames,
+              taskProviderNames
+            );
+            const layer2Block = layer2Markdown
+              ? `\n\n## Layer 2 の最新成果物（designer / imager / planner Markdown）\n\n${layer2Markdown}`
+              : "";
+            const fileSearchOverride = `## Brief Gate からの再調査要求\n\n${reviewerOutput}${focusBlock}${layer2Block}\n\n---\n\n## 直前の成果物（Coder/Writer）\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示（Todos は変更不要、不足情報のみ補完）\n\n${subTasks[fileSearcherIdx].input}`;
             await executeSubTaskNonStream(fileSearcherIdx, { inputOverride: fileSearchOverride });
             if (results[fileSearcherIdx]?.status !== "success") break;
           }
@@ -1406,7 +1418,18 @@ export async function runAgent(
           progressFocus = "";
           log(`[Agent] Round ${round}/${maxReviewRounds}: Reviewer Not OK → File Search に再調査要求（Todos 再生成あり）`);
           if (fileSearcherIdx !== null) {
-            const fileSearchOverride = `## Reviewer からの指摘（Todos を再生成して再調査してください）\n\n${reviewerOutput}\n\n---\n\n## 直前の成果物\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示\n\n${subTasks[fileSearcherIdx].input}`;
+            // Reviewer Not OK で Todos を再生成する際、Layer 2（designer / imager / planner）の
+            // 最新 Markdown を必ず再読込させる。これがないと Leader Todos が設計を見ずに作られる。
+            const layer2Markdown = buildDependencyMarkdown(
+              subTasks[fileSearcherIdx],
+              taskOutputs,
+              taskRoleNames,
+              taskProviderNames
+            );
+            const layer2Block = layer2Markdown
+              ? `\n\n## Layer 2 の最新成果物（designer / imager / planner Markdown — Todos 再生成時にこれを必ず取り込むこと）\n\n${layer2Markdown}`
+              : "";
+            const fileSearchOverride = `## Reviewer からの指摘（Todos を再生成して再調査してください）\n\n${reviewerOutput}${layer2Block}\n\n---\n\n## 直前の成果物（Coder/Writer）\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示\n\n${subTasks[fileSearcherIdx].input}`;
             await executeSubTaskNonStream(fileSearcherIdx, { inputOverride: fileSearchOverride });
             if (results[fileSearcherIdx]?.status !== "success") break;
           }
@@ -2296,7 +2319,17 @@ async function runAgentStreamCore(
           );
           if (fileSearcherIdx !== null) {
             const focusBlockS = progressFocusS ? `\n\n## 進捗確認 Leader からの FOCUS\n\n${progressFocusS}\n` : "";
-            const fileSearchOverrideS = `## Brief Gate からの再調査要求\n\n${reviewerOutput}${focusBlockS}\n\n---\n\n## 直前の成果物\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示（Todos は変更不要、不足情報のみ補完）\n\n${subTasks[fileSearcherIdx].input}`;
+            // Layer 2 (designer / imager / planner) の最新 Markdown を再投入。
+            const layer2MarkdownS = buildDependencyMarkdown(
+              subTasks[fileSearcherIdx],
+              taskOutputs,
+              taskRoleNames,
+              taskProviderNames
+            );
+            const layer2BlockS = layer2MarkdownS
+              ? `\n\n## Layer 2 の最新成果物（designer / imager / planner Markdown）\n\n${layer2MarkdownS}`
+              : "";
+            const fileSearchOverrideS = `## Brief Gate からの再調査要求\n\n${reviewerOutput}${focusBlockS}${layer2BlockS}\n\n---\n\n## 直前の成果物（Coder/Writer）\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示（Todos は変更不要、不足情報のみ補完）\n\n${subTasks[fileSearcherIdx].input}`;
             await executeSubTask(fileSearcherIdx, { inputOverride: fileSearchOverrideS });
             if (taskResults[fileSearcherIdx]?.status !== "success") break;
           }
@@ -2307,7 +2340,18 @@ async function runAgentStreamCore(
             `[Agent] Round ${round}/${maxReviewRoundsStream}: Reviewer Not OK → File Search 再調査（Todos 再生成あり）`
           );
           if (fileSearcherIdx !== null) {
-            const fileSearchOverrideS = `## Reviewer からの指摘（Todos を再生成して再調査してください）\n\n${reviewerOutput}\n\n---\n\n## 直前の成果物\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示\n\n${subTasks[fileSearcherIdx].input}`;
+            // Reviewer Not OK で Todos を再生成する際、Layer 2（designer / imager / planner）の
+            // 最新 Markdown を必ず再読込させる。
+            const layer2MarkdownS = buildDependencyMarkdown(
+              subTasks[fileSearcherIdx],
+              taskOutputs,
+              taskRoleNames,
+              taskProviderNames
+            );
+            const layer2BlockS = layer2MarkdownS
+              ? `\n\n## Layer 2 の最新成果物（designer / imager / planner Markdown — Todos 再生成時にこれを必ず取り込むこと）\n\n${layer2MarkdownS}`
+              : "";
+            const fileSearchOverrideS = `## Reviewer からの指摘（Todos を再生成して再調査してください）\n\n${reviewerOutput}${layer2BlockS}\n\n---\n\n## 直前の成果物（Coder/Writer）\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示\n\n${subTasks[fileSearcherIdx].input}`;
             await executeSubTask(fileSearcherIdx, { inputOverride: fileSearchOverrideS });
             if (taskResults[fileSearcherIdx]?.status !== "success") break;
           }

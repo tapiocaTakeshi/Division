@@ -3,6 +3,7 @@ import path from "path";
 import { execFile, exec } from "child_process";
 import util from "util";
 import { logger } from "../utils/logger";
+import { isPathIgnored, loadDivisionIgnore } from "../utils/division-ignore";
 
 const execFileAsync = util.promisify(execFile);
 const execAsync = util.promisify(exec);
@@ -16,6 +17,22 @@ function resolvePath(p: string, root: string): string {
 function isPathSafe(p: string, root: string): boolean {
   const resolved = resolvePath(p, root);
   return resolved.startsWith(root) || resolved.startsWith("/tmp/") || resolved === "/tmp";
+}
+
+/**
+ * `.divisionignore` 対象のパスを Division が読まないようにブロックする。
+ * ワークスペース外（/tmp 等）には適用しない。
+ */
+function checkIgnored(
+  relInput: string,
+  absPath: string,
+  workspaceRoot: string,
+  isDirectory: boolean
+): string | null {
+  if (!absPath.startsWith(workspaceRoot)) return null;
+  const { ignored, reason } = isPathIgnored(absPath, workspaceRoot, isDirectory);
+  if (!ignored) return null;
+  return `Error: Path "${relInput}" は .divisionignore により無視対象です（match: ${reason}）。読み書きは許可されません。`;
 }
 
 export const NATIVE_TOOLS = [
@@ -139,6 +156,9 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         const stat = fs.statSync(filePath);
         if (stat.isDirectory()) return `Error: ${args.path} is a directory. Use list_directory.`;
 
+        const ignoreErr = checkIgnored(args.path as string, filePath, root, false);
+        if (ignoreErr) return ignoreErr;
+
         const raw = fs.readFileSync(filePath, "utf-8");
         const lines = raw.split("\n");
         const start = Math.max(1, (args.startLine as number) || 1);
@@ -159,6 +179,9 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         const filePath = resolvePath(args.path as string, root);
         if (!isPathSafe(args.path as string, root)) return "Error: Path is outside workspace";
 
+        const ignoreErr = checkIgnored(args.path as string, filePath, root, false);
+        if (ignoreErr) return ignoreErr;
+
         const dir = path.dirname(filePath);
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
@@ -173,6 +196,9 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         const filePath = resolvePath(args.path as string, root);
         if (!isPathSafe(args.path as string, root)) return "Error: Path is outside workspace";
         if (!fs.existsSync(filePath)) return `Error: File not found: ${args.path}`;
+
+        const ignoreErr = checkIgnored(args.path as string, filePath, root, false);
+        if (ignoreErr) return ignoreErr;
 
         const content = fs.readFileSync(filePath, "utf-8");
         const oldStr = args.old_string as string;
@@ -232,6 +258,16 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         const dir = args.directory ? resolvePath(args.directory as string, root) : root;
         if (!isPathSafe(args.directory as string || ".", root)) return "Error: Path is outside workspace";
 
+        // 検索ディレクトリ自体が ignore されているなら拒否
+        const dirIgnoreErr = checkIgnored(
+          (args.directory as string) || ".",
+          dir,
+          root,
+          true
+        );
+        if (dirIgnoreErr) return dirIgnoreErr;
+
+        const matcher = loadDivisionIgnore(root);
         const grepArgs = ["-RnI", "--color=never"];
         if (args.include) grepArgs.push(`--include=${args.include}`);
         grepArgs.push(args.query as string, dir);
@@ -241,16 +277,38 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
             timeout: 60000,
             maxBuffer: 12 * 1024 * 1024,
           });
-          const lines = stdout.split("\n").filter(Boolean);
-          if (lines.length === 0) return "No matches found.";
+          const allLines = stdout.split("\n").filter(Boolean);
+
+          // .divisionignore 対象ファイルの結果を取り除く
+          let filteredOut = 0;
+          const lines = allLines.filter((line) => {
+            const idx = line.indexOf(":");
+            if (idx <= 0) return true;
+            const filePath = line.slice(0, idx);
+            const abs = path.resolve(filePath);
+            if (!abs.startsWith(root)) return true;
+            const rel = path.relative(root, abs);
+            const ignored = matcher.isIgnored(rel, false);
+            if (ignored) filteredOut++;
+            return !ignored;
+          });
+
+          if (lines.length === 0)
+            return filteredOut > 0
+              ? `No matches found. (${filteredOut} 件は .divisionignore でフィルタ済み)`
+              : "No matches found.";
           const maxGrepLines = 1000;
+          const suffix =
+            filteredOut > 0
+              ? `\n[note] ${filteredOut} 件のマッチを .divisionignore でフィルタしました。`
+              : "";
           if (lines.length > maxGrepLines) {
             return (
               lines.slice(0, maxGrepLines).join("\n") +
-              `\n...[${lines.length - maxGrepLines} more matches. Narrow query or directory.]`
+              `\n...[${lines.length - maxGrepLines} more matches. Narrow query or directory.]${suffix}`
             );
           }
-          return stdout;
+          return lines.join("\n") + suffix;
         } catch (err: unknown) {
           const e = err as { code?: number; message?: string };
           if (e.code === 1) return "No matches found.";
@@ -266,12 +324,30 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         const stat = fs.statSync(dirPath);
         if (!stat.isDirectory()) return `Error: ${args.path} is not a directory. Use read_file.`;
 
+        const ignoreErr = checkIgnored(args.path as string, dirPath, root, true);
+        if (ignoreErr) return ignoreErr;
+
+        const matcher = loadDivisionIgnore(root);
         const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-        const formatted = entries.map((e) => {
-          const suffix = e.isDirectory() ? "/" : "";
+        const visible: { name: string; isDir: boolean }[] = [];
+        let hidden = 0;
+        for (const e of entries) {
+          const childAbs = path.join(dirPath, e.name);
+          const rel = path.relative(root, childAbs);
+          if (rel && !rel.startsWith("..") && matcher.isIgnored(rel, e.isDirectory())) {
+            hidden++;
+            continue;
+          }
+          visible.push({ name: e.name, isDir: e.isDirectory() });
+        }
+        const formatted = visible.map((e) => {
+          const suffix = e.isDir ? "/" : "";
           return `${suffix ? "📁" : "📄"} ${e.name}${suffix}`;
         });
-        return `Directory: ${args.path} (${entries.length} items)\n${formatted.join("\n")}`;
+        const header = `Directory: ${args.path} (${visible.length} items${
+          hidden > 0 ? `, ${hidden} hidden by .divisionignore` : ""
+        })`;
+        return `${header}\n${formatted.join("\n")}`;
       }
 
       default:

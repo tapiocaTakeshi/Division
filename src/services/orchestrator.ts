@@ -218,33 +218,36 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 
 ## パイプライン構造（必ずこの順序で多層化する）
 
-【Layer 1 — 調査・発想・既存コード把握】並列実行（dependsOn: []）
+【Layer 1 — 調査・発想・初回スキャン】並列実行（dependsOn: []）
 - ideaman: 創造的ブレインストーミング・アイデア出し・革新的コンセプト提案（Claude担当）
 - searcher: ウェブ検索・情報収集（Perplexity担当）
 - researcher: 調査・分析・レポート（Perplexity Deep Research担当）
-- file-searcher: プロジェクト内の **すべてのフォルダ・ファイル** を最初から読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる（GPT担当）
+- file-searcher（**初回スキャン**）: プロジェクト内の **すべてのフォルダ・ファイル** を最初から読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる（GPT担当）
 
-【Layer 2 — 設計・デザイン】Layer 1 の Markdown 出力に直接依存（Leader による中間統合は行わず、ideaman/searcher/researcher/file-searcher の Markdown をそのまま受け取る）
+【Layer 2 — 設計・デザイン】Layer 1 の Markdown 出力に直接依存
 - designer: UI/UXデザイン・HTML/CSS生成・ランディングページ・プロトタイプ（Gemini担当。完全に自己完結したHTMLを生成）
 - imager: 画像生成・ビジュアルコンテンツ・イラスト（GPT Image担当）
 - planner: 企画・設計・アーキテクチャ・戦略立案（Gemini担当）
 
-【Layer 3 — Leader Todos】Layer 2 の Markdown 出力を Leader が再統合（tasksには含めない）
-- Leader は file-searcher / designer / imager / planner の Markdown を受け取り、Coder/Writer に渡す具体的な Todos Markdown を自動生成する。
+【Leader Todos】Layer 2 → Layer 3 のハンドオフで Leader が自動挿入（tasksには含めない）
+- Leader は file-searcher（初回） / designer / imager / planner の Markdown を受け取り、2回目の File Search に渡す具体的な Todos Markdown を自動生成する。
 
-【Layer 4 — 実装・執筆】Layer 2（および Leader Todos）に依存
+【Layer 3 — File Search（再調査）】Layer 2 に依存
+- file-searcher（**集中再調査**）: Layer 2 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査し、Coder/Writer がそのまま実装できる詳細な Markdown レポートを作成する（GPT担当）
+
+【Layer 4 — 実装・執筆】Layer 3 の集中再調査に依存
 - coder: コード生成・実装・デバッグ（Claude担当）
 - writer: 文章作成・ドキュメント（Claude担当）
 
 【Leader Review Brief】Layer 4 → Layer 5 のハンドオフで Leader が自動挿入（tasksには含めない）
-- Leader は coder / writer の出力を受け、Reviewer が短時間で評価できる Review Brief を生成する
+- Leader は coder / writer の出力を受け、Reviewer が短時間で評価できる Review Brief を生成する。OK なら Reviewer に渡し、Not OK なら Coder/Writer に差し戻す。
 
 【Layer 5 — レビュー】Layer 4に依存
 - reviewer: 品質確認・レビュー・改善提案（GPT担当）※ dependsOn には必ず「レビュー対象の coder または writer」のタスク index を含める
 
 【最終統合】reviewer 完了後に自動実行（tasksに含めない）
 
-【オーケストラの自動動作】初回の DAG 完了後、reviewer が Not OK の場合は reviewer → Leader Todos（指摘をタスク化）→ file-searcher（指摘を踏まえ再調査）→ coder/writer（修正・改善）→ Leader Review Brief（指摘要約）→ reviewer（再レビュー）のループを reviewer が OK を出すまで（最大20周。環境変数 REVIEWER_CODER_MAX_ROUNDS で変更可、0で無効、上限50）実行します。タスク本数の増減は不要です。
+【オーケストラの自動動作】初回の DAG 完了後、reviewer が Not OK の場合は reviewer → file-searcher（**集中再調査・Layer 3** が指摘を踏まえ再実行）→ coder/writer（修正・改善）→ Leader Review Brief（指摘要約）→ reviewer（再レビュー）のループを reviewer が OK を出すまで（最大20周。環境変数 REVIEWER_CODER_MAX_ROUNDS で変更可、0で無効、上限50）実行します。Brief Gate が Not OK の場合は Coder/Writer のみ再実行します。タスク本数の増減は不要です。
 
 ## 利用可能なロール一覧
 ideaman, searcher, researcher, file-searcher, designer, imager, planner, coder, writer, reviewer
@@ -252,18 +255,21 @@ ideaman, searcher, researcher, file-searcher, designer, imager, planner, coder, 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます（0, 1, 2...）
 2. dependsOn で依存先のインデックスを指定。空=並列実行
-3. **【必須】Layer 1 には ideaman, searcher, researcher, file-searcher を必ず1タスクずつ含め、すべて dependsOn: [] で並列実行すること。Layer 2 には designer, imager, planner を必ず1タスクずつ含め、Layer 1 のすべての index に依存させること。Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
-4. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること。file-searcher の input は「プロジェクト内のすべてのフォルダ・ファイルを読み込んで構造を把握する」ことを必ず含めること。
-5. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
-6. タスクは最低5個以上。複雑な場合は8〜15個に細分化
-7. 1タスクに複数作業を詰め込まず細かく分割
-8. 同じロールでも異なる観点なら別タスクに分ける
-9. 各タスクに "mode" を指定:
-   - "chat": テキスト生成タスク（デフォルト。searcher, researcher, file-searcher 等もこれ）
-   - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
-   - "function_calling": 使用しない（廃止）
-   ※ searcher / researcher ロールは Perplexity が Web 検索するため mode="chat" にすること
-10. "finalRole" を必ず指定:
+3. **【必須】file-searcher を 2 タスク含めること**:
+   - 1 つ目（**初回スキャン**）: Layer 1 に置く。dependsOn: [] で ideaman/searcher/researcher と並列実行する。input には「プロジェクト内のすべてのフォルダ・ファイルを読み込んで構造を把握する」ことを必ず含める。
+   - 2 つ目（**集中再調査**）: Layer 3 に置く。dependsOn には Layer 2（designer/imager/planner）の index を含める。input には「Layer 2 の設計を踏まえて、変更対象ファイルと差分を集中的に調査する」ことを必ず含める。
+4. **【必須】Layer 1 には ideaman, searcher, researcher, file-searcher（初回）を必ず1タスクずつ含め、すべて dependsOn: [] で並列実行すること。Layer 2 には designer, imager, planner を必ず1タスクずつ含め、Layer 1 のすべての index に依存させること。Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
+5. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること。
+6. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
+7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
+8. 1タスクに複数作業を詰め込まず細かく分割
+9. 同じロールでも異なる観点なら別タスクに分ける
+10. 各タスクに "mode" を指定:
+    - "chat": テキスト生成タスク（デフォルト。searcher, researcher, file-searcher 等もこれ）
+    - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
+    - "function_calling": 使用しない（廃止）
+    ※ searcher / researcher ロールは Perplexity が Web 検索するため mode="chat" にすること
+11. "finalRole" を必ず指定:
     - "coder": コードが主な成果物の場合
     - "writer": ドキュメント・文章が主な成果物の場合
 
@@ -273,12 +279,13 @@ ideaman, searcher, researcher, file-searcher, designer, imager, planner, coder, 
     { "role": "ideaman", "mode": "chat", "input": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [] },
     { "role": "searcher", "mode": "chat", "input": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
     { "role": "researcher", "mode": "chat", "input": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [] },
-    { "role": "file-searcher", "mode": "chat", "input": "プロジェクト内のすべてのフォルダ・ファイルを読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる", "reason": "サーチ／リサーチと同じタイミングで既存コードベース全体を把握するため", "dependsOn": [] },
-    { "role": "designer", "mode": "chat", "input": "調査・既存コードを元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "imager", "mode": "chat", "input": "調査・デザイン方針を元に必要な画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "planner", "mode": "chat", "input": "調査・既存コードを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "coder", "mode": "computer_use", "input": "Layer 1〜2 の調査・設計に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [4, 5, 6] },
-    { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [7] }
+    { "role": "file-searcher", "mode": "chat", "input": "プロジェクト内のすべてのフォルダ・ファイルを読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる（初回スキャン）", "reason": "サーチ／リサーチと同じタイミングで既存コードベース全体を把握するため", "dependsOn": [] },
+    { "role": "designer", "mode": "chat", "input": "Layer 1 の調査・既存コードを元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "imager", "mode": "chat", "input": "Layer 1 の調査・デザイン方針を元に必要な画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "planner", "mode": "chat", "input": "Layer 1 の調査・既存コードを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "file-searcher", "mode": "chat", "input": "Layer 2 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する（集中再調査）", "reason": "設計後に変更対象を絞り込んで実装の指示書を作るため", "dependsOn": [4, 5, 6] },
+    { "role": "coder", "mode": "computer_use", "input": "Layer 3 の集中再調査の指示に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [7] },
+    { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [8] }
   ],
   "finalRole": "coder"
 }
@@ -339,6 +346,18 @@ function isFileSearcherTask(task: SubTask): boolean {
   return normalizeRoleSlug(task.role) === "file-searcher";
 }
 
+/**
+ * Layer 3 の「集中再調査」file-searcher か判定する。
+ * Layer 1 の「初回スキャン」file-searcher（dependsOn が空）は Leader Todos を要らないので除外する。
+ * オーケストレータの再投入（reviewer feedback ループ）でも override 経由で再実行されるが、
+ * その場合は dependsOn は元のまま（Layer 2 deps）が残るので focused と判定される。
+ */
+function isFocusedFileSearcherTask(task: SubTask): boolean {
+  if (!isFileSearcherTask(task)) return false;
+  const deps = task.dependsOn || [];
+  return deps.length > 0;
+}
+
 function isReviewerTask(task: SubTask): boolean {
   return normalizeRoleSlug(task.role) === "reviewer";
 }
@@ -393,80 +412,130 @@ function reviewerLooksOk(reviewText: string): boolean {
   return /\bok\b/.test(text) || text.includes("合格") || text.includes("問題なし") || text.includes("承認");
 }
 
-function getFlowGroup(task: SubTask): number {
-  const role = normalizeRoleSlug(task.role);
-  if (
-    role === "ideaman" ||
-    role === "searcher" ||
-    role === "researcher" ||
-    role === "file-searcher"
-  ) {
-    return 0;
-  }
-  if (role === "designer" || role === "imager" || role === "planner") return 1;
-  if (isImplementationTask(task)) return 2;
-  if (role === "reviewer") return 3;
-  return 1;
-}
-
+/**
+ * file-searcher が 2 タスク構成（Layer 1 の初回スキャン + Layer 3 の集中再調査）に
+ * なるよう正規化する。具体的には:
+ *  - "primary"  file-searcher: Layer 1（dependsOn 空）。プロジェクト全体を最初に読む。
+ *  - "focused"  file-searcher: Layer 3（dependsOn = Layer 2）。設計を踏まえて再調査。
+ *
+ * Leader が出してきたタスクの dependsOn を見て、Layer 2（designer/imager/planner）に
+ * 依存している file-searcher を "focused"、そうでないものを "primary" に分類する。
+ * どちらかが欠けていれば自動で挿入する。
+ */
 function normalizeDiagramFlow(tasks: SubTask[]): SubTask[] {
-  const base = tasks.some((t) => normalizeRoleSlug(t.role) === "file-searcher")
-    ? tasks
-    : [
-        ...tasks,
-        {
-          role: "file-searcher",
-          mode: "chat",
-          input:
-            "プロジェクト内のすべてのフォルダ・ファイルを最初から読み込んで構造を把握し、ユーザーのリクエストに関連する既存実装・変更対象・注意点を整理して、後続の Designer / Coder / Writer が実行できる詳細な Markdown レポートを作成する。",
-          reason: "サーチ／リサーチと同じタイミングで既存コードベース全体を把握するため",
-          dependsOn: [],
-        },
-      ];
+  const layer1RoleSet = new Set(["ideaman", "searcher", "researcher"]);
+  const layer2RoleSet = new Set(["designer", "imager", "planner"]);
 
-  const orderedWithOldIndex = base
-    .map((task, oldIndex) => ({ task, oldIndex }))
+  let primaryFsOldIdx = -1;
+  let focusedFsOldIdx = -1;
+  for (let i = 0; i < tasks.length; i++) {
+    if (normalizeRoleSlug(tasks[i].role) !== "file-searcher") continue;
+    const deps = tasks[i].dependsOn || [];
+    const hasLayer2Dep = deps.some((d) => {
+      const u = tasks[d];
+      return u && layer2RoleSet.has(normalizeRoleSlug(u.role));
+    });
+    if (hasLayer2Dep) {
+      if (focusedFsOldIdx < 0) focusedFsOldIdx = i;
+    } else {
+      if (primaryFsOldIdx < 0) primaryFsOldIdx = i;
+    }
+  }
+
+  const base: SubTask[] = tasks.map((t) => ({ ...t }));
+
+  if (primaryFsOldIdx < 0) {
+    base.push({
+      role: "file-searcher",
+      mode: "chat",
+      input:
+        "プロジェクト内のすべてのフォルダ・ファイルを最初から読み込んで構造を把握し、ユーザーのリクエストに関連する既存実装・変更候補・注意点を Markdown レポートにまとめる。",
+      reason: "Layer 1: サーチ／リサーチと同じタイミングで既存コードベース全体を把握するため",
+      dependsOn: [],
+    });
+    primaryFsOldIdx = base.length - 1;
+  }
+
+  if (focusedFsOldIdx < 0) {
+    base.push({
+      role: "file-searcher",
+      mode: "chat",
+      input:
+        "Layer 2 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査し、Coder/Writer がそのまま実装できる詳細な Markdown レポートを作成する。",
+      reason: "Layer 3: 設計後の集中再調査（Coder/Writer の直前指示）",
+      dependsOn: [],
+    });
+    focusedFsOldIdx = base.length - 1;
+  }
+
+  const groupOf = (task: SubTask, oldIndex: number): number => {
+    if (oldIndex === primaryFsOldIdx) return 0;
+    if (oldIndex === focusedFsOldIdx) return 2;
+    const role = normalizeRoleSlug(task.role);
+    if (layer1RoleSet.has(role)) return 0;
+    if (layer2RoleSet.has(role)) return 1;
+    if (isImplementationTask(task)) return 3;
+    if (role === "reviewer") return 4;
+    return 1;
+  };
+
+  const orderedWithMeta = base
+    .map((task, oldIndex) => ({
+      task,
+      oldIndex,
+      group: groupOf(task, oldIndex),
+      isPrimary: oldIndex === primaryFsOldIdx,
+      isFocused: oldIndex === focusedFsOldIdx,
+    }))
     .sort((a, b) => {
-      const byGroup = getFlowGroup(a.task) - getFlowGroup(b.task);
-      return byGroup !== 0 ? byGroup : a.oldIndex - b.oldIndex;
+      if (a.group !== b.group) return a.group - b.group;
+      return a.oldIndex - b.oldIndex;
     });
 
-  const ordered = orderedWithOldIndex.map(({ task }) => ({ ...task }));
-  const indicesByRole = (roles: string[]) =>
-    ordered
-      .map((t, i) => (roles.includes(normalizeRoleSlug(t.role)) ? i : -1))
-      .filter((i) => i >= 0);
+  const ordered = orderedWithMeta.map(({ task }) => ({ ...task }));
 
-  const layer1 = indicesByRole([
-    "ideaman",
-    "searcher",
-    "researcher",
-    "file-searcher",
-  ]);
-  const layer2 = indicesByRole(["designer", "imager", "planner"]);
-  const fileSearchers = indicesByRole(["file-searcher"]);
-  const implementers = ordered
-    .map((t, i) => (isImplementationTask(t) ? i : -1))
-    .filter((i) => i >= 0);
-  const reviewers = indicesByRole(["reviewer"]);
+  const newPrimaryFsIdx = orderedWithMeta.findIndex((m) => m.isPrimary);
+  const newFocusedFsIdx = orderedWithMeta.findIndex((m) => m.isFocused);
+
+  const indicesByGroup = (group: number) =>
+    orderedWithMeta.map((m, i) => (m.group === group ? i : -1)).filter((i) => i >= 0);
+
+  const layer1Indices = indicesByGroup(0);
+  const layer2Indices = indicesByGroup(1);
+  const implementerIndices = indicesByGroup(3);
+  const reviewerIndices = indicesByGroup(4);
 
   const dedupSorted = (arr: number[]) =>
     Array.from(new Set(arr)).sort((a, b) => a - b);
 
   for (let i = 0; i < ordered.length; i++) {
-    if (layer1.includes(i)) {
+    if (i === newFocusedFsIdx) {
+      // Layer 3: focused file-searcher は Layer 2 の設計に依存
+      ordered[i].dependsOn = layer2Indices.length ? [...layer2Indices] : [...layer1Indices];
+    } else if (layer1Indices.includes(i)) {
+      // Layer 1: primary file-searcher を含む全員が並列実行
       ordered[i].dependsOn = [];
-    } else if (layer2.includes(i)) {
-      ordered[i].dependsOn = layer1.length ? [...layer1] : [];
-    } else if (implementers.includes(i)) {
-      // Implementer (coder / writer) は Layer 2 の設計だけだと既存コードを見ない
-      // ので、必ず file-searcher の調査結果も直接の依存に含める。
-      const baseDeps = layer2.length ? [...layer2] : [...layer1];
-      ordered[i].dependsOn = dedupSorted([...baseDeps, ...fileSearchers]);
-    } else if (reviewers.includes(i)) {
-      ordered[i].dependsOn = implementers.length
-        ? [...implementers]
-        : dedupSorted([...layer2, ...layer1]);
+    } else if (layer2Indices.includes(i)) {
+      // Layer 2: Layer 1 全体（primary file-searcher を含む）に依存
+      ordered[i].dependsOn = layer1Indices.length ? [...layer1Indices] : [];
+    } else if (implementerIndices.includes(i)) {
+      // Layer 4: Coder/Writer は focused file-searcher にのみ依存
+      // （focused は既に Layer 2 の設計・primary の全体スキャンを取り込んだ Markdown を返す）
+      const deps =
+        newFocusedFsIdx >= 0
+          ? [newFocusedFsIdx]
+          : layer2Indices.length
+          ? [...layer2Indices]
+          : [...layer1Indices];
+      ordered[i].dependsOn = dedupSorted(deps);
+    } else if (reviewerIndices.includes(i)) {
+      ordered[i].dependsOn = implementerIndices.length
+        ? [...implementerIndices]
+        : newFocusedFsIdx >= 0
+        ? [newFocusedFsIdx]
+        : layer2Indices.length
+        ? [...layer2Indices]
+        : [...layer1Indices];
     }
   }
 
@@ -1110,8 +1179,8 @@ export async function runAgent(
       }
     }
 
-    if (isFileSearcherTask(task)) {
-      log(`[Agent] Leader Todos: File Search 用のTodosを生成`);
+    if (isFocusedFileSearcherTask(task)) {
+      log(`[Agent] Leader Todos: 集中再調査用のTodosを生成（Layer 3 file-searcher）`);
       const leaderTodos = await createLeaderTodosMarkdown({
         req,
         leaderProvider,
@@ -1120,6 +1189,8 @@ export async function runAgent(
         upstreamMarkdown: upstreamMarkdownForTodos,
       });
       enrichedInput = `## Leader Todos\n\n${leaderTodos}\n\n---\n\n## File Search の入力Markdown\n\n${enrichedInput}`;
+    } else if (isFileSearcherTask(task)) {
+      log(`[Agent] Layer 1 file-searcher: 初回スキャンなので Leader Todos はスキップ`);
     } else if (
       isReviewerTask(task) &&
       hasImplementationDependency(task, subTasks) &&
@@ -1937,7 +2008,7 @@ async function runAgentStreamCore(
       }
     }
 
-    if (isFileSearcherTask(task)) {
+    if (isFocusedFileSearcherTask(task)) {
       const leaderTodos = await createLeaderTodosMarkdown({
         req,
         leaderProvider,

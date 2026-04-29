@@ -8,6 +8,14 @@ import {
   coderOutputHasCode,
   isCoderRoleSlug,
 } from "../services/coder-guard";
+import {
+  abortAllRuns,
+  abortRun,
+  listRuns,
+  newRunId,
+  registerRun,
+  unregisterRun,
+} from "../services/task-registry";
 
 /**
  * file-searcher は ai-executor 内でスナップショットを結合するためここでは付与しない。
@@ -67,6 +75,19 @@ const executeTaskSchema = z.object({
   stream: z.boolean().optional(),
   workspacePath: z.string().optional(),
   localWorkspaceContext: z.string().optional(),
+  /**
+   * クライアント側で発行した実行 ID。指定されていれば
+   * `POST /api/tasks/stop` で同じ ID を渡して中断できる。
+   * 省略時はサーバー側で生成し、`X-Run-Id` ヘッダで返す。
+   */
+  runId: z.string().min(1).optional(),
+});
+
+const stopRunSchema = z.object({
+  /** 指定されると当該 runId のみ中断。省略時は全アクティブランを中断。 */
+  runId: z.string().min(1).optional(),
+  /** デバッグ用の任意メッセージ（abort reason として伝搬）。 */
+  reason: z.string().optional(),
 });
 
 // 各ロールに割り当てられているモデルの output 上限まで使い切る。
@@ -131,6 +152,26 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
 
   const { projectId, roleSlug, input, config, workspacePath, localWorkspaceContext } = parsed.data;
 
+  // クライアント指定 runId か新規生成 ID をレジストリに登録し、
+  // `X-Run-Id` ヘッダで返す（クライアントは後続の /api/tasks/stop に同じ ID を渡せる）。
+  const runId = parsed.data.runId || newRunId();
+  res.setHeader("X-Run-Id", runId);
+
+  const abortController = registerRun(runId, {
+    kind: parsed.data.stream ? "tasks-execute-stream" : "tasks-execute",
+    projectId,
+    roleSlug,
+    userId: (res.locals.userId as string | undefined) ?? undefined,
+  });
+
+  // クライアントが切断したらこの実行も中断する（無駄な provider 課金を避ける）。
+  req.on("close", () => {
+    if (!res.writableEnded) {
+      abortController.abort("Client disconnected");
+    }
+  });
+
+  try {
   // Find the role by slug (supports aliases for backward compatibility)
   const role = await resolveRole(roleSlug);
   if (!role) {
@@ -207,6 +248,7 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
     ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
     workspacePath,
     localWorkspaceContext,
+    signal: abortController.signal,
   };
 
   // Streaming mode
@@ -294,6 +336,57 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
     model: assignment.provider.modelId,
     ...result,
   });
+  } finally {
+    unregisterRun(runId);
+  }
+}));
+
+/**
+ * GET /api/tasks/active
+ * 現在 task-registry に登録されている実行中タスクを返す。
+ * （UI から「現在走っている処理」を一覧したいケース向け）
+ */
+taskRouter.get("/active", asyncHandler(async (_req: Request, res: Response) => {
+  res.json({ runs: listRuns() });
+}));
+
+/**
+ * POST /api/tasks/stop
+ *   body: { runId?: string; reason?: string }
+ *
+ * - `runId` 指定時: 該当する 1 件を中断（fetch 中なら即座に AbortError、
+ *   その後ハンドラの finally でレジストリから外される）。
+ * - `runId` 省略時: 現在登録されている全実行を中断する（管理用キルスイッチ）。
+ *
+ * Vercel のように複数インスタンスにルーティングされる環境では、
+ * `X-Run-Id` を発行したインスタンスに stop が届かないと中断できない。
+ * 開発時は同一プロセスで動くので確実に効く。
+ */
+taskRouter.post("/stop", asyncHandler(async (req: Request, res: Response) => {
+  const parsed = stopRunSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res
+      .status(400)
+      .json({ error: "Validation failed", details: parsed.error.issues });
+    return;
+  }
+  const { runId, reason } = parsed.data;
+
+  if (runId) {
+    const aborted = abortRun(runId, reason);
+    if (!aborted) {
+      res.status(404).json({
+        error: `No active run found for runId: ${runId}`,
+        hint: "Already finished, or this stop request hit a different server instance.",
+      });
+      return;
+    }
+    res.json({ aborted: true, runId, reason: reason ?? null });
+    return;
+  }
+
+  const count = abortAllRuns(reason);
+  res.json({ aborted: true, count, reason: reason ?? null });
 }));
 
 // Get task execution logs

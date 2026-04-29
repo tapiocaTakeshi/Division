@@ -3,6 +3,7 @@ import { z } from "zod";
 import { runAgent, runAgentStream, StreamEvent } from "../services/orchestrator";
 import { asyncHandler } from "../middleware/async-handler";
 import { normalizeChatHistory } from "../utils/normalize-chat-history";
+import { newRunId, registerRun, unregisterRun } from "../services/task-registry";
 
 export const agentRouter = Router();
 
@@ -29,6 +30,12 @@ const agentRunSchema = z.object({
    * IDE/CLI がローカルで収集したワークスペース本文（Markdown 等）。指定時 API はユーザーのディスクを直接読まない。
    */
   localWorkspaceContext: z.string().optional(),
+  /**
+   * クライアント側で発行した実行 ID。`POST /api/tasks/stop` に同じ ID を渡せば
+   * このオーケストレーション全体を中断できる。省略時はサーバー側で生成し
+   * `X-Run-Id` ヘッダで返す（ストリームでは `session_start` の直前にも書ける）。
+   */
+  runId: z.string().min(1).optional(),
 });
 
 const agentStreamSchema = agentRunSchema.extend({
@@ -57,6 +64,15 @@ agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
     return;
   }
 
+  // /api/tasks/stop からの中断要求を受け取れるようレジストリに登録する。
+  const runId = parsed.data.runId || newRunId();
+  res.setHeader("X-Run-Id", runId);
+  const abortController = registerRun(runId, {
+    kind: "agent-run",
+    projectId: parsed.data.projectId,
+    userId: (res.locals.userId as string | undefined) ?? undefined,
+  });
+
   // Stream NDJSON for real-time log output
   res.writeHead(200, {
     "Content-Type": "application/x-ndjson",
@@ -66,13 +82,21 @@ agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
   });
 
   let closed = false;
-  req.on("close", () => { closed = true; });
+  req.on("close", () => {
+    closed = true;
+    if (!res.writableEnded) {
+      abortController.abort("Client disconnected");
+    }
+  });
 
   const writeLine = (obj: Record<string, unknown>) => {
     if (!closed) {
       res.write(JSON.stringify(obj) + "\n");
     }
   };
+
+  // X-Run-Id をクライアントが取り損ねないよう、最初の行でも明示する。
+  writeLine({ type: "run", runId });
 
   try {
     const result = await runAgent(
@@ -81,6 +105,7 @@ agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
         chatHistory: normalizeChatHistory(parsed.data.chatHistory),
         authenticated: !!res.locals.authenticated,
         userId: res.locals.userId as string | undefined,
+        signal: abortController.signal,
       },
       (message) => { writeLine({ type: "log", message }); }
     );
@@ -89,6 +114,7 @@ agentRouter.post("/run", asyncHandler(async (req: Request, res: Response) => {
     const message = err instanceof Error ? err.message : String(err);
     writeLine({ type: "error", error: "Agent execution failed", message });
   } finally {
+    unregisterRun(runId);
     if (!closed) {
       res.end();
     }
@@ -134,10 +160,22 @@ agentRouter.post("/stream", asyncHandler(async (req: Request, res: Response) => 
   const format = parsed.data.format || "sse";
   const isNdjson = format === "ndjson";
 
+  // /api/tasks/stop からの中断要求を受け取れるようレジストリに登録する。
+  const runId = parsed.data.runId || newRunId();
+  res.setHeader("X-Run-Id", runId);
+  const abortController = registerRun(runId, {
+    kind: "agent-stream",
+    projectId: parsed.data.projectId,
+    userId: (res.locals.userId as string | undefined) ?? undefined,
+  });
+
   // Handle client disconnect
   let closed = false;
   req.on("close", () => {
     closed = true;
+    if (!res.writableEnded) {
+      abortController.abort("Client disconnected");
+    }
   });
 
   if (isNdjson) {
@@ -179,6 +217,7 @@ agentRouter.post("/stream", asyncHandler(async (req: Request, res: Response) => 
         chatHistory: normalizeChatHistory(parsed.data.chatHistory),
         authenticated: !!res.locals.authenticated,
         userId: res.locals.userId as string | undefined,
+        signal: abortController.signal,
       },
       sendEvent
     );
@@ -191,6 +230,7 @@ agentRouter.post("/stream", asyncHandler(async (req: Request, res: Response) => 
     };
     sendEvent(errorEvent);
   } finally {
+    unregisterRun(runId);
     if (!closed) {
       res.end();
     }

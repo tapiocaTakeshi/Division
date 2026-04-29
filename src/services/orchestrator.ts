@@ -185,6 +185,12 @@ export interface OrchestratorRequest {
    * クライアント（IDE/CLI）がローカルで収集したワークスペース本文。指定時は API はディスクを読まない。
    */
   localWorkspaceContext?: string;
+  /**
+   * `/api/tasks/stop` などからの中断要求を受け取る AbortSignal。
+   * 指定すると、内部のすべての executeTask / executeTaskStream の fetch に伝搬し、
+   * abort 時はそれぞれが `status: "error"` / `errorMsg: "Aborted by user"` で即座に返る。
+   */
+  signal?: AbortSignal;
 }
 
 /** Leader への追記: 実行モード（本番は IDE スナップショット前提） */
@@ -924,6 +930,7 @@ ${params.fileSearchInput}
     role: { slug: "leader", name: "Leader" },
     systemPrompt: LEADER_TODOS_SYSTEM_PROMPT,
     chatHistory: params.req.chatHistory,
+    signal: params.req.signal,
   });
 
   if (result.status !== "success" || !result.output.trim()) {
@@ -999,6 +1006,7 @@ ${params.latestImplementation || "(成果物なし)"}
     role: { slug: "leader", name: "Leader" },
     systemPrompt: LEADER_PROGRESS_CHECK_SYSTEM_PROMPT,
     chatHistory: params.req.chatHistory,
+    signal: params.req.signal,
   });
 
   if (result.status !== "success" || !result.output.trim()) {
@@ -1064,6 +1072,7 @@ ${params.reviewerInput}
     role: { slug: "leader", name: "Leader" },
     systemPrompt: LEADER_REVIEW_BRIEF_SYSTEM_PROMPT,
     chatHistory: params.req.chatHistory,
+    signal: params.req.signal,
   });
 
   if (result.status !== "success" || !result.output.trim()) {
@@ -1207,6 +1216,7 @@ export async function runAgent(
     role: { slug: "leader", name: "Leader" },
     systemPrompt: LEADER_SYSTEM_PROMPT,
     chatHistory: req.chatHistory,
+    signal: req.signal,
   });
 
   if (leaderResult.status === "error") {
@@ -1441,6 +1451,7 @@ export async function runAgent(
       workspacePath: req.workspacePath,
       localWorkspaceContext: req.localWorkspaceContext,
       ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+      signal: req.signal,
     });
 
     if (
@@ -1500,6 +1511,7 @@ export async function runAgent(
           workspacePath: req.workspacePath,
           localWorkspaceContext: req.localWorkspaceContext,
           ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+          signal: req.signal,
         });
         if (loopResult.status !== "success" || !loopResult.output) {
           log(
@@ -1790,6 +1802,7 @@ export async function runAgent(
       input: synthesisInput,
       role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
       systemPrompt: synthesisRole?.systemPrompt ?? SYNTHESIS_SYSTEM_PROMPT,
+      signal: req.signal,
     });
 
     if (synthesisResult.status === "success") {
@@ -2108,6 +2121,7 @@ async function runAgentStreamCore(
       role: { slug: "leader", name: "Leader" },
       systemPrompt: LEADER_SYSTEM_PROMPT,
       chatHistory: req.chatHistory,
+      signal: req.signal,
     },
     (text) => emit({ type: "leader_chunk", id: nextId(), text })
   );
@@ -2406,6 +2420,7 @@ async function runAgentStreamCore(
         workspacePath: req.workspacePath,
         localWorkspaceContext: req.localWorkspaceContext,
         ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+        signal: req.signal,
       },
       (text) => emit({ type: "task_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text }),
       (text) => emit({ type: "task_thinking_chunk", id: nextId(), taskId: taskIdOf(i), index: i, role: task.role, text })
@@ -2476,6 +2491,7 @@ async function runAgentStreamCore(
             workspacePath: req.workspacePath,
             localWorkspaceContext: req.localWorkspaceContext,
             ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+            signal: req.signal,
           },
           (text) =>
             emit({
@@ -2851,6 +2867,7 @@ async function runAgentStreamCore(
         input: synthesisInput,
         role: { slug: synthesisRoleSlug, name: synthesisRole?.name || finalRole },
         systemPrompt: synthesisRole?.systemPrompt ?? SYNTHESIS_SYSTEM_PROMPT,
+        signal: req.signal,
       },
       (text) => emit({ type: "synthesis_chunk", id: nextId(), text })
     );

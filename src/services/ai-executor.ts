@@ -40,6 +40,12 @@ export interface ExecutionRequest {
    * 指定時は本番 API はユーザーのディスクを読まず、この内容を一次資料にする（Cursor 系の流れ）。
    */
   localWorkspaceContext?: string;
+  /**
+   * `/api/tasks/stop` からの中断要求を受け取るための AbortSignal。
+   * 与えられた場合、内部の `fetch()` にそのまま渡され、abort されると
+   * `status: "error"` / `errorMsg: "Aborted by user"` で即座に返る。
+   */
+  signal?: AbortSignal;
 }
 
 export interface ExecutionResult {
@@ -183,6 +189,20 @@ const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
 
 import { logger } from "../utils/logger";
 import { executeNativeTool } from "./agent-tools";
+import { isAbortError } from "./task-registry";
+
+/**
+ * AbortSignal 由来のエラーかどうかを判定する。発信元が fetch の場合は
+ * `AbortError` (DOMException)、Node 側の発信なら `code: "ABORT_ERR"` が立つ。
+ */
+function describeAbortError(err: unknown): string {
+  if (!err || typeof err !== "object") return "Aborted by user";
+  const e = err as { message?: unknown };
+  if (typeof e.message === "string" && e.message) {
+    return `Aborted by user: ${e.message}`;
+  }
+  return "Aborted by user";
+}
 
 /**
  * Convert a provider's toolMap (name -> definition) into the array shape
@@ -1045,6 +1065,7 @@ search_files の query にはコード上のキーワード（関数名、変数
         method: "POST",
         headers: requestSpec.headers,
         body: JSON.stringify(requestSpec.body),
+        signal: req.signal,
       });
       if (!response.ok) {
         logger.error(`[Tool Loop] API error ${response.status}`);
@@ -1054,9 +1075,15 @@ search_files の query にはコード上のキーワード（関数名、変数
       const parsed = parseResponse(apiTypeEff, data);
       result = { output: parsed.output, status: "success" };
     } catch (err) {
+      if (isAbortError(err) || req.signal?.aborted) {
+        logger.info("[Tool Loop] Aborted by user");
+        break;
+      }
       logger.error("[Tool Loop] Fetch error", err);
       break;
     }
+
+    if (req.signal?.aborted) break;
 
     const parsed = extractToolJson(result.output);
     if (!parsed) {
@@ -1128,6 +1155,16 @@ export async function executeCoderLoop(
     iteration++;
     log(`--- Iteration ${iteration}/${MAX_ITERATIONS} ---`);
 
+    if (req.signal?.aborted) {
+      log("Aborted by user");
+      return {
+        output: logs.join("\n"),
+        durationMs: Date.now() - start,
+        status: "error",
+        errorMsg: "Aborted by user",
+      };
+    }
+
     const result = await executeTask({
       provider: req.provider,
       config: req.config,
@@ -1135,6 +1172,7 @@ export async function executeCoderLoop(
       role: req.role,
       systemPrompt: req.systemPrompt || getCoderPrompt(req),
       chatHistory,
+      signal: req.signal,
     });
 
     if (result.status === "error") {
@@ -1309,6 +1347,7 @@ export async function executeTaskStream(
       method: "POST",
       headers: requestSpec.headers,
       body: JSON.stringify(streamBody),
+      signal: req.signal,
     });
 
     if (!response.ok) {
@@ -1542,14 +1581,20 @@ export async function executeTaskStream(
     };
   } catch (err: unknown) {
     const durationMs = Date.now() - start;
+    const aborted = isAbortError(err) || req.signal?.aborted === true;
+    const errorMsg = aborted
+      ? describeAbortError(err)
+      : err instanceof Error
+        ? err.message
+        : String(err);
     console.log(`[API] ──── Stream (EXCEPTION) ────`);
     console.log(`[API]  Duration: ${durationMs}ms`);
-    console.log(`[API]  Error: ${err instanceof Error ? err.message : String(err)}`);
+    console.log(`[API]  Error: ${errorMsg}`);
     return {
       output: "",
       durationMs,
       status: "error",
-      errorMsg: err instanceof Error ? err.message : String(err),
+      errorMsg,
     };
   }
 }
@@ -1647,6 +1692,7 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
       method: "POST",
       headers: requestSpec.headers,
       body: JSON.stringify(requestSpec.body),
+      signal: req.signal,
     });
 
     if (!response.ok) {
@@ -1694,11 +1740,17 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     };
   } catch (err: unknown) {
     const durationMs = Date.now() - start;
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const aborted = isAbortError(err) || req.signal?.aborted === true;
+    const errorMsg = aborted
+      ? describeAbortError(err)
+      : err instanceof Error
+        ? err.message
+        : String(err);
     logger.error(`[AI Executor] Error: ${req.provider.displayName} (${durationMs}ms)`, {
       role: req.role.slug,
       provider: req.provider.name,
       error: errorMsg,
+      aborted,
     });
     console.log(`[API] ──── Response (EXCEPTION) ────`);
     console.log(`[API]  Duration: ${durationMs}ms`);

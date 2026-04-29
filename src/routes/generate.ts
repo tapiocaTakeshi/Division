@@ -14,6 +14,7 @@ import { executeTask, executeTaskStream } from "../services/ai-executor";
 import { asyncHandler } from "../middleware/async-handler";
 import { recordUsage } from "../services/credits";
 import { resolveProvider } from "../services/provider-resolver";
+import { newRunId, registerRun, unregisterRun } from "../services/task-registry";
 
 export const generateRouter = Router();
 
@@ -39,6 +40,11 @@ const generateSchema = z.object({
   maxTokens: z.number().int().positive().optional(),
   apiKeys: z.record(z.string()).optional(),
   workspacePath: z.string().optional(),
+  /**
+   * クライアント側で発行した実行 ID。`POST /api/tasks/stop` に同じ ID を渡すと
+   * この生成を中断できる。省略時はサーバー側で生成し `X-Run-Id` ヘッダで返す。
+   */
+  runId: z.string().min(1).optional(),
 });
 
 /**
@@ -114,39 +120,58 @@ generateRouter.post(
 
     const apiKey = resolveApiKey(provider.apiType, apiKeys, authenticated);
 
-    const result = await executeTask({
-      provider: { ...provider, toolMap: undefined },
-      config: { apiKey, ...(maxTokens ? { maxTokens } : {}) },
-      input,
-      role: { slug: "generate", name: "Generate" },
-      systemPrompt: buildGenerateSystemPrompt(systemPrompt),
-      workspacePath,
+    const runId = parsed.data.runId || newRunId();
+    res.setHeader("X-Run-Id", runId);
+    const abortController = registerRun(runId, {
+      kind: "generate",
+      roleSlug: "generate",
+      userId: (res.locals.userId as string | undefined) ?? undefined,
+    });
+    req.on("close", () => {
+      if (!res.writableEnded) {
+        abortController.abort("Client disconnected");
+      }
     });
 
-    let costUsd: number | undefined;
-    if (result.status === "success") {
-      const inputTokens = Math.ceil(input.length / 3);
-      const outputTokens = Math.ceil((result.output || "").length / 3);
-      const usage = await recordUsage({
-        userId: res.locals.userId,
-        providerId: provider.id,
-        modelId: provider.modelId,
-        role: "generate",
-        inputTokens,
-        outputTokens,
+    try {
+      const result = await executeTask({
+        provider: { ...provider, toolMap: undefined },
+        config: { apiKey, ...(maxTokens ? { maxTokens } : {}) },
+        input,
+        role: { slug: "generate", name: "Generate" },
+        systemPrompt: buildGenerateSystemPrompt(systemPrompt),
+        workspacePath,
+        signal: abortController.signal,
       });
-      costUsd = usage.cost.totalCostUsd;
-    }
 
-    res.json({
-      provider: provider.displayName,
-      model: provider.modelId,
-      output: result.output,
-      status: result.status,
-      durationMs: result.durationMs,
-      ...(costUsd !== undefined ? { costUsd } : {}),
-      ...(result.errorMsg ? { error: result.errorMsg } : {}),
-    });
+      let costUsd: number | undefined;
+      if (result.status === "success") {
+        const inputTokens = Math.ceil(input.length / 3);
+        const outputTokens = Math.ceil((result.output || "").length / 3);
+        const usage = await recordUsage({
+          userId: res.locals.userId,
+          providerId: provider.id,
+          modelId: provider.modelId,
+          role: "generate",
+          inputTokens,
+          outputTokens,
+        });
+        costUsd = usage.cost.totalCostUsd;
+      }
+
+      res.json({
+        provider: provider.displayName,
+        model: provider.modelId,
+        output: result.output,
+        status: result.status,
+        durationMs: result.durationMs,
+        runId,
+        ...(costUsd !== undefined ? { costUsd } : {}),
+        ...(result.errorMsg ? { error: result.errorMsg } : {}),
+      });
+    } finally {
+      unregisterRun(runId);
+    }
   })
 );
 
@@ -186,17 +211,28 @@ generateRouter.post(
 
     const apiKey = resolveApiKey(provider.apiType, apiKeys, authenticated);
 
+    const runId = parsed.data.runId || newRunId();
+    const abortController = registerRun(runId, {
+      kind: "generate-stream",
+      roleSlug: "generate",
+      userId: (res.locals.userId as string | undefined) ?? undefined,
+    });
+
     // Set up SSE headers
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
+      "X-Run-Id": runId,
     });
 
     let closed = false;
     req.on("close", () => {
       closed = true;
+      if (!res.writableEnded) {
+        abortController.abort("Client disconnected");
+      }
     });
 
     const sendEvent = (event: string, data: unknown) => {
@@ -212,6 +248,7 @@ generateRouter.post(
       type: "start",
       provider: provider.displayName,
       model: provider.modelId,
+      runId,
     });
 
     try {
@@ -223,6 +260,7 @@ generateRouter.post(
           role: { slug: "generate", name: "Generate" },
           systemPrompt: buildGenerateSystemPrompt(systemPrompt),
           workspacePath,
+          signal: abortController.signal,
         },
         (text) => sendEvent("chunk", { type: "chunk", text }),
         (text) => sendEvent("thinking", { type: "thinking", text })
@@ -259,6 +297,7 @@ generateRouter.post(
       const message = err instanceof Error ? err.message : String(err);
       sendEvent("error", { type: "error", error: message });
     } finally {
+      unregisterRun(runId);
       if (!closed) {
         res.end();
       }

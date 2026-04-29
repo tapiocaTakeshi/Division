@@ -61,38 +61,40 @@ const updateTaskSchema = z.object({
 
 // --- Leader Prompt for Task Creation ---
 
-const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下のフローに基づいてタスクを分解してください。
+const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下の Wave 構造でタスクを分解してください。
 
-## パイプライン構造（必ずこの順序で多層化する）
+## パイプライン構造（必ずこの Wave 順序で多層化する）
 
-【Layer 1 — 調査・発想・初回スキャン】並列実行（dependsOn: []）
-- ideaman: 創造的ブレインストーミング・アイデア出し
+【Wave 1 — 初回ファイルスキャン】単独実行（dependsOn: []）
+- file-searcher（**初回スキャン**）: プロジェクト内の **すべてのフォルダ・ファイル** を最初に読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる。**ideaman / searcher / researcher より前**に必ず単独で走り、後続全員にプロジェクトの「現在の真実」を渡す。
+
+【Wave 2 — 調査・発想】Wave 1 に依存（dependsOn: [Wave 1 の file-searcher の index]）
+- ideaman: 創造的ブレインストーミング・アイデア出し（既存コードを把握した上で）
 - searcher: ウェブ検索・情報収集
 - researcher: 調査・分析・レポート
-- file-searcher（**初回スキャン**）: プロジェクト内の **すべてのフォルダ・ファイル** を最初から読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる
 
-【Layer 2 — 設計・デザイン】Layer 1 のすべての Markdown 出力に依存
+【Wave 3 — 設計・デザイン】Wave 1 + Wave 2 に依存
 - designer: UI/UXデザイン・HTML/CSS生成・プロトタイプ
 - imager: 画像生成・ビジュアルコンテンツ
 - planner: 企画・設計・アーキテクチャ
 
-【Leader Todos】Layer 2 → Layer 3 のハンドオフで Leader が自動挿入（tasksには含めない）
+【Leader Todos】Wave 3 → Wave 4 のハンドオフで Leader が自動挿入（tasksには含めない）
 - Leader は file-searcher（初回） / designer / imager / planner の Markdown を受け取り、2回目の File Search に渡す Todos Markdown を自動生成する
 
-【Layer 3 — File Search（再調査）】Layer 2 に依存
-- file-searcher（**集中再調査**）: Layer 2 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する
+【Wave 4 — File Search（集中再調査）】Wave 3 に依存
+- file-searcher（**集中再調査**）: Wave 3 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する
 
-【Layer 4 — 実装・執筆】Layer 3 の集中再調査に依存
+【Wave 5 — 実装・執筆】Wave 4 の集中再調査に依存
 - coder: コード生成・実装・デバッグ
 - writer: 文章作成・ドキュメント
 
-【Leader Review Brief】Layer 4 → Layer 5 のハンドオフで Leader が自動挿入（tasksには含めない）
+【Leader Review Brief】Wave 5 → Wave 6 のハンドオフで Leader が自動挿入（tasksには含めない）
 - Leader は coder / writer の出力を受け、OK なら Reviewer に渡し、Not OK なら Coder/Writer に差し戻す
 
-【Layer 5 — レビュー】Layer 4に依存
+【Wave 6 — レビュー】Wave 5に依存
 - reviewer: 品質確認・レビュー・改善提案（dependsOn にレビュー対象の coder または writer の index を必ず含める）
 
-オーケストラ実行時: reviewer が Not OK の場合、reviewer → file-searcher（**集中再調査・Layer 3** が再実行）→ coder/writer → Leader Review Brief → reviewer を reviewer が OK を出すまで（最大20周。REVIEWER_CODER_MAX_ROUNDS で変更可）ループします。Brief Gate が Not OK の場合は Coder/Writer のみ再実行します。プランに追加タスクは不要です。
+オーケストラ実行時: reviewer が Not OK の場合、reviewer → file-searcher（**集中再調査・Wave 4** が再実行）→ coder/writer → Leader Review Brief → reviewer を reviewer が OK を出すまで（最大20周。REVIEWER_CODER_MAX_ROUNDS で変更可）ループします。Brief Gate が Not OK の場合は Coder/Writer のみ再実行します。プランに追加タスクは不要です。
 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます
@@ -100,13 +102,13 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 3. 各タスクにわかりやすいtitleとdescriptionを付ける
 4. titleは短く簡潔に（50文字以内）
 5. **【必須】file-searcher を 2 タスク含めること**:
-   - 1 つ目（**初回スキャン**）: Layer 1 に置く。dependsOn: [] で並列実行する。description には「プロジェクト内のすべてのフォルダ・ファイルを読み込んで構造を把握する」ことを必ず含める。
-   - 2 つ目（**集中再調査**）: Layer 3 に置く。dependsOn には Layer 2（designer/imager/planner）の index を含める。description には「Layer 2 の設計を踏まえて変更対象ファイルと差分を集中的に調査する」ことを必ず含める。
+   - 1 つ目（**Wave 1 = 初回スキャン**）: 配列の **先頭（index 0）** に置く。dependsOn: [] で **単独で先に**実行する。description には「プロジェクト内のすべてのフォルダ・ファイルを読み込んで構造を把握する」ことを必ず含める。
+   - 2 つ目（**Wave 4 = 集中再調査**）: dependsOn には Wave 3（designer/imager/planner）の index を含める。description には「Wave 3 の設計を踏まえて変更対象ファイルと差分を集中的に調査する」ことを必ず含める。
 6. 必ず以下のJSON形式のみで回答。説明文は一切不要
 7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
 8. 1タスクに複数作業を詰め込まず細かく分割
 9. 同じロールでも異なる観点なら別タスクに分ける
-10. **【必須】Layer 1 には ideaman, searcher, researcher, file-searcher（初回）を必ず1タスクずつ含め、すべて dependsOn: [] で並列実行すること。Layer 2 には designer, imager, planner を必ず1タスクずつ含め、Layer 1 のすべての index に依存させること。Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
+10. **【必須】Wave 2 には ideaman, searcher, researcher を必ず1タスクずつ含め、すべて dependsOn に Wave 1 file-searcher の index を含めること。Wave 3 には designer, imager, planner を必ず1タスクずつ含め、Wave 1 + Wave 2 のすべての index に依存させること。Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
 11. 各タスクに "mode" を指定:
     - "chat": テキスト生成タスク（デフォルト。searcher, researcher, file-searcher 等もこれ）
     - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
@@ -116,15 +118,15 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 \`\`\`json
 {
   "tasks": [
-    { "role": "ideaman", "mode": "chat", "title": "アイデア提案", "description": "ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [] },
-    { "role": "searcher", "mode": "chat", "title": "技術調査", "description": "技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [] },
-    { "role": "researcher", "mode": "chat", "title": "技術トレンド調査", "description": "関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [] },
-    { "role": "file-searcher", "mode": "chat", "title": "プロジェクト全体スキャン（初回）", "description": "プロジェクト内のすべてのフォルダ・ファイルを読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる", "reason": "サーチ／リサーチと同じタイミングで既存コードベース全体を把握するため", "dependsOn": [] },
-    { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "Layer 1 の調査・既存コードを元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "imager", "mode": "chat", "title": "画像・ビジュアル作成", "description": "Layer 1 の調査・デザイン方針を元に画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "Layer 1 の調査・既存コードを元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "file-searcher", "mode": "chat", "title": "変更対象ファイル特定（再調査）", "description": "Layer 2 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する", "reason": "設計後に変更対象を絞り込んで実装の指示書を作るため", "dependsOn": [4, 5, 6] },
-    { "role": "coder", "mode": "computer_use", "title": "実装", "description": "Layer 3 の集中再調査の指示に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [7] },
+    { "role": "file-searcher", "mode": "chat", "title": "プロジェクト全体スキャン（初回）", "description": "プロジェクト内のすべてのフォルダ・ファイルを読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる（Wave 1 / 初回スキャン）", "reason": "Wave 2 以降の全員に既存コードベース全体を渡すため", "dependsOn": [] },
+    { "role": "ideaman", "mode": "chat", "title": "アイデア提案", "description": "Wave 1 の既存コードを踏まえ、ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [0] },
+    { "role": "searcher", "mode": "chat", "title": "技術調査", "description": "Wave 1 の既存コードを踏まえ、技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [0] },
+    { "role": "researcher", "mode": "chat", "title": "技術トレンド調査", "description": "Wave 1 の既存コードを踏まえ、関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [0] },
+    { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "既存コードと Wave 2 の調査を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "imager", "mode": "chat", "title": "画像・ビジュアル作成", "description": "既存コードと Wave 2 のデザイン方針を元に画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "既存コードと Wave 2 の調査を元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
+    { "role": "file-searcher", "mode": "chat", "title": "変更対象ファイル特定（再調査）", "description": "Wave 3 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する（Wave 4 / 集中再調査）", "reason": "設計後に変更対象を絞り込んで実装の指示書を作るため", "dependsOn": [4, 5, 6] },
+    { "role": "coder", "mode": "computer_use", "title": "実装", "description": "Wave 4 の集中再調査の指示に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [7] },
     { "role": "reviewer", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [8] }
   ]
 }
@@ -203,9 +205,17 @@ function isImplementationTaskRow(t: ParsedTaskRow): boolean {
 }
 
 /**
- * file-searcher が 2 タスク構成（Layer 1 の初回スキャン + Layer 3 の集中再調査）になるよう正規化する。
- * Leader が出してきた dependsOn を見て、Layer 2 に依存している file-searcher を "focused"、
- * そうでないものを "primary" に分類する。どちらか欠けていれば自動で挿入する。
+ * file-searcher が 2 タスク構成になるよう正規化する:
+ *  - "primary"  file-searcher: **Wave 1（最初に単独で実行）**
+ *  - "focused"  file-searcher: Wave 4（Wave 3 の設計に依存）
+ *
+ * Wave 構造:
+ *   Wave 1: primary file-searcher（単独）
+ *   Wave 2: ideaman / searcher / researcher（並列、primary fs に依存）
+ *   Wave 3: designer / imager / planner（並列、Wave 1 + Wave 2 に依存）
+ *   Wave 4: focused file-searcher（Wave 3 に依存）
+ *   Wave 5: coder / writer（focused fs に依存）
+ *   Wave 6: reviewer
  */
 function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
   const layer1RoleSet = new Set(["ideaman", "searcher", "researcher"]);
@@ -239,7 +249,7 @@ function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
       title: "プロジェクト全体スキャン（初回）",
       description:
         "プロジェクト内のすべてのフォルダ・ファイルを最初から読み込んで構造を把握し、ユーザーのリクエストに関連する既存実装・変更候補・注意点を Markdown レポートにまとめる。",
-      reason: "Layer 1: サーチ／リサーチと同じタイミングで既存コードベース全体を把握するため",
+      reason: "Wave 1: ideaman / searcher / researcher の前にプロジェクト全体を把握するため",
       dependsOn: [],
     });
     primaryFsOldIdx = base.length - 1;
@@ -251,22 +261,23 @@ function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
       mode: "chat",
       title: "変更対象ファイル特定（再調査）",
       description:
-        "Layer 2 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer がそのまま実装できる Markdown レポートを作成する。",
-      reason: "Layer 3: 設計後の集中再調査（Coder/Writer の直前指示）",
+        "Wave 3 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer がそのまま実装できる Markdown レポートを作成する。",
+      reason: "Wave 4: 設計後の集中再調査（Coder/Writer の直前指示）",
       dependsOn: [],
     });
     focusedFsOldIdx = base.length - 1;
   }
 
+  // group 番号 = Wave 番号 - 1
   const groupOf = (task: ParsedTaskRow, oldIndex: number): number => {
-    if (oldIndex === primaryFsOldIdx) return 0;
-    if (oldIndex === focusedFsOldIdx) return 2;
+    if (oldIndex === primaryFsOldIdx) return 0;   // Wave 1
+    if (oldIndex === focusedFsOldIdx) return 3;   // Wave 4
     const role = normalizeTaskRole(task.role);
-    if (layer1RoleSet.has(role)) return 0;
-    if (layer2RoleSet.has(role)) return 1;
-    if (isImplementationTaskRow(task)) return 3;
-    if (role === "reviewer") return 4;
-    return 1;
+    if (layer1RoleSet.has(role)) return 1;         // Wave 2
+    if (layer2RoleSet.has(role)) return 2;         // Wave 3
+    if (isImplementationTaskRow(task)) return 4;   // Wave 5
+    if (role === "reviewer") return 5;             // Wave 6
+    return 2;
   };
 
   const orderedWithMeta = base
@@ -290,37 +301,61 @@ function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
   const indicesByGroup = (group: number) =>
     orderedWithMeta.map((m, i) => (m.group === group ? i : -1)).filter((i) => i >= 0);
 
-  const layer1Indices = indicesByGroup(0);
-  const layer2Indices = indicesByGroup(1);
-  const implementerIndices = indicesByGroup(3);
-  const reviewerIndices = indicesByGroup(4);
+  const wave2Indices = indicesByGroup(1);
+  const wave3Indices = indicesByGroup(2);
+  const implementerIndices = indicesByGroup(4);
+  const reviewerIndices = indicesByGroup(5);
 
   const dedupSorted = (arr: number[]) =>
     Array.from(new Set(arr)).sort((a, b) => a - b);
 
   for (let i = 0; i < ordered.length; i++) {
-    if (i === newFocusedFsIdx) {
-      ordered[i].dependsOn = layer2Indices.length ? [...layer2Indices] : [...layer1Indices];
-    } else if (layer1Indices.includes(i)) {
+    if (i === newPrimaryFsIdx) {
+      // Wave 1: 単独実行
       ordered[i].dependsOn = [];
-    } else if (layer2Indices.includes(i)) {
-      ordered[i].dependsOn = layer1Indices.length ? [...layer1Indices] : [];
+    } else if (i === newFocusedFsIdx) {
+      // Wave 4: Wave 3 に依存
+      ordered[i].dependsOn = wave3Indices.length
+        ? [...wave3Indices]
+        : wave2Indices.length
+        ? [...wave2Indices]
+        : newPrimaryFsIdx >= 0
+        ? [newPrimaryFsIdx]
+        : [];
+    } else if (wave2Indices.includes(i)) {
+      // Wave 2: primary fs に依存
+      ordered[i].dependsOn = newPrimaryFsIdx >= 0 ? [newPrimaryFsIdx] : [];
+    } else if (wave3Indices.includes(i)) {
+      // Wave 3: primary fs + Wave 2 に依存
+      const deps: number[] = [];
+      if (newPrimaryFsIdx >= 0) deps.push(newPrimaryFsIdx);
+      deps.push(...wave2Indices);
+      ordered[i].dependsOn = dedupSorted(deps);
     } else if (implementerIndices.includes(i)) {
+      // Wave 5: focused fs に依存
       const deps =
         newFocusedFsIdx >= 0
           ? [newFocusedFsIdx]
-          : layer2Indices.length
-          ? [...layer2Indices]
-          : [...layer1Indices];
+          : wave3Indices.length
+          ? [...wave3Indices]
+          : wave2Indices.length
+          ? [...wave2Indices]
+          : newPrimaryFsIdx >= 0
+          ? [newPrimaryFsIdx]
+          : [];
       ordered[i].dependsOn = dedupSorted(deps);
     } else if (reviewerIndices.includes(i)) {
       ordered[i].dependsOn = implementerIndices.length
         ? [...implementerIndices]
         : newFocusedFsIdx >= 0
         ? [newFocusedFsIdx]
-        : layer2Indices.length
-        ? [...layer2Indices]
-        : [...layer1Indices];
+        : wave3Indices.length
+        ? [...wave3Indices]
+        : wave2Indices.length
+        ? [...wave2Indices]
+        : newPrimaryFsIdx >= 0
+        ? [newPrimaryFsIdx]
+        : [];
     }
   }
 

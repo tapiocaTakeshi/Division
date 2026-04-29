@@ -1035,7 +1035,22 @@ async function main() {
     create: { slug: "design", name: "Design", description: "UI/UX design, wireframing, visual design, design system creation, and user experience optimization" },
   });
 
-  console.log("Roles seeded:", [coding, search, planning, writing, review, leader, deepResearch, image, ideaman, design].map((r) => r.slug));
+  // file-searcher: Layer 1 (initial whole-project scan) + Layer 3 (focused investigation after design)
+  const fileSearcher = await prisma.role.upsert({
+    where: { slug: "file-searcher" },
+    update: {},
+    create: {
+      slug: "file-searcher",
+      name: "File Searcher",
+      description:
+        "Project-wide file scanner: reads all folders/files in Layer 1 and re-investigates focused areas in Layer 3 after the design phase.",
+    },
+  });
+
+  console.log(
+    "Roles seeded:",
+    [coding, search, planning, writing, review, leader, deepResearch, image, ideaman, design, fileSearcher].map((r) => r.slug)
+  );
 
   // ===== DEMO PROJECT =====
   const project = await prisma.project.upsert({
@@ -1062,6 +1077,7 @@ async function main() {
     { role: image, provider: gptImage1, label: "Image          -> GPT Image 1" },
     { role: ideaman, provider: claudeSonnet45, label: "Idea Man       -> Claude Sonnet 4.5" },
     { role: design, provider: gemini3Flash, label: "Design         -> Gemini 3 Flash" },
+    { role: fileSearcher, provider: gpt41, label: "File Searcher  -> GPT-4.1" },
   ];
 
   for (const a of assignments) {

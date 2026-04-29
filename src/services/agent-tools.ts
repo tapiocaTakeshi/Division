@@ -3,7 +3,12 @@ import path from "path";
 import { execFile, exec } from "child_process";
 import util from "util";
 import { logger } from "../utils/logger";
-import { isPathIgnored, loadDivisionIgnore } from "../utils/division-ignore";
+import {
+  isPathIgnored,
+  loadDivisionIgnore,
+  isMarkdownPath,
+  isReadBlockedByMarkdownPolicy,
+} from "../utils/division-ignore";
 
 const execFileAsync = util.promisify(execFile);
 const execAsync = util.promisify(exec);
@@ -33,6 +38,22 @@ function checkIgnored(
   const { ignored, reason } = isPathIgnored(absPath, workspaceRoot, isDirectory);
   if (!ignored) return null;
   return `Error: Path "${relInput}" は .divisionignore により無視対象です（match: ${reason}）。読み書きは許可されません。`;
+}
+
+/**
+ * 読み取り限定ポリシー: Markdown 以外のファイルを全ロールで読み取り不可にする。
+ * ワークスペース外（/tmp 等）には適用しない。`isDirectory: true` のときは常に許可
+ * （中身の列挙は許可されるが、個別ファイルは拡張子で再判定される）。
+ */
+function checkReadOnlyMarkdownPolicy(
+  relInput: string,
+  absPath: string,
+  workspaceRoot: string,
+  isDirectory: boolean
+): string | null {
+  if (!absPath.startsWith(workspaceRoot)) return null;
+  if (!isReadBlockedByMarkdownPolicy(absPath, isDirectory)) return null;
+  return `Error: Path "${relInput}" は Markdown 以外のため Division の読み取りツールでは取得できません。.md / .markdown / .mdx のみ許可されています（ソース本体は IDE/CLI が localWorkspaceContext で渡してください）。`;
 }
 
 export const NATIVE_TOOLS = [
@@ -159,6 +180,9 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         const ignoreErr = checkIgnored(args.path as string, filePath, root, false);
         if (ignoreErr) return ignoreErr;
 
+        const mdErr = checkReadOnlyMarkdownPolicy(args.path as string, filePath, root, false);
+        if (mdErr) return mdErr;
+
         const raw = fs.readFileSync(filePath, "utf-8");
         const lines = raw.split("\n");
         const start = Math.max(1, (args.startLine as number) || 1);
@@ -270,6 +294,13 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         const matcher = loadDivisionIgnore(root);
         const grepArgs = ["-RnI", "--color=never"];
         if (args.include) grepArgs.push(`--include=${args.include}`);
+        // Markdown 限定ポリシーを grep 段階で適用しておく（後段でも再フィルタする）。
+        // ユーザー指定の include が無いときだけ自動で .md/.markdown/.mdx に絞る。
+        if (!args.include) {
+          for (const ext of ["*.md", "*.markdown", "*.mdx"]) {
+            grepArgs.push(`--include=${ext}`);
+          }
+        }
         grepArgs.push(args.query as string, dir);
 
         try {
@@ -279,8 +310,9 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
           });
           const allLines = stdout.split("\n").filter(Boolean);
 
-          // .divisionignore 対象ファイルの結果を取り除く
+          // .divisionignore 対象ファイル / 非 Markdown ファイルの結果を取り除く
           let filteredOut = 0;
+          let nonMarkdownFiltered = 0;
           const lines = allLines.filter((line) => {
             const idx = line.indexOf(":");
             if (idx <= 0) return true;
@@ -288,24 +320,34 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
             const abs = path.resolve(filePath);
             if (!abs.startsWith(root)) return true;
             const rel = path.relative(root, abs);
+            if (!isMarkdownPath(rel)) {
+              nonMarkdownFiltered++;
+              return false;
+            }
             const ignored = matcher.isIgnored(rel, false);
             if (ignored) filteredOut++;
             return !ignored;
           });
 
+          const totalFiltered = filteredOut + nonMarkdownFiltered;
           if (lines.length === 0)
-            return filteredOut > 0
-              ? `No matches found. (${filteredOut} 件は .divisionignore でフィルタ済み)`
+            return totalFiltered > 0
+              ? `No matches found. (${nonMarkdownFiltered} 件は Markdown 以外、${filteredOut} 件は .divisionignore でフィルタ済み)`
               : "No matches found.";
           const maxGrepLines = 1000;
-          const suffix =
-            filteredOut > 0
-              ? `\n[note] ${filteredOut} 件のマッチを .divisionignore でフィルタしました。`
-              : "";
+          const suffixParts: string[] = [];
+          if (nonMarkdownFiltered > 0) {
+            suffixParts.push(`${nonMarkdownFiltered} 件のマッチを Markdown 以外として除外`);
+          }
+          if (filteredOut > 0) {
+            suffixParts.push(`${filteredOut} 件を .divisionignore で除外`);
+          }
+          const suffix = suffixParts.length > 0 ? `\n[note] ${suffixParts.join("／")}` : "";
           if (lines.length > maxGrepLines) {
             return (
               lines.slice(0, maxGrepLines).join("\n") +
-              `\n...[${lines.length - maxGrepLines} more matches. Narrow query or directory.]${suffix}`
+              `\n...[${lines.length - maxGrepLines} more matches. Narrow query or directory.]` +
+              suffix
             );
           }
           return lines.join("\n") + suffix;
@@ -330,22 +372,36 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         const matcher = loadDivisionIgnore(root);
         const entries = fs.readdirSync(dirPath, { withFileTypes: true });
         const visible: { name: string; isDir: boolean }[] = [];
-        let hidden = 0;
+        let hiddenByIgnore = 0;
+        let hiddenByMarkdownPolicy = 0;
         for (const e of entries) {
           const childAbs = path.join(dirPath, e.name);
           const rel = path.relative(root, childAbs);
-          if (rel && !rel.startsWith("..") && matcher.isIgnored(rel, e.isDirectory())) {
-            hidden++;
+          const isDir = e.isDirectory();
+          if (rel && !rel.startsWith("..") && matcher.isIgnored(rel, isDir)) {
+            hiddenByIgnore++;
             continue;
           }
-          visible.push({ name: e.name, isDir: e.isDirectory() });
+          // Markdown 以外のファイルは全ロールから隠す（ディレクトリは辿れるよう残す）。
+          if (!isDir && isReadBlockedByMarkdownPolicy(rel || e.name, false)) {
+            hiddenByMarkdownPolicy++;
+            continue;
+          }
+          visible.push({ name: e.name, isDir });
         }
         const formatted = visible.map((e) => {
           const suffix = e.isDir ? "/" : "";
           return `${suffix ? "📁" : "📄"} ${e.name}${suffix}`;
         });
+        const hiddenParts: string[] = [];
+        if (hiddenByMarkdownPolicy > 0) {
+          hiddenParts.push(`${hiddenByMarkdownPolicy} hidden as non-markdown`);
+        }
+        if (hiddenByIgnore > 0) {
+          hiddenParts.push(`${hiddenByIgnore} hidden by .divisionignore`);
+        }
         const header = `Directory: ${args.path} (${visible.length} items${
-          hidden > 0 ? `, ${hidden} hidden by .divisionignore` : ""
+          hiddenParts.length > 0 ? ", " + hiddenParts.join(", ") : ""
         })`;
         return `${header}\n${formatted.join("\n")}`;
       }

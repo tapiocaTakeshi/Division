@@ -40,6 +40,42 @@ export type DivisionIgnoreMatcher = {
 
 const DEFAULT_IGNORE_PATTERNS = [".git/", "node_modules/", ".divisionignore"];
 
+/**
+ * Division 全体ポリシー: サーバー側ファイル読み取りツール（read_file / list_directory /
+ * search_files）が返してよいファイルは **Markdown のみ** とする。
+ *
+ * 背景: ソースコードそのものは IDE / CLI が `localWorkspaceContext` として
+ * スナップショットで渡す前提（Cursor 系フロー）のため、サーバー側ツールは
+ * 公開ドキュメント（.md / .markdown / .mdx）の参照だけに絞ってロール横断で安全にする。
+ *
+ * - ロールに依らず適用される（file-searcher / coder / writer 等すべて）
+ * - 書き込み系（write_file / edit_file）はこの制限の対象外。実装ファイルへの書き込みは
+ *   従来通り `.divisionignore` のみで制御する。
+ */
+const ALLOWED_READ_EXTENSIONS = new Set([".md", ".markdown", ".mdx"]);
+
+/**
+ * 渡されたパスが「Markdown ファイル」と見なせるかを返す。
+ * ディレクトリは false（ファイルではないため）。
+ */
+export function isMarkdownPath(relOrAbsPath: string): boolean {
+  const ext = path.extname(relOrAbsPath).toLowerCase();
+  return ALLOWED_READ_EXTENSIONS.has(ext);
+}
+
+/**
+ * 読み取り系ツールから見たときに、当該パスを「無視扱い」にすべきかを返す。
+ * ディレクトリは常に「読める」（中身を列挙してから個別に判定する）。
+ * ファイルは Markdown 拡張子以外なら無視扱い。
+ */
+export function isReadBlockedByMarkdownPolicy(
+  relOrAbsPath: string,
+  isDirectory: boolean
+): boolean {
+  if (isDirectory) return false;
+  return !isMarkdownPath(relOrAbsPath);
+}
+
 const cache = new Map<
   string,
   { mtimeMs: number; matcher: DivisionIgnoreMatcher }

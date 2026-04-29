@@ -416,6 +416,97 @@ function isFocusedFileSearcherTask(task: SubTask): boolean {
   return deps.length > 0;
 }
 
+/**
+ * Wave 1 の「初回スキャン」file-searcher（dependsOn が空）か判定する。
+ * このタスクは「満足するまでループして毎回 Markdown をマージ」する対象。
+ */
+function isPrimaryFileSearcherTask(task: SubTask): boolean {
+  if (!isFileSearcherTask(task)) return false;
+  const deps = task.dependsOn || [];
+  return deps.length === 0;
+}
+
+// --- Wave 1 primary file-searcher: 満足するまでのループ ---
+
+/**
+ * file-searcher が **満足するまで複数ラウンドで呼ばれる** ことを伝え、
+ * Markdown 末尾に「## 調査完了判定」ブロック（COMPLETE / INCOMPLETE + 追加調査領域）を
+ * 必ず出力させるための入力末尾追記文。Wave 1 の primary file-searcher にのみ付与する。
+ */
+const PRIMARY_FS_LOOP_INSTRUCTION = `
+
+---
+
+## 【必須】調査完了判定マーカーの出力ルール
+あなた（Wave 1 の file-searcher）は **満足するまで複数ラウンドで呼び出されます**。今回のラウンドの Markdown 本文を書き終えたら、**必ず最後**に以下のいずれかのブロックを **そのまま** 付けてください。
+
+調査がもう不要なら（プロジェクト全体を把握できた）:
+\`\`\`
+## 調査完了判定
+STATUS: COMPLETE
+\`\`\`
+
+まだ読むべきファイル・確認すべき実装が残っているなら:
+\`\`\`
+## 調査完了判定
+STATUS: INCOMPLETE
+追加で調査すべき領域:
+- <パス / フォルダ / 関数名> : <理由>
+- ...
+\`\`\`
+
+INCOMPLETE のときは、次のラウンドで「これまでにマージされた Markdown」と「追加で調査すべき領域」が渡され、あなたが再度呼ばれます。**すでに読んだ領域は重複調査せず、新しい領域・前ラウンドで読み切れなかった部分だけを深掘り**してください。最終ラウンドでは必ず STATUS: COMPLETE を付けてください。
+`;
+
+function getPrimaryFileSearchMaxRounds(): number {
+  const raw = process.env.PRIMARY_FILE_SEARCH_MAX_ROUNDS;
+  if (raw === undefined || raw === "") return 5;
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < 1) return 1;
+  return Math.min(20, n);
+}
+
+/**
+ * 出力末尾の「## 調査完了判定」ブロックから、COMPLETE / INCOMPLETE と
+ * INCOMPLETE 時の「追加で調査すべき領域」を抽出する。
+ * マーカーが見つからなければ COMPLETE（無限ループ防止）。
+ */
+function extractFileSearchSatisfaction(output: string): {
+  status: "complete" | "incomplete";
+  remainingAreas: string;
+} {
+  const matches = [...output.matchAll(/##\s*調査完了判定[\s\S]*$/gm)];
+  if (matches.length === 0) return { status: "complete", remainingAreas: "" };
+  const block = matches[matches.length - 1][0];
+  if (!/STATUS:\s*INCOMPLETE/i.test(block)) {
+    return { status: "complete", remainingAreas: "" };
+  }
+  const remainingMatch = block.match(/追加で調査すべき領域[\s\S]*?[:：]\s*\n?([\s\S]*)/);
+  const remainingAreas = remainingMatch ? remainingMatch[1].trim() : "";
+  return { status: "incomplete", remainingAreas };
+}
+
+/**
+ * 各ラウンドの Markdown 出力をマージする。
+ * 各ラウンドの末尾「## 調査完了判定」ブロックは除去する。
+ */
+function mergeFileSearchMarkdown(rounds: { round: number; markdown: string }[]): string {
+  if (rounds.length === 0) return "";
+  const stripMarker = (md: string) =>
+    md.replace(/##\s*調査完了判定[\s\S]*$/gm, "").trim();
+  if (rounds.length === 1) return stripMarker(rounds[0].markdown);
+  const sections = rounds.map(
+    ({ round, markdown }) => `## ラウンド ${round} の調査結果\n\n${stripMarker(markdown)}`
+  );
+  return [
+    "# プロジェクト全体スキャン（複数ラウンド統合 Markdown）",
+    "",
+    `以下は file-searcher が **${rounds.length} ラウンド** にわたり段階的に把握したプロジェクトの全貌をマージしたものです。各ラウンドは前ラウンドの「追加で調査すべき領域」を深掘りしたものです。`,
+    "",
+    ...sections,
+  ].join("\n\n");
+}
+
 function isReviewerTask(task: SubTask): boolean {
   return normalizeRoleSlug(task.role) === "reviewer";
 }
@@ -1277,8 +1368,11 @@ export async function runAgent(
         upstreamMarkdown: upstreamMarkdownForTodos,
       });
       enrichedInput = `## Leader Todos\n\n${leaderTodos}\n\n---\n\n## File Search の入力Markdown\n\n${enrichedInput}`;
+    } else if (isPrimaryFileSearcherTask(task)) {
+      log(`[Agent] Wave 1 file-searcher: 初回スキャン（満足するまでループ可）`);
+      enrichedInput = `${enrichedInput}${PRIMARY_FS_LOOP_INSTRUCTION}`;
     } else if (isFileSearcherTask(task)) {
-      log(`[Agent] Layer 1 file-searcher: 初回スキャンなので Leader Todos はスキップ`);
+      log(`[Agent] file-searcher: Leader Todos をスキップ`);
     } else if (
       isReviewerTask(task) &&
       hasImplementationDependency(task, subTasks) &&
@@ -1353,6 +1447,79 @@ export async function runAgent(
       result.status = "error";
       result.errorMsg =
         "Coder did not produce a code block. The response only contained an analytical preamble. Output must include at least one fenced code block.";
+    }
+
+    // --- Wave 1 primary file-searcher: 満足するまでループして毎回 Markdown をマージ ---
+    if (
+      isPrimaryFileSearcherTask(task) &&
+      result.status === "success" &&
+      result.output &&
+      opts?.inputOverride === undefined
+    ) {
+      const maxRounds = getPrimaryFileSearchMaxRounds();
+      const rounds: { round: number; markdown: string }[] = [
+        { round: 1, markdown: result.output },
+      ];
+      let satisfaction = extractFileSearchSatisfaction(result.output);
+      log(
+        `[Agent] Wave 1 file-searcher round 1: STATUS=${satisfaction.status}${
+          satisfaction.status === "incomplete" ? " → 追加ラウンドを実行" : ""
+        }`
+      );
+
+      while (
+        satisfaction.status === "incomplete" &&
+        rounds.length < maxRounds
+      ) {
+        const roundNum = rounds.length + 1;
+        const mergedSoFar = mergeFileSearchMarkdown(rounds);
+        const loopInput =
+          `## これまでのラウンドの調査結果（マージ済み Markdown — 重複調査禁止）\n\n${mergedSoFar}\n\n` +
+          `---\n\n## 前ラウンドが指摘した「追加で調査すべき領域」（このラウンドはここを深掘り）\n\n${
+            satisfaction.remainingAreas ||
+            "(指定なし — 自分で読み残しを判断して深掘りしてください)"
+          }\n\n` +
+          `---\n\n## あなたへの元の指示（再掲）\n\n${task.input}${PRIMARY_FS_LOOP_INSTRUCTION}`;
+
+        log(
+          `[Agent] Wave 1 file-searcher round ${roundNum}/${maxRounds}: 追加調査を実行`
+        );
+        const loopResult = await executeTask({
+          provider: effectiveProvider,
+          config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
+          input: loopInput,
+          role: { slug: role.slug, name: role.name },
+          mode: task.mode,
+          workspacePath: req.workspacePath,
+          localWorkspaceContext: req.localWorkspaceContext,
+          ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+        });
+        if (loopResult.status !== "success" || !loopResult.output) {
+          log(
+            `[Agent] Wave 1 file-searcher round ${roundNum} 失敗 → ループ終了 (${
+              loopResult.errorMsg || "unknown"
+            })`
+          );
+          break;
+        }
+        rounds.push({ round: roundNum, markdown: loopResult.output });
+        result.durationMs += loopResult.durationMs;
+        satisfaction = extractFileSearchSatisfaction(loopResult.output);
+        log(
+          `[Agent] Wave 1 file-searcher round ${roundNum}: STATUS=${satisfaction.status}`
+        );
+      }
+
+      if (rounds.length > 1) {
+        const merged = mergeFileSearchMarkdown(rounds);
+        log(
+          `[Agent] Wave 1 file-searcher: ${rounds.length} ラウンドで完了 → マージ Markdown を最終出力に採用 (${merged.length}文字)`
+        );
+        result.output = merged;
+      } else if (satisfaction.status === "complete") {
+        // 1 ラウンドで完了。マーカーを取り除いてからマージ済み Markdown として保存。
+        result.output = mergeFileSearchMarkdown(rounds);
+      }
     }
 
     if (result.status === "success") {
@@ -2131,6 +2298,8 @@ async function runAgentStreamCore(
         upstreamMarkdown: upstreamMarkdownForTodos,
       });
       enrichedInput = `## Leader Todos\n\n${leaderTodos}\n\n---\n\n## File Search の入力Markdown\n\n${enrichedInput}`;
+    } else if (isPrimaryFileSearcherTask(task)) {
+      enrichedInput = `${enrichedInput}${PRIMARY_FS_LOOP_INSTRUCTION}`;
     } else if (
       isReviewerTask(task) &&
       hasImplementationDependency(task, subTasks) &&
@@ -2238,6 +2407,104 @@ async function runAgentStreamCore(
       result.status = "error";
       result.errorMsg =
         "Coder did not produce a code block. The response only contained an analytical preamble. Output must include at least one fenced code block.";
+    }
+
+    // --- Wave 1 primary file-searcher: 満足するまでループして毎回 Markdown をマージ ---
+    if (
+      isPrimaryFileSearcherTask(task) &&
+      result.status === "success" &&
+      result.output &&
+      opts?.inputOverride === undefined
+    ) {
+      const maxRounds = getPrimaryFileSearchMaxRounds();
+      const rounds: { round: number; markdown: string }[] = [
+        { round: 1, markdown: result.output },
+      ];
+      let satisfaction = extractFileSearchSatisfaction(result.output);
+      logger.info(
+        `[AgentStream] Wave 1 file-searcher round 1: STATUS=${satisfaction.status}`
+      );
+
+      while (
+        satisfaction.status === "incomplete" &&
+        rounds.length < maxRounds
+      ) {
+        const roundNum = rounds.length + 1;
+        const mergedSoFar = mergeFileSearchMarkdown(rounds);
+        const loopInput =
+          `## これまでのラウンドの調査結果（マージ済み Markdown — 重複調査禁止）\n\n${mergedSoFar}\n\n` +
+          `---\n\n## 前ラウンドが指摘した「追加で調査すべき領域」（このラウンドはここを深掘り）\n\n${
+            satisfaction.remainingAreas ||
+            "(指定なし — 自分で読み残しを判断して深掘りしてください)"
+          }\n\n` +
+          `---\n\n## あなたへの元の指示（再掲）\n\n${task.input}${PRIMARY_FS_LOOP_INSTRUCTION}`;
+
+        const separator = `\n\n---\n\n## ラウンド ${roundNum} の追加調査開始（前ラウンドが INCOMPLETE）\n\n`;
+        emit({
+          type: "task_chunk",
+          id: nextId(),
+          taskId: taskIdOf(i),
+          index: i,
+          role: task.role,
+          text: separator,
+        });
+
+        logger.info(
+          `[AgentStream] Wave 1 file-searcher round ${roundNum}/${maxRounds}: 追加調査を実行`
+        );
+        const loopResult = await executeTaskStream(
+          {
+            provider: effectiveProvider,
+            config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
+            input: loopInput,
+            role: { slug: role.slug, name: role.name },
+            mode: task.mode,
+            workspacePath: req.workspacePath,
+            localWorkspaceContext: req.localWorkspaceContext,
+            ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
+          },
+          (text) =>
+            emit({
+              type: "task_chunk",
+              id: nextId(),
+              taskId: taskIdOf(i),
+              index: i,
+              role: task.role,
+              text,
+            }),
+          (text) =>
+            emit({
+              type: "task_thinking_chunk",
+              id: nextId(),
+              taskId: taskIdOf(i),
+              index: i,
+              role: task.role,
+              text,
+            })
+        );
+        if (loopResult.status !== "success" || !loopResult.output) {
+          logger.warn(
+            `[AgentStream] Wave 1 file-searcher round ${roundNum} 失敗 → ループ終了`
+          );
+          break;
+        }
+        rounds.push({ round: roundNum, markdown: loopResult.output });
+        result.durationMs += loopResult.durationMs;
+        satisfaction = extractFileSearchSatisfaction(loopResult.output);
+        logger.info(
+          `[AgentStream] Wave 1 file-searcher round ${roundNum}: STATUS=${satisfaction.status}`
+        );
+      }
+
+      if (rounds.length > 1) {
+        const merged = mergeFileSearchMarkdown(rounds);
+        logger.info(
+          `[AgentStream] Wave 1 file-searcher: ${rounds.length} ラウンドで完了 → マージ Markdown を最終出力に採用 (${merged.length}文字)`
+        );
+        result.output = merged;
+      } else {
+        result.output = mergeFileSearchMarkdown(rounds);
+      }
     }
 
     // Log to DB

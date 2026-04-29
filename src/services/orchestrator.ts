@@ -1193,12 +1193,19 @@ export async function runAgent(
   log(`[Agent] Leader: ${leaderProvider.displayName} (${leaderModelId})`);
   logger.info(`[Agent] Starting session`, { sessionId, projectId: req.projectId });
 
+  // NOTE: Leader の systemPrompt は **常にコード側の LEADER_SYSTEM_PROMPT を使う**。
+  // DB (Role.systemPrompt) に古いプロンプトが残っていると Wave 構造の変更が反映されないため。
+  if (leaderRole.systemPrompt && leaderRole.systemPrompt !== LEADER_SYSTEM_PROMPT) {
+    logger.info(
+      `[Agent] DB の leaderRole.systemPrompt を無視してコード側 LEADER_SYSTEM_PROMPT を使用`
+    );
+  }
   const leaderResult = await executeTask({
     provider: leaderProvider,
     config: { apiKey: leaderApiKey },
     input: augmentLeaderInput(req),
     role: { slug: "leader", name: "Leader" },
-    systemPrompt: leaderRole.systemPrompt ?? LEADER_SYSTEM_PROMPT,
+    systemPrompt: LEADER_SYSTEM_PROMPT,
     chatHistory: req.chatHistory,
   });
 
@@ -2086,13 +2093,20 @@ async function runAgentStreamCore(
   });
 
   // 3. Ask Leader to decompose (streaming)
+  // NOTE: Leader の systemPrompt は **常にコード側の LEADER_SYSTEM_PROMPT を使う**。
+  // DB (Role.systemPrompt) に古いプロンプトが残っていると Wave 構造の変更が反映されないため。
+  if (leaderRole.systemPrompt && leaderRole.systemPrompt !== LEADER_SYSTEM_PROMPT) {
+    logger.info(
+      `[AgentStream] DB の leaderRole.systemPrompt を無視してコード側 LEADER_SYSTEM_PROMPT を使用`
+    );
+  }
   const leaderResult = await executeTaskStream(
     {
       provider: leaderProvider,
       config: { apiKey: leaderApiKey },
       input: augmentLeaderInput(req),
       role: { slug: "leader", name: "Leader" },
-      systemPrompt: leaderRole.systemPrompt ?? LEADER_SYSTEM_PROMPT,
+      systemPrompt: LEADER_SYSTEM_PROMPT,
       chatHistory: req.chatHistory,
     },
     (text) => emit({ type: "leader_chunk", id: nextId(), text })

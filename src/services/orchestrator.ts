@@ -18,7 +18,6 @@ import {
   wrapCoderInput as sharedWrapCoderInput,
   coderOutputHasCode as sharedCoderOutputHasCode,
 } from "./coder-guard";
-import { loadDivisionGuide } from "../utils/division-guide";
 
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
@@ -238,25 +237,19 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 - imager: 画像生成・ビジュアルコンテンツ・イラスト（GPT Image担当）
 - planner: 企画・設計・アーキテクチャ・戦略立案（Gemini担当）
 
-【Leader Todos】Wave 3 → Wave 4 のハンドオフで Leader が自動挿入（tasksには含めない）
-- Leader は file-searcher（初回） / designer / imager / planner の Markdown を受け取り、2回目の File Search に渡す具体的な Todos Markdown を自動生成する。
-
 【Wave 4 — File Search（集中再調査）】Wave 3 に依存
-- file-searcher（**集中再調査**）: Wave 3 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査し、Coder/Writer がそのまま実装できる詳細な Markdown レポートを作成する（GPT担当）
+- file-searcher（**集中再調査**）: Wave 3 の設計・画像・計画を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査し、Coder/Writer がそのまま実装できる詳細な Markdown レポートを作成する（GPT担当）
 
 【Wave 5 — 実装・執筆】Wave 4 の集中再調査に依存
 - coder: コード生成・実装・デバッグ（Claude担当）
 - writer: 文章作成・ドキュメント（Claude担当）
 
-【Leader Review Brief】Wave 5 → Wave 6 のハンドオフで Leader が自動挿入（tasksには含めない）
-- Leader は coder / writer の出力を受け、Reviewer が短時間で評価できる Review Brief を生成する。OK なら Reviewer に渡し、Not OK なら Coder/Writer に差し戻す。
-
-【Wave 6 — レビュー】Wave 5に依存
+【Wave 6 — レビュー】Wave 5に依存（最終ステップ）
 - reviewer: 品質確認・レビュー・改善提案（GPT担当）※ dependsOn には必ず「レビュー対象の coder または writer」のタスク index を含める
 
 【最終統合】reviewer 完了後に自動実行（tasksに含めない）
 
-【オーケストラの自動動作】初回の DAG 完了後、reviewer が Not OK の場合は reviewer → file-searcher（**集中再調査・Wave 4** が指摘を踏まえ再実行）→ coder/writer（修正・改善）→ Leader Review Brief（指摘要約）→ reviewer（再レビュー）のループを reviewer が OK を出すまで（最大20周。環境変数 REVIEWER_CODER_MAX_ROUNDS で変更可、0で無効、上限50）実行します。Brief Gate が Not OK の場合は Coder/Writer のみ再実行します。タスク本数の増減は不要です。
+**重要**: 各タスクは Leader が出した tasks JSON の指示通りに 1 度だけ実行されます。Reviewer ↔ Coder のフィードバックループや、Leader による Todos / Brief Gate の自動挿入はありません。Reviewer の指摘で再修正させたい場合は、必要なタスクをあらかじめ tasks に書いてください。
 
 ## 利用可能なロール一覧
 ideaman, searcher, researcher, file-searcher, designer, imager, planner, coder, writer, reviewer
@@ -267,8 +260,8 @@ ideaman, searcher, researcher, file-searcher, designer, imager, planner, coder, 
 3. **【必須】file-searcher を 2 タスク含めること**:
    - 1 つ目（**Wave 1 = 初回スキャン**）: 配列の **先頭（index 0）** に置く。dependsOn: [] で **単独で先に**実行する。input には「プロジェクト内のすべてのフォルダ・ファイルを読み込んで構造を把握する」ことを必ず含める。
    - 2 つ目（**Wave 4 = 集中再調査**）: dependsOn には Wave 3（designer/imager/planner）の index を含める。input には「Wave 3 の設計を踏まえて、変更対象ファイルと差分を集中的に調査する」ことを必ず含める。
-4. **【必須】Wave 2 には ideaman, searcher, researcher を必ず1タスクずつ含め、すべて dependsOn に Wave 1 file-searcher の index を含めること。Wave 3 には designer, imager, planner を必ず1タスクずつ含め、Wave 1 + Wave 2 のすべての index に依存させること。Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
-5. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること。
+4. **【必須】Wave 2 には ideaman, searcher, researcher を必ず1タスクずつ含め、すべて dependsOn に Wave 1 file-searcher の index を含めること。Wave 3 には designer, imager, planner を必ず1タスクずつ含め、Wave 1 + Wave 2 のすべての index に依存させること。**
+5. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること。Coder/Writer や file-searcher（再調査）に何を読ませて何を作らせたいかは、Leader が input にすべて書き切ること。
 6. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
 7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
 8. 1タスクに複数作業を詰め込まず細かく分割
@@ -292,7 +285,7 @@ ideaman, searcher, researcher, file-searcher, designer, imager, planner, coder, 
     { "role": "designer", "mode": "chat", "input": "既存コードと Wave 2 の調査を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2, 3] },
     { "role": "imager", "mode": "chat", "input": "既存コードと Wave 2 のデザイン方針を元に必要な画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2, 3] },
     { "role": "planner", "mode": "chat", "input": "既存コードと Wave 2 の調査を元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "file-searcher", "mode": "chat", "input": "Wave 3 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する（Wave 4 / 集中再調査）", "reason": "設計後に変更対象を絞り込んで実装の指示書を作るため", "dependsOn": [4, 5, 6] },
+    { "role": "file-searcher", "mode": "chat", "input": "Wave 3 の設計・画像・計画を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する（Wave 4 / 集中再調査）", "reason": "設計後に変更対象を絞り込んで実装の指示書を作るため", "dependsOn": [4, 5, 6] },
     { "role": "coder", "mode": "computer_use", "input": "Wave 4 の集中再調査の指示に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [7] },
     { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [8] }
   ],
@@ -313,47 +306,6 @@ const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです。
 4. 見出し・リスト・表などを適切に使い、読みやすく構造化してください
 5. 冗長な重複は排除し、簡潔で実用的な成果物にまとめてください
 6. ユーザーのリクエストに直接答える形で出力してください`;
-
-const LEADER_TODOS_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。
-ユーザーのリクエストと（あれば）上流エージェントのMarkdownを統合し、File Search エージェントに渡すための実行可能な Todos Markdown を作成してください。
-
-ルール:
-1. 出力は Markdown のみ。
-2. 最初に "## Todos" 見出しを置く。
-3. **File Search はサーチ／リサーチと同じタイミングで実行されるため、まずプロジェクト内のすべてのフォルダ・ファイルを読み込んで全体構造を把握すること** をTodosの先頭に必ず明記する。
-4. その後で、ユーザーのリクエストに関連する重点ファイル、検索キーワード、確認観点、実装/執筆前の注意点を具体化する。
-5. Coder/Writer が後続で迷わないよう、優先順位と完了条件を明示する。
-6. ツール呼び出しやJSONは出力しない。`;
-
-const LEADER_REVIEW_BRIEF_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。
-Coder または Writer の成果物を Leader として品質ゲートで評価し、Reviewer に渡せる状態か判断したうえで、Reviewer 向けの Review Brief をテキストで作成してください。
-
-ルール:
-1. 出力は厳密に次の3行以上のテキスト形式:
-   1行目: "VERDICT: OK" または "VERDICT: Not OK" のいずれか。
-   2行目以降: "FEEDBACK:" セクション（Not OKの場合は File Search に何を再調査させるか具体的に。OKの場合は "(なし)" でよい）。
-   その後: "BRIEF:" セクション。Reviewer に渡す Review Brief を書く。
-2. BRIEF には「ユーザー要求の要点」「実装/執筆の概要」「変更ファイルや主要セクション」「Reviewer に確認してほしい観点」を順に書く。
-3. 成果物がユーザー要求を満たしていない、致命的な欠落・誤り・矛盾がある、テスト/検証が不十分な場合は VERDICT を "Not OK" にする。
-4. コードや本文の全文転載はしない。重要な抜粋のみ。
-5. BRIEF 全体は概ね 100〜400 行に収める。
-6. ツール呼び出しやJSONは出力しない。`;
-
-const LEADER_PROGRESS_CHECK_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。
-Brief Gate ループの進捗を確認し、次の反復に進むべきか、何にフォーカスすべきかを判断してください。
-
-ルール:
-1. 出力は次の3行以上のテキスト形式:
-   1行目: "DECISION: CONTINUE" または "DECISION: ABORT" のいずれか。
-   2行目以降: "FOCUS:" セクション。次の反復で File Search / Coder / Writer に重点的に対応してほしいポイントを箇条書きで書く。
-   その後: "REASON:" セクション。判断の理由を簡潔に書く。
-2. 同じ問題が3回以上繰り返されている、改善が見られない、根本的な要件不一致がある場合は ABORT を選ぶ。
-3. それ以外は CONTINUE を選び、具体的な FOCUS を提示する。
-4. ツール呼び出しやJSONは出力しない。`;
-
-function isFileSearcherTask(task: SubTask): boolean {
-  return normalizeRoleSlug(task.role) === "file-searcher";
-}
 
 /**
  * file-searcher ロールが DB に存在しない場合は自動で作成し、
@@ -411,146 +363,6 @@ async function ensureFileSearcherSetup(
   );
 }
 
-/**
- * Layer 3 の「集中再調査」file-searcher か判定する。
- * Layer 1 の「初回スキャン」file-searcher（dependsOn が空）は Leader Todos を要らないので除外する。
- * オーケストレータの再投入（reviewer feedback ループ）でも override 経由で再実行されるが、
- * その場合は dependsOn は元のまま（Layer 2 deps）が残るので focused と判定される。
- */
-function isFocusedFileSearcherTask(task: SubTask): boolean {
-  if (!isFileSearcherTask(task)) return false;
-  const deps = task.dependsOn || [];
-  return deps.length > 0;
-}
-
-/**
- * Wave 1 の「初回スキャン」file-searcher（dependsOn が空）か判定する。
- * このタスクは「満足するまでループして毎回 Markdown をマージ」する対象。
- */
-function isPrimaryFileSearcherTask(task: SubTask): boolean {
-  if (!isFileSearcherTask(task)) return false;
-  const deps = task.dependsOn || [];
-  return deps.length === 0;
-}
-
-// --- Wave 1 primary file-searcher: 満足するまでのループ ---
-
-/**
- * file-searcher が **満足するまで複数ラウンドで呼ばれる** ことを伝え、
- * Markdown 末尾に「## 調査完了判定」ブロック（COMPLETE / INCOMPLETE + 追加調査領域）を
- * 必ず出力させるための入力末尾追記文。Wave 1 の primary file-searcher にのみ付与する。
- */
-const PRIMARY_FS_LOOP_INSTRUCTION = `
-
----
-
-## 【必須】調査完了判定マーカーの出力ルール
-あなた（Wave 1 の file-searcher）は **満足するまで複数ラウンドで呼び出されます**。今回のラウンドの Markdown 本文を書き終えたら、**必ず最後**に以下のいずれかのブロックを **そのまま** 付けてください。
-
-調査がもう不要なら（プロジェクト全体を把握できた）:
-\`\`\`
-## 調査完了判定
-STATUS: COMPLETE
-\`\`\`
-
-まだ読むべきファイル・確認すべき実装が残っているなら:
-\`\`\`
-## 調査完了判定
-STATUS: INCOMPLETE
-追加で調査すべき領域:
-- <パス / フォルダ / 関数名> : <理由>
-- ...
-\`\`\`
-
-INCOMPLETE のときは、次のラウンドで「これまでにマージされた Markdown」と「追加で調査すべき領域」が渡され、あなたが再度呼ばれます。**すでに読んだ領域は重複調査せず、新しい領域・前ラウンドで読み切れなかった部分だけを深掘り**してください。最終ラウンドでは必ず STATUS: COMPLETE を付けてください。
-`;
-
-function getPrimaryFileSearchMaxRounds(): number {
-  const raw = process.env.PRIMARY_FILE_SEARCH_MAX_ROUNDS;
-  if (raw === undefined || raw === "") return 5;
-  const n = parseInt(raw, 10);
-  if (Number.isNaN(n) || n < 1) return 1;
-  return Math.min(20, n);
-}
-
-/**
- * 出力末尾の「## 調査完了判定」ブロックから、COMPLETE / INCOMPLETE と
- * INCOMPLETE 時の「追加で調査すべき領域」を抽出する。
- * マーカーが見つからなければ COMPLETE（無限ループ防止）。
- */
-function extractFileSearchSatisfaction(output: string): {
-  status: "complete" | "incomplete";
-  remainingAreas: string;
-} {
-  const matches = [...output.matchAll(/##\s*調査完了判定[\s\S]*$/gm)];
-  if (matches.length === 0) return { status: "complete", remainingAreas: "" };
-  const block = matches[matches.length - 1][0];
-  if (!/STATUS:\s*INCOMPLETE/i.test(block)) {
-    return { status: "complete", remainingAreas: "" };
-  }
-  const remainingMatch = block.match(/追加で調査すべき領域[\s\S]*?[:：]\s*\n?([\s\S]*)/);
-  const remainingAreas = remainingMatch ? remainingMatch[1].trim() : "";
-  return { status: "incomplete", remainingAreas };
-}
-
-/**
- * 各ラウンドの Markdown 出力をマージする。
- * 各ラウンドの末尾「## 調査完了判定」ブロックは除去する。
- */
-function mergeFileSearchMarkdown(rounds: { round: number; markdown: string }[]): string {
-  if (rounds.length === 0) return "";
-  const stripMarker = (md: string) =>
-    md.replace(/##\s*調査完了判定[\s\S]*$/gm, "").trim();
-  if (rounds.length === 1) return stripMarker(rounds[0].markdown);
-  const sections = rounds.map(
-    ({ round, markdown }) => `## ラウンド ${round} の調査結果\n\n${stripMarker(markdown)}`
-  );
-  return [
-    "# プロジェクト全体スキャン（複数ラウンド統合 Markdown）",
-    "",
-    `以下は file-searcher が **${rounds.length} ラウンド** にわたり段階的に把握したプロジェクトの全貌をマージしたものです。各ラウンドは前ラウンドの「追加で調査すべき領域」を深掘りしたものです。`,
-    "",
-    ...sections,
-  ].join("\n\n");
-}
-
-function isReviewerTask(task: SubTask): boolean {
-  return normalizeRoleSlug(task.role) === "reviewer";
-}
-
-function hasImplementationDependency(task: SubTask, allTasks: SubTask[]): boolean {
-  const deps = task.dependsOn || [];
-  return deps.some((d) => {
-    const upstream = allTasks[d];
-    if (!upstream) return false;
-    return isImplementationTask(upstream);
-  });
-}
-
-/**
- * Reviewer タスクの dependsOn から、評価対象になる実装者ロールスラグ（coder/writer）を返す。
- * 見つからなければ Reviewer より前にある最も近い実装者をフォールバックで使う。
- * Brief Gate の `.division/<ROLE>.md` ロード（CODER.md / WRITING.md）に利用される。
- */
-function findImplementationRoleSlugForReviewer(
-  reviewer: SubTask,
-  allTasks: SubTask[]
-): string | undefined {
-  const deps = reviewer.dependsOn || [];
-  for (const d of deps) {
-    const t = allTasks[d];
-    if (t && isImplementationTask(t)) return normalizeRoleSlug(t.role);
-  }
-  const reviewerIdx = allTasks.indexOf(reviewer);
-  if (reviewerIdx > 0) {
-    for (let j = reviewerIdx - 1; j >= 0; j--) {
-      const t = allTasks[j];
-      if (isImplementationTask(t)) return normalizeRoleSlug(t.role);
-    }
-  }
-  return undefined;
-}
-
 function buildDependencyMarkdown(
   task: SubTask,
   taskOutputs: string[],
@@ -567,29 +379,12 @@ function buildDependencyMarkdown(
   return contextParts.join("\n\n");
 }
 
-// --- Reviewer ↔ Coder フィードバックループ（初回 DAG 完了後）---
-
-function getReviewerCoderMaxRounds(): number {
-  const raw = process.env.REVIEWER_CODER_MAX_ROUNDS;
-  if (raw === undefined || raw === "") return 20;
-  const n = parseInt(raw, 10);
-  if (Number.isNaN(n) || n < 0) return 0;
-  return Math.min(50, n);
-}
-
 /**
- * 最後の reviewer と、その review 対象にできる coder を解決（reviewer.dependsOn を優先）。
+ * Coder/Writer 相当の「実装タスク」か判定する。`normalizeDiagramFlow` のグルーピングに利用。
  */
 function isImplementationTask(t: SubTask): boolean {
   const role = normalizeRoleSlug(t.role);
   return role === "coder" || role === "writer" || t.mode === "computer_use";
-}
-
-function reviewerLooksOk(reviewText: string): boolean {
-  const text = reviewText.toLowerCase();
-  if (/\bnot\s+ok\b/.test(text) || /not\s+okay/.test(text) || /ng\b/.test(text)) return false;
-  if (text.includes("不合格") || text.includes("要修正") || text.includes("未対応")) return false;
-  return /\bok\b/.test(text) || text.includes("合格") || text.includes("問題なし") || text.includes("承認");
 }
 
 /**
@@ -749,62 +544,6 @@ function normalizeDiagramFlow(tasks: SubTask[]): SubTask[] {
   return ordered;
 }
 
-function findReviewerImplementationFlow(
-  subTasks: SubTask[],
-  getResult: (i: number) => { status: string; output?: string } | null | undefined,
-  taskOutputs: string[]
-): { reviewerIdx: number; implementationIdx: number; fileSearcherIdx: number | null } | null {
-  if (getReviewerCoderMaxRounds() < 1) return null;
-  const reviewerIndices: number[] = [];
-  for (let i = 0; i < subTasks.length; i++) {
-    if (normalizeRoleSlug(subTasks[i].role) === "reviewer") reviewerIndices.push(i);
-  }
-  if (reviewerIndices.length === 0) return null;
-  const reviewerIdx = Math.max(...reviewerIndices);
-  if (getResult(reviewerIdx)?.status !== "success" || !String(taskOutputs[reviewerIdx] ?? "").trim()) {
-    return null;
-  }
-  const revDeps = subTasks[reviewerIdx].dependsOn || [];
-  let implementationIdx = -1;
-  for (const d of revDeps) {
-    if (d < 0 || d >= subTasks.length) continue;
-    const t = subTasks[d];
-    if (isImplementationTask(t)) {
-      implementationIdx = d;
-      break;
-    }
-  }
-  if (implementationIdx < 0) {
-    for (let j = reviewerIdx - 1; j >= 0; j--) {
-      const t = subTasks[j];
-      if (isImplementationTask(t)) {
-        implementationIdx = j;
-        break;
-      }
-    }
-  }
-  if (implementationIdx < 0) return null;
-  if (getResult(implementationIdx)?.status !== "success") return null;
-
-  let fileSearcherIdx: number | null = null;
-  const implDeps = subTasks[implementationIdx].dependsOn || [];
-  for (const d of implDeps) {
-    if (d >= 0 && d < subTasks.length && normalizeRoleSlug(subTasks[d].role) === "file-searcher") {
-      fileSearcherIdx = d;
-      break;
-    }
-  }
-  if (fileSearcherIdx === null) {
-    for (let j = implementationIdx - 1; j >= 0; j--) {
-      if (normalizeRoleSlug(subTasks[j].role) === "file-searcher") {
-        fileSearcherIdx = j;
-        break;
-      }
-    }
-  }
-  return { reviewerIdx, implementationIdx, fileSearcherIdx };
-}
-
 // --- API Key Resolution ---
 
 /** Maps apiType to the env var name and common aliases users might pass */
@@ -920,224 +659,6 @@ function resolveApiKey(
   }
 
   return undefined;
-}
-
-async function createLeaderTodosMarkdown(params: {
-  req: OrchestratorRequest;
-  leaderProvider: {
-    name: string;
-    displayName: string;
-    apiBaseUrl: string;
-    apiType: string;
-    apiEndpoint?: string;
-    modelId: string;
-    toolMap?: unknown;
-  };
-  leaderApiKey?: string;
-  fileSearchInput: string;
-  upstreamMarkdown: string;
-}): Promise<string> {
-  const input = `## ユーザーの元のリクエスト
-${augmentLeaderInput(params.req)}
-
-## 上流エージェントのMarkdown
-${params.upstreamMarkdown || "(上流Markdownなし)"}
-
-## File Search への元の指示
-${params.fileSearchInput}
-
-上記を統合し、File Search に渡す Todos Markdown を作成してください。`;
-
-  const result = await executeTask({
-    provider: { ...params.leaderProvider, toolMap: undefined },
-    config: { apiKey: params.leaderApiKey, maxTokens: 65536 },
-    input,
-    role: { slug: "leader", name: "Leader" },
-    systemPrompt: LEADER_TODOS_SYSTEM_PROMPT,
-    chatHistory: params.req.chatHistory,
-    signal: params.req.signal,
-  });
-
-  if (result.status !== "success" || !result.output.trim()) {
-    logger.warn(`[Agent] Leader Todos generation failed: ${result.errorMsg || "empty output"}`);
-    return `## Todos
-
-- File Search は上流Markdownと元の指示をもとに、関連ファイル、検索キーワード、変更対象、注意点を調査する。
-- 情報が不足している場合は、不足内容をMarkdownに明記する。`;
-  }
-
-  return result.output;
-}
-
-type LeaderProgressCheckResult = {
-  decision: "CONTINUE" | "ABORT";
-  focus: string;
-  reason: string;
-};
-
-function parseLeaderProgressCheck(raw: string): LeaderProgressCheckResult {
-  const text = raw || "";
-  const decisionMatch = text.match(/DECISION\s*:\s*(CONTINUE|ABORT)/i);
-  const focusMatch = text.match(/FOCUS\s*:\s*([\s\S]*?)(?=\n\s*REASON\s*:|$)/i);
-  const reasonMatch = text.match(/REASON\s*:\s*([\s\S]*)$/i);
-  const decision: "CONTINUE" | "ABORT" =
-    decisionMatch && /abort/i.test(decisionMatch[1]) ? "ABORT" : "CONTINUE";
-  const focus = focusMatch ? focusMatch[1].trim() : "";
-  const reason = reasonMatch ? reasonMatch[1].trim() : "";
-  return { decision, focus, reason };
-}
-
-async function createLeaderProgressCheck(params: {
-  req: OrchestratorRequest;
-  leaderProvider: {
-    name: string;
-    displayName: string;
-    apiBaseUrl: string;
-    apiType: string;
-    apiEndpoint?: string;
-    modelId: string;
-    toolMap?: unknown;
-  };
-  leaderApiKey?: string;
-  round: number;
-  maxRounds: number;
-  briefGateHistory: string[];
-  latestImplementation: string;
-}): Promise<LeaderProgressCheckResult> {
-  const historyText = params.briefGateHistory.length === 0
-    ? "(履歴なし)"
-    : params.briefGateHistory
-        .map((entry, idx) => `### Round ${idx + 1}\n${entry}`)
-        .join("\n\n");
-
-  const input = `## ユーザーの元のリクエスト
-${augmentLeaderInput(params.req)}
-
-## 現在のループ状況
-- 反復: ${params.round} / ${params.maxRounds}
-
-## Brief Gate のフィードバック履歴（最新が最後）
-${historyText}
-
-## 直前の Coder/Writer 成果物
-${params.latestImplementation || "(成果物なし)"}
-
-上記を確認し、ループを続行するか中止するかを判断してください。`;
-
-  const result = await executeTask({
-    provider: { ...params.leaderProvider, toolMap: undefined },
-    config: { apiKey: params.leaderApiKey, maxTokens: 16384 },
-    input,
-    role: { slug: "leader", name: "Leader" },
-    systemPrompt: LEADER_PROGRESS_CHECK_SYSTEM_PROMPT,
-    chatHistory: params.req.chatHistory,
-    signal: params.req.signal,
-  });
-
-  if (result.status !== "success" || !result.output.trim()) {
-    logger.warn(`[Agent] Leader Progress Check failed: ${result.errorMsg || "empty output"}`);
-    return { decision: "CONTINUE", focus: "", reason: "Progress check failed; defaulting to continue" };
-  }
-
-  return parseLeaderProgressCheck(result.output);
-}
-
-type LeaderReviewBriefResult = {
-  verdict: "OK" | "Not OK";
-  feedback: string;
-  brief: string;
-};
-
-function parseLeaderReviewBrief(raw: string): LeaderReviewBriefResult {
-  const text = raw || "";
-  const verdictMatch = text.match(/VERDICT\s*:\s*(Not\s+OK|OK)/i);
-  const feedbackMatch = text.match(/FEEDBACK\s*:\s*([\s\S]*?)(?=\n\s*BRIEF\s*:|$)/i);
-  const briefMatch = text.match(/BRIEF\s*:\s*([\s\S]*)$/i);
-
-  let verdict: "OK" | "Not OK" = "OK";
-  if (verdictMatch) {
-    verdict = /not\s+ok/i.test(verdictMatch[1]) ? "Not OK" : "OK";
-  }
-
-  const feedback = feedbackMatch ? feedbackMatch[1].trim() : "";
-  const brief = briefMatch ? briefMatch[1].trim() : text.trim();
-  return { verdict, feedback, brief };
-}
-
-async function createLeaderReviewBriefText(params: {
-  req: OrchestratorRequest;
-  leaderProvider: {
-    name: string;
-    displayName: string;
-    apiBaseUrl: string;
-    apiType: string;
-    apiEndpoint?: string;
-    modelId: string;
-    toolMap?: unknown;
-  };
-  leaderApiKey?: string;
-  reviewerInput: string;
-  implementationOutputs: string;
-  /**
-   * 評価対象の実装者ロールスラグ（例: "coder" / "writer"）。
-   * 指定されると `.division/<ROLE>.md`（例: CODER.md / WRITING.md）を読み込み、
-   * Brief Gate の入力先頭にロールガイドとして連結する。
-   * ワークスペース側 `.division/` を最優先、無ければ Division API リポジトリ同梱版にフォールバック。
-   */
-  implementationRoleSlug?: string;
-}): Promise<LeaderReviewBriefResult> {
-  const guide = params.implementationRoleSlug
-    ? loadDivisionGuide(params.implementationRoleSlug, params.req.workspacePath)
-    : null;
-
-  const guideSection = guide
-    ? `## ${params.implementationRoleSlug?.toUpperCase()} ロールガイド（.division/${guide.filename}）
-
-> 以下は実装者ロールに紐づく評価基準書です。Brief Gate はこのガイドを優先的に参照し、
-> VERDICT / FEEDBACK / BRIEF を判定してください。
-
-${guide.content.trim()}
-
----
-
-`
-    : "";
-
-  const implementerLabel = params.implementationRoleSlug
-    ? params.implementationRoleSlug.charAt(0).toUpperCase() + params.implementationRoleSlug.slice(1)
-    : "Coder/Writer";
-
-  const input = `${guideSection}## ユーザーの元のリクエスト
-${augmentLeaderInput(params.req)}
-
-## ${implementerLabel} の成果物
-${params.implementationOutputs || "(実装/執筆出力なし)"}
-
-## Reviewer への元の指示
-${params.reviewerInput}
-
-上記を品質ゲートとして評価し、VERDICT / FEEDBACK / BRIEF の形式で出力してください。`;
-
-  const result = await executeTask({
-    provider: { ...params.leaderProvider, toolMap: undefined },
-    config: { apiKey: params.leaderApiKey, maxTokens: 65536 },
-    input,
-    role: { slug: "leader", name: "Leader" },
-    systemPrompt: LEADER_REVIEW_BRIEF_SYSTEM_PROMPT,
-    chatHistory: params.req.chatHistory,
-    signal: params.req.signal,
-  });
-
-  if (result.status !== "success" || !result.output.trim()) {
-    logger.warn(`[Agent] Leader Review Brief generation failed: ${result.errorMsg || "empty output"}`);
-    return {
-      verdict: "OK",
-      feedback: "",
-      brief: `# Review Brief\n\n- ユーザー要求の要点: 元のリクエストに従って実装/執筆が行われた。\n- 実装/執筆の概要: 上流出力を参照のこと。\n- Reviewer に確認してほしい観点: 元の指示との整合性、品質、欠落の有無。`,
-    };
-  }
-
-  return parseLeaderReviewBrief(result.output);
 }
 
 /**
@@ -1415,64 +936,14 @@ export async function runAgent(
     taskProviderNames[i] = provider.displayName;
 
     let enrichedInput: string;
-    let upstreamMarkdownForTodos = "";
     if (opts?.inputOverride !== undefined) {
       enrichedInput = opts.inputOverride;
-      upstreamMarkdownForTodos = opts.inputOverride;
     } else {
-      // Build input with context from dependency tasks
       enrichedInput = task.input;
-      upstreamMarkdownForTodos = buildDependencyMarkdown(task, taskOutputs, taskRoleNames, taskProviderNames);
-      if (upstreamMarkdownForTodos) {
-        enrichedInput = `## これまでの他のエージェントの作業結果:\n${upstreamMarkdownForTodos}\n\n## あなたへの指示:\n${task.input}`;
+      const upstreamMarkdown = buildDependencyMarkdown(task, taskOutputs, taskRoleNames, taskProviderNames);
+      if (upstreamMarkdown) {
+        enrichedInput = `## これまでの他のエージェントの作業結果:\n${upstreamMarkdown}\n\n## あなたへの指示:\n${task.input}`;
       }
-    }
-
-    if (isFocusedFileSearcherTask(task)) {
-      log(`[Agent] Leader Todos: 集中再調査用のTodosを生成（Layer 3 file-searcher）`);
-      const leaderTodos = await createLeaderTodosMarkdown({
-        req,
-        leaderProvider,
-        leaderApiKey,
-        fileSearchInput: enrichedInput,
-        upstreamMarkdown: upstreamMarkdownForTodos,
-      });
-      enrichedInput = `## Leader Todos\n\n${leaderTodos}\n\n---\n\n## File Search の入力Markdown\n\n${enrichedInput}`;
-    } else if (isPrimaryFileSearcherTask(task)) {
-      log(`[Agent] Wave 1 file-searcher: 初回スキャン（満足するまでループ可）`);
-      enrichedInput = `${enrichedInput}${PRIMARY_FS_LOOP_INSTRUCTION}`;
-    } else if (isFileSearcherTask(task)) {
-      log(`[Agent] file-searcher: Leader Todos をスキップ`);
-    } else if (
-      isReviewerTask(task) &&
-      hasImplementationDependency(task, subTasks) &&
-      opts?.inputOverride === undefined
-    ) {
-      log(`[Agent] Leader Brief Gate: Coder/Writer の成果物を判定`);
-      const implementationRoleSlugForBrief = findImplementationRoleSlugForReviewer(task, subTasks);
-      const briefResult = await createLeaderReviewBriefText({
-        req,
-        leaderProvider,
-        leaderApiKey,
-        reviewerInput: task.input,
-        implementationOutputs: upstreamMarkdownForTodos,
-        implementationRoleSlug: implementationRoleSlugForBrief,
-      });
-      if (briefResult.verdict === "Not OK") {
-        log(`[Agent] Brief Gate Not OK → Reviewer をスキップし File Search への再調査要求を出力`);
-        const synthOutput = `VERDICT: Not OK (Brief Gate)\n\n## Brief Gate からのフィードバック\n\n${briefResult.feedback || "(フィードバック未提供)"}\n\n## 参考: 暫定 Brief\n\n${briefResult.brief}`;
-        results[i] = {
-          ...task,
-          provider: `${leaderProvider.displayName} (Brief Gate)`,
-          model: leaderProvider.modelId,
-          output: synthOutput,
-          status: "success",
-          durationMs: 0,
-        };
-        taskOutputs[i] = synthOutput;
-        return;
-      }
-      enrichedInput = `## Leader Review Brief\n\n${briefResult.brief}\n\n---\n\n## Reviewer への元の指示\n\n${task.input}`;
     }
 
     enrichedInput = attachLocalWorkspaceToSubtaskInput(
@@ -1520,80 +991,6 @@ export async function runAgent(
       result.status = "error";
       result.errorMsg =
         "Coder did not produce a code block. The response only contained an analytical preamble. Output must include at least one fenced code block.";
-    }
-
-    // --- Wave 1 primary file-searcher: 満足するまでループして毎回 Markdown をマージ ---
-    if (
-      isPrimaryFileSearcherTask(task) &&
-      result.status === "success" &&
-      result.output &&
-      opts?.inputOverride === undefined
-    ) {
-      const maxRounds = getPrimaryFileSearchMaxRounds();
-      const rounds: { round: number; markdown: string }[] = [
-        { round: 1, markdown: result.output },
-      ];
-      let satisfaction = extractFileSearchSatisfaction(result.output);
-      log(
-        `[Agent] Wave 1 file-searcher round 1: STATUS=${satisfaction.status}${
-          satisfaction.status === "incomplete" ? " → 追加ラウンドを実行" : ""
-        }`
-      );
-
-      while (
-        satisfaction.status === "incomplete" &&
-        rounds.length < maxRounds
-      ) {
-        const roundNum = rounds.length + 1;
-        const mergedSoFar = mergeFileSearchMarkdown(rounds);
-        const loopInput =
-          `## これまでのラウンドの調査結果（マージ済み Markdown — 重複調査禁止）\n\n${mergedSoFar}\n\n` +
-          `---\n\n## 前ラウンドが指摘した「追加で調査すべき領域」（このラウンドはここを深掘り）\n\n${
-            satisfaction.remainingAreas ||
-            "(指定なし — 自分で読み残しを判断して深掘りしてください)"
-          }\n\n` +
-          `---\n\n## あなたへの元の指示（再掲）\n\n${task.input}${PRIMARY_FS_LOOP_INSTRUCTION}`;
-
-        log(
-          `[Agent] Wave 1 file-searcher round ${roundNum}/${maxRounds}: 追加調査を実行`
-        );
-        const loopResult = await executeTask({
-          provider: effectiveProvider,
-          config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-          input: loopInput,
-          role: { slug: role.slug, name: role.name },
-          mode: task.mode,
-          workspacePath: req.workspacePath,
-          localWorkspaceContext: req.localWorkspaceContext,
-          ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
-          signal: req.signal,
-        });
-        if (loopResult.status !== "success" || !loopResult.output) {
-          log(
-            `[Agent] Wave 1 file-searcher round ${roundNum} 失敗 → ループ終了 (${
-              loopResult.errorMsg || "unknown"
-            })`
-          );
-          break;
-        }
-        rounds.push({ round: roundNum, markdown: loopResult.output });
-        result.durationMs += loopResult.durationMs;
-        satisfaction = extractFileSearchSatisfaction(loopResult.output);
-        log(
-          `[Agent] Wave 1 file-searcher round ${roundNum}: STATUS=${satisfaction.status}`
-        );
-      }
-
-      if (rounds.length > 1) {
-        const merged = mergeFileSearchMarkdown(rounds);
-        log(
-          `[Agent] Wave 1 file-searcher: ${rounds.length} ラウンドで完了 → マージ Markdown を最終出力に採用 (${merged.length}文字)`
-        );
-        result.output = merged;
-      } else if (satisfaction.status === "complete") {
-        // 1 ラウンドで完了。マーカーを取り除いてからマージ済み Markdown として保存。
-        result.output = mergeFileSearchMarkdown(rounds);
-      }
     }
 
     if (result.status === "success") {
@@ -1686,127 +1083,8 @@ export async function runAgent(
     }
   }
 
-  // 4b. 2段階ゲート フィードバックループ
-  //   Brief Gate Not OK → 進捗確認 Leader → File Search 再調査（Todos 再生成なし）
-  //   Reviewer Gate Not OK → File Search 再調査（Todos 再生成あり）
-  const maxReviewRounds = getReviewerCoderMaxRounds();
-  if (maxReviewRounds > 0) {
-    const pair = findReviewerImplementationFlow(subTasks, (i) => results[i], taskOutputs);
-    if (pair) {
-      const { reviewerIdx, implementationIdx, fileSearcherIdx } = pair;
-      const briefGateHistory: string[] = [];
-      let progressFocus = "";
-      for (let round = 1; round <= maxReviewRounds; round++) {
-        const reviewerOutput = String(taskOutputs[reviewerIdx] ?? "");
-        if (!reviewerOutput.trim()) break;
-
-        const briefGateFailed = /^VERDICT:\s*Not\s+OK\s*\(Brief Gate\)/i.test(reviewerOutput);
-
-        if (briefGateFailed) {
-          briefGateHistory.push(reviewerOutput);
-          // 進捗確認 Leader: 同じ問題の繰り返しなどを検出
-          if (briefGateHistory.length >= 2) {
-            log(`[Agent] Round ${round}/${maxReviewRounds}: Brief Gate ループの進捗確認 Leader を実行`);
-            const progress = await createLeaderProgressCheck({
-              req,
-              leaderProvider,
-              leaderApiKey,
-              round,
-              maxRounds: maxReviewRounds,
-              briefGateHistory,
-              latestImplementation: String(taskOutputs[implementationIdx] ?? ""),
-            });
-            if (progress.decision === "ABORT") {
-              log(`[Agent] Progress Check ABORT → ループ終了。理由: ${progress.reason}`);
-              break;
-            }
-            progressFocus = progress.focus;
-            log(`[Agent] Progress Check CONTINUE。FOCUS: ${progressFocus.substring(0, 200)}`);
-          }
-          log(`[Agent] Round ${round}/${maxReviewRounds}: Brief Gate Not OK → File Search に再調査要求（Todos 再生成なし）`);
-          if (fileSearcherIdx !== null) {
-            const focusBlock = progressFocus ? `\n\n## 進捗確認 Leader からの FOCUS\n\n${progressFocus}\n` : "";
-            // Layer 2 (designer / imager / planner) の最新 Markdown を再投入。
-            // Leader Todos の再生成は upstreamMarkdownForTodos = override をそのまま使うので、
-            // ここに含めれば Layer 2 も読み直される。
-            const layer2Markdown = buildDependencyMarkdown(
-              subTasks[fileSearcherIdx],
-              taskOutputs,
-              taskRoleNames,
-              taskProviderNames
-            );
-            const layer2Block = layer2Markdown
-              ? `\n\n## Layer 2 の最新成果物（designer / imager / planner Markdown）\n\n${layer2Markdown}`
-              : "";
-            const fileSearchOverride = `## Brief Gate からの再調査要求\n\n${reviewerOutput}${focusBlock}${layer2Block}\n\n---\n\n## 直前の成果物（Coder/Writer）\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示（Todos は変更不要、不足情報のみ補完）\n\n${subTasks[fileSearcherIdx].input}`;
-            await executeSubTaskNonStream(fileSearcherIdx, { inputOverride: fileSearchOverride });
-            if (results[fileSearcherIdx]?.status !== "success") break;
-          }
-        } else if (!reviewerLooksOk(reviewerOutput)) {
-          briefGateHistory.length = 0;
-          progressFocus = "";
-          log(`[Agent] Round ${round}/${maxReviewRounds}: Reviewer Not OK → File Search に再調査要求（Todos 再生成あり）`);
-          if (fileSearcherIdx !== null) {
-            // Reviewer Not OK で Todos を再生成する際、Layer 2（designer / imager / planner）の
-            // 最新 Markdown を必ず再読込させる。これがないと Leader Todos が設計を見ずに作られる。
-            const layer2Markdown = buildDependencyMarkdown(
-              subTasks[fileSearcherIdx],
-              taskOutputs,
-              taskRoleNames,
-              taskProviderNames
-            );
-            const layer2Block = layer2Markdown
-              ? `\n\n## Layer 2 の最新成果物（designer / imager / planner Markdown — Todos 再生成時にこれを必ず取り込むこと）\n\n${layer2Markdown}`
-              : "";
-            const fileSearchOverride = `## Reviewer からの指摘（Todos を再生成して再調査してください）\n\n${reviewerOutput}${layer2Block}\n\n---\n\n## 直前の成果物（Coder/Writer）\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示\n\n${subTasks[fileSearcherIdx].input}`;
-            await executeSubTaskNonStream(fileSearcherIdx, { inputOverride: fileSearchOverride });
-            if (results[fileSearcherIdx]?.status !== "success") break;
-          }
-        } else {
-          log(`[Agent] Round ${round}/${maxReviewRounds}: Reviewer OK → ループ終了`);
-          break;
-        }
-
-        const latestFileSearch = fileSearcherIdx !== null ? taskOutputs[fileSearcherIdx] : "";
-        const focusBlock = briefGateFailed && progressFocus ? `\n\n## 進捗確認 Leader からの FOCUS\n\n${progressFocus}\n` : "";
-        const implementationOverride = `## ${briefGateFailed ? "Brief Gate" : "Reviewer"} からの指摘（修正・改善してください）\n\n${reviewerOutput}${focusBlock}\n\n---\n\n## 再調査された File Search Markdown\n\n${latestFileSearch}\n\n---\n\n## 直前のあなたの成果\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元のタスク指示\n\n${subTasks[implementationIdx].input}`;
-        await executeSubTaskNonStream(implementationIdx, { inputOverride: implementationOverride });
-        if (results[implementationIdx]?.status !== "success") break;
-
-        // Brief Gate を再評価
-        const upstreamMarkdownForGate = buildDependencyMarkdown(
-          subTasks[reviewerIdx],
-          taskOutputs,
-          taskRoleNames,
-          taskProviderNames
-        );
-        const briefResult = await createLeaderReviewBriefText({
-          req,
-          leaderProvider,
-          leaderApiKey,
-          reviewerInput: subTasks[reviewerIdx].input,
-          implementationOutputs: upstreamMarkdownForGate,
-          implementationRoleSlug: normalizeRoleSlug(subTasks[implementationIdx].role),
-        });
-
-        if (briefResult.verdict === "Not OK") {
-          const synthOutput = `VERDICT: Not OK (Brief Gate)\n\n## Brief Gate からのフィードバック\n\n${briefResult.feedback || "(フィードバック未提供)"}\n\n## 参考: 暫定 Brief\n\n${briefResult.brief}`;
-          results[reviewerIdx] = {
-            ...subTasks[reviewerIdx],
-            provider: `${leaderProvider.displayName} (Brief Gate)`,
-            model: leaderProvider.modelId,
-            output: synthOutput,
-            status: "success",
-            durationMs: 0,
-          };
-          taskOutputs[reviewerIdx] = synthOutput;
-        } else {
-          const reviewerOverride = `## Leader Review Brief\n\n${briefResult.brief}\n\n---\n\n## 再レビュー対象: 指摘に対応して更新した成果\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 参照した File Search Markdown\n\n${latestFileSearch}\n\n---\n\n## あなたのレビュー観点（元の指示）\n\n${subTasks[reviewerIdx].input}`;
-          await executeSubTaskNonStream(reviewerIdx, { inputOverride: reviewerOverride });
-        }
-      }
-    }
-  }
+  // [strict-mode] Reviewer ↔ Coder/Writer ↔ File Search の自動フィードバックループは廃止。
+  // Leader が出した tasks JSON だけで実行し、Reviewer は通常のタスクとして 1 度だけ走る。
 
   // 5. Synthesis step — collect all outputs and pass to Coder/Writer
   const filledResults = results.filter(Boolean);
@@ -2360,82 +1638,14 @@ async function runAgentStreamCore(
     taskProviderNames[i] = provider.displayName;
 
     let enrichedInput: string;
-    let upstreamMarkdownForTodos = "";
     if (opts?.inputOverride !== undefined) {
       enrichedInput = opts.inputOverride;
-      upstreamMarkdownForTodos = opts.inputOverride;
     } else {
-      // Build enriched input with context from dependency tasks
       enrichedInput = task.input;
-      upstreamMarkdownForTodos = buildDependencyMarkdown(task, taskOutputs, taskRoleNames, taskProviderNames);
-      if (upstreamMarkdownForTodos) {
-        enrichedInput = `## これまでの他のエージェントの作業結果:\n${upstreamMarkdownForTodos}\n\n## あなたへの指示:\n${task.input}`;
+      const upstreamMarkdown = buildDependencyMarkdown(task, taskOutputs, taskRoleNames, taskProviderNames);
+      if (upstreamMarkdown) {
+        enrichedInput = `## これまでの他のエージェントの作業結果:\n${upstreamMarkdown}\n\n## あなたへの指示:\n${task.input}`;
       }
-    }
-
-    if (isFocusedFileSearcherTask(task)) {
-      const leaderTodos = await createLeaderTodosMarkdown({
-        req,
-        leaderProvider,
-        leaderApiKey,
-        fileSearchInput: enrichedInput,
-        upstreamMarkdown: upstreamMarkdownForTodos,
-      });
-      enrichedInput = `## Leader Todos\n\n${leaderTodos}\n\n---\n\n## File Search の入力Markdown\n\n${enrichedInput}`;
-    } else if (isPrimaryFileSearcherTask(task)) {
-      enrichedInput = `${enrichedInput}${PRIMARY_FS_LOOP_INSTRUCTION}`;
-    } else if (
-      isReviewerTask(task) &&
-      hasImplementationDependency(task, subTasks) &&
-      opts?.inputOverride === undefined
-    ) {
-      const implementationRoleSlugForBriefStream = findImplementationRoleSlugForReviewer(task, subTasks);
-      const briefResult = await createLeaderReviewBriefText({
-        req,
-        leaderProvider,
-        leaderApiKey,
-        reviewerInput: task.input,
-        implementationOutputs: upstreamMarkdownForTodos,
-        implementationRoleSlug: implementationRoleSlugForBriefStream,
-      });
-      if (briefResult.verdict === "Not OK") {
-        const synthOutput = `VERDICT: Not OK (Brief Gate)\n\n## Brief Gate からのフィードバック\n\n${briefResult.feedback || "(フィードバック未提供)"}\n\n## 参考: 暫定 Brief\n\n${briefResult.brief}`;
-        emit({
-          type: "task_start",
-          id: nextId(),
-          taskId: taskIdOf(i),
-          index: i,
-          total: subTasks.length,
-          role: task.role,
-          provider: `${leaderProvider.displayName} (Brief Gate)`,
-          model: leaderProvider.modelId,
-          input: opts?.inputOverride ?? task.input,
-          mode: task.mode,
-        });
-        emit({
-          type: "task_done",
-          id: nextId(),
-          taskId: taskIdOf(i),
-          index: i,
-          role: task.role,
-          provider: `${leaderProvider.displayName} (Brief Gate)`,
-          model: leaderProvider.modelId,
-          output: synthOutput,
-          status: "success",
-          durationMs: 0,
-        });
-        taskResults[i] = {
-          role: task.role,
-          provider: `${leaderProvider.displayName} (Brief Gate)`,
-          model: leaderProvider.modelId,
-          output: synthOutput,
-          status: "success",
-          durationMs: 0,
-        };
-        taskOutputs[i] = synthOutput;
-        return;
-      }
-      enrichedInput = `## Leader Review Brief\n\n${briefResult.brief}\n\n---\n\n## Reviewer への元の指示\n\n${task.input}`;
     }
 
     enrichedInput = attachLocalWorkspaceToSubtaskInput(
@@ -2494,105 +1704,6 @@ async function runAgentStreamCore(
       result.status = "error";
       result.errorMsg =
         "Coder did not produce a code block. The response only contained an analytical preamble. Output must include at least one fenced code block.";
-    }
-
-    // --- Wave 1 primary file-searcher: 満足するまでループして毎回 Markdown をマージ ---
-    if (
-      isPrimaryFileSearcherTask(task) &&
-      result.status === "success" &&
-      result.output &&
-      opts?.inputOverride === undefined
-    ) {
-      const maxRounds = getPrimaryFileSearchMaxRounds();
-      const rounds: { round: number; markdown: string }[] = [
-        { round: 1, markdown: result.output },
-      ];
-      let satisfaction = extractFileSearchSatisfaction(result.output);
-      logger.info(
-        `[AgentStream] Wave 1 file-searcher round 1: STATUS=${satisfaction.status}`
-      );
-
-      while (
-        satisfaction.status === "incomplete" &&
-        rounds.length < maxRounds
-      ) {
-        const roundNum = rounds.length + 1;
-        const mergedSoFar = mergeFileSearchMarkdown(rounds);
-        const loopInput =
-          `## これまでのラウンドの調査結果（マージ済み Markdown — 重複調査禁止）\n\n${mergedSoFar}\n\n` +
-          `---\n\n## 前ラウンドが指摘した「追加で調査すべき領域」（このラウンドはここを深掘り）\n\n${
-            satisfaction.remainingAreas ||
-            "(指定なし — 自分で読み残しを判断して深掘りしてください)"
-          }\n\n` +
-          `---\n\n## あなたへの元の指示（再掲）\n\n${task.input}${PRIMARY_FS_LOOP_INSTRUCTION}`;
-
-        const separator = `\n\n---\n\n## ラウンド ${roundNum} の追加調査開始（前ラウンドが INCOMPLETE）\n\n`;
-        emit({
-          type: "task_chunk",
-          id: nextId(),
-          taskId: taskIdOf(i),
-          index: i,
-          role: task.role,
-          text: separator,
-        });
-
-        logger.info(
-          `[AgentStream] Wave 1 file-searcher round ${roundNum}/${maxRounds}: 追加調査を実行`
-        );
-        const loopResult = await executeTaskStream(
-          {
-            provider: effectiveProvider,
-            config: { apiKey, ...(roleMaxTokens ? { maxTokens: roleMaxTokens } : {}) },
-            input: loopInput,
-            role: { slug: role.slug, name: role.name },
-            mode: task.mode,
-            workspacePath: req.workspacePath,
-            localWorkspaceContext: req.localWorkspaceContext,
-            ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
-            signal: req.signal,
-          },
-          (text) =>
-            emit({
-              type: "task_chunk",
-              id: nextId(),
-              taskId: taskIdOf(i),
-              index: i,
-              role: task.role,
-              text,
-            }),
-          (text) =>
-            emit({
-              type: "task_thinking_chunk",
-              id: nextId(),
-              taskId: taskIdOf(i),
-              index: i,
-              role: task.role,
-              text,
-            })
-        );
-        if (loopResult.status !== "success" || !loopResult.output) {
-          logger.warn(
-            `[AgentStream] Wave 1 file-searcher round ${roundNum} 失敗 → ループ終了`
-          );
-          break;
-        }
-        rounds.push({ round: roundNum, markdown: loopResult.output });
-        result.durationMs += loopResult.durationMs;
-        satisfaction = extractFileSearchSatisfaction(loopResult.output);
-        logger.info(
-          `[AgentStream] Wave 1 file-searcher round ${roundNum}: STATUS=${satisfaction.status}`
-        );
-      }
-
-      if (rounds.length > 1) {
-        const merged = mergeFileSearchMarkdown(rounds);
-        logger.info(
-          `[AgentStream] Wave 1 file-searcher: ${rounds.length} ラウンドで完了 → マージ Markdown を最終出力に採用 (${merged.length}文字)`
-        );
-        result.output = merged;
-      } else {
-        result.output = mergeFileSearchMarkdown(rounds);
-      }
     }
 
     // Log to DB
@@ -2722,129 +1833,8 @@ async function runAgentStreamCore(
     waveNum++;
   }
 
-  // 5b. 2段階ゲート フィードバックループ
-  //   Brief Gate Not OK → 進捗確認 Leader → File Search 再調査（Todos 再生成なし）
-  //   Reviewer Gate Not OK → File Search 再調査（Todos 再生成あり）
-  const maxReviewRoundsStream = getReviewerCoderMaxRounds();
-  if (maxReviewRoundsStream > 0) {
-    const pairS = findReviewerImplementationFlow(subTasks, (i) => taskResults[i], taskOutputs);
-    if (pairS) {
-      const { reviewerIdx, implementationIdx, fileSearcherIdx } = pairS;
-      const briefGateHistoryS: string[] = [];
-      let progressFocusS = "";
-      for (let round = 1; round <= maxReviewRoundsStream; round++) {
-        const reviewerOutput = String(taskOutputs[reviewerIdx] ?? "");
-        if (!reviewerOutput.trim()) break;
-
-        const briefGateFailed = /^VERDICT:\s*Not\s+OK\s*\(Brief Gate\)/i.test(reviewerOutput);
-
-        if (briefGateFailed) {
-          briefGateHistoryS.push(reviewerOutput);
-          if (briefGateHistoryS.length >= 2) {
-            logger.info(
-              `[Agent] Round ${round}/${maxReviewRoundsStream}: Brief Gate ループの進捗確認 Leader を実行`
-            );
-            const progressS = await createLeaderProgressCheck({
-              req,
-              leaderProvider,
-              leaderApiKey,
-              round,
-              maxRounds: maxReviewRoundsStream,
-              briefGateHistory: briefGateHistoryS,
-              latestImplementation: String(taskOutputs[implementationIdx] ?? ""),
-            });
-            if (progressS.decision === "ABORT") {
-              logger.info(`[Agent] Progress Check ABORT → ループ終了。理由: ${progressS.reason}`);
-              break;
-            }
-            progressFocusS = progressS.focus;
-            logger.info(`[Agent] Progress Check CONTINUE。FOCUS: ${progressFocusS.substring(0, 200)}`);
-          }
-          logger.info(
-            `[Agent] Round ${round}/${maxReviewRoundsStream}: Brief Gate Not OK → File Search 再調査（Todos 再生成なし）`
-          );
-          if (fileSearcherIdx !== null) {
-            const focusBlockS = progressFocusS ? `\n\n## 進捗確認 Leader からの FOCUS\n\n${progressFocusS}\n` : "";
-            // Layer 2 (designer / imager / planner) の最新 Markdown を再投入。
-            const layer2MarkdownS = buildDependencyMarkdown(
-              subTasks[fileSearcherIdx],
-              taskOutputs,
-              taskRoleNames,
-              taskProviderNames
-            );
-            const layer2BlockS = layer2MarkdownS
-              ? `\n\n## Layer 2 の最新成果物（designer / imager / planner Markdown）\n\n${layer2MarkdownS}`
-              : "";
-            const fileSearchOverrideS = `## Brief Gate からの再調査要求\n\n${reviewerOutput}${focusBlockS}${layer2BlockS}\n\n---\n\n## 直前の成果物（Coder/Writer）\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示（Todos は変更不要、不足情報のみ補完）\n\n${subTasks[fileSearcherIdx].input}`;
-            await executeSubTask(fileSearcherIdx, { inputOverride: fileSearchOverrideS });
-            if (taskResults[fileSearcherIdx]?.status !== "success") break;
-          }
-        } else if (!reviewerLooksOk(reviewerOutput)) {
-          briefGateHistoryS.length = 0;
-          progressFocusS = "";
-          logger.info(
-            `[Agent] Round ${round}/${maxReviewRoundsStream}: Reviewer Not OK → File Search 再調査（Todos 再生成あり）`
-          );
-          if (fileSearcherIdx !== null) {
-            // Reviewer Not OK で Todos を再生成する際、Layer 2（designer / imager / planner）の
-            // 最新 Markdown を必ず再読込させる。
-            const layer2MarkdownS = buildDependencyMarkdown(
-              subTasks[fileSearcherIdx],
-              taskOutputs,
-              taskRoleNames,
-              taskProviderNames
-            );
-            const layer2BlockS = layer2MarkdownS
-              ? `\n\n## Layer 2 の最新成果物（designer / imager / planner Markdown — Todos 再生成時にこれを必ず取り込むこと）\n\n${layer2MarkdownS}`
-              : "";
-            const fileSearchOverrideS = `## Reviewer からの指摘（Todos を再生成して再調査してください）\n\n${reviewerOutput}${layer2BlockS}\n\n---\n\n## 直前の成果物（Coder/Writer）\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元の File Search 指示\n\n${subTasks[fileSearcherIdx].input}`;
-            await executeSubTask(fileSearcherIdx, { inputOverride: fileSearchOverrideS });
-            if (taskResults[fileSearcherIdx]?.status !== "success") break;
-          }
-        } else {
-          logger.info(`[Agent] Round ${round}/${maxReviewRoundsStream}: Reviewer OK → ループ終了`);
-          break;
-        }
-
-        const latestFileSearchS = fileSearcherIdx !== null ? taskOutputs[fileSearcherIdx] : "";
-        const focusBlockImplS = briefGateFailed && progressFocusS ? `\n\n## 進捗確認 Leader からの FOCUS\n\n${progressFocusS}\n` : "";
-        const implementationOverrideS = `## ${briefGateFailed ? "Brief Gate" : "Reviewer"} からの指摘（修正・改善してください）\n\n${reviewerOutput}${focusBlockImplS}\n\n---\n\n## 再調査された File Search Markdown\n\n${latestFileSearchS}\n\n---\n\n## 直前のあなたの成果\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 元のタスク指示\n\n${subTasks[implementationIdx].input}`;
-        await executeSubTask(implementationIdx, { inputOverride: implementationOverrideS });
-        if (taskResults[implementationIdx]?.status !== "success") break;
-
-        const upstreamMarkdownForGateS = buildDependencyMarkdown(
-          subTasks[reviewerIdx],
-          taskOutputs,
-          taskRoleNames,
-          taskProviderNames
-        );
-        const briefResultS = await createLeaderReviewBriefText({
-          req,
-          leaderProvider,
-          leaderApiKey,
-          reviewerInput: subTasks[reviewerIdx].input,
-          implementationOutputs: upstreamMarkdownForGateS,
-          implementationRoleSlug: normalizeRoleSlug(subTasks[implementationIdx].role),
-        });
-
-        if (briefResultS.verdict === "Not OK") {
-          const synthOutput = `VERDICT: Not OK (Brief Gate)\n\n## Brief Gate からのフィードバック\n\n${briefResultS.feedback || "(フィードバック未提供)"}\n\n## 参考: 暫定 Brief\n\n${briefResultS.brief}`;
-          taskResults[reviewerIdx] = {
-            role: subTasks[reviewerIdx].role,
-            provider: `${leaderProvider.displayName} (Brief Gate)`,
-            model: leaderProvider.modelId,
-            output: synthOutput,
-            status: "success",
-            durationMs: 0,
-          };
-          taskOutputs[reviewerIdx] = synthOutput;
-        } else {
-          const reviewerOverrideS = `## Leader Review Brief\n\n${briefResultS.brief}\n\n---\n\n## 再レビュー対象: 指摘に対応して更新した成果\n\n${taskOutputs[implementationIdx]}\n\n---\n\n## 参照した File Search Markdown\n\n${latestFileSearchS}\n\n---\n\n## あなたのレビュー観点（元の指示）\n\n${subTasks[reviewerIdx].input}`;
-          await executeSubTask(reviewerIdx, { inputOverride: reviewerOverrideS });
-        }
-      }
-    }
-  }
+  // [strict-mode] Reviewer ↔ Coder/Writer ↔ File Search の自動フィードバックループは廃止。
+  // Leader が出した tasks JSON だけで実行し、Reviewer は通常のタスクとして 1 度だけ走る。
 
   // 6. Synthesis step — collect all outputs and pass to Coder/Writer
   const filledResults = taskResults.filter(Boolean);

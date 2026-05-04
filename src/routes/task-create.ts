@@ -78,23 +78,17 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 - imager: 画像生成・ビジュアルコンテンツ
 - planner: 企画・設計・アーキテクチャ
 
-【Leader Todos】Wave 3 → Wave 4 のハンドオフで Leader が自動挿入（tasksには含めない）
-- Leader は file-searcher（初回） / designer / imager / planner の Markdown を受け取り、2回目の File Search に渡す Todos Markdown を自動生成する
-
 【Wave 4 — File Search（集中再調査）】Wave 3 に依存
-- file-searcher（**集中再調査**）: Wave 3 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する
+- file-searcher（**集中再調査**）: Wave 3 の設計・画像・計画を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する
 
 【Wave 5 — 実装・執筆】Wave 4 の集中再調査に依存
 - coder: コード生成・実装・デバッグ
 - writer: 文章作成・ドキュメント
 
-【Leader Review Brief】Wave 5 → Wave 6 のハンドオフで Leader が自動挿入（tasksには含めない）
-- Leader は coder / writer の出力を受け、OK なら Reviewer に渡し、Not OK なら Coder/Writer に差し戻す
-
-【Wave 6 — レビュー】Wave 5に依存
+【Wave 6 — レビュー】Wave 5に依存（最終ステップ）
 - reviewer: 品質確認・レビュー・改善提案（dependsOn にレビュー対象の coder または writer の index を必ず含める）
 
-オーケストラ実行時: reviewer が Not OK の場合、reviewer → file-searcher（**集中再調査・Wave 4** が再実行）→ coder/writer → Leader Review Brief → reviewer を reviewer が OK を出すまで（最大20周。REVIEWER_CODER_MAX_ROUNDS で変更可）ループします。Brief Gate が Not OK の場合は Coder/Writer のみ再実行します。プランに追加タスクは不要です。
+**重要**: 各タスクは Leader が出した tasks JSON の指示通りに 1 度だけ実行されます。Reviewer ↔ Coder のフィードバックループや、Leader による Todos / Brief Gate の自動挿入はありません。Reviewer の指摘で再修正させたい場合は、必要なタスクをあらかじめ tasks に書いてください。
 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます
@@ -108,7 +102,7 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
 7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
 8. 1タスクに複数作業を詰め込まず細かく分割
 9. 同じロールでも異なる観点なら別タスクに分ける
-10. **【必須】Wave 2 には ideaman, searcher, researcher を必ず1タスクずつ含め、すべて dependsOn に Wave 1 file-searcher の index を含めること。Wave 3 には designer, imager, planner を必ず1タスクずつ含め、Wave 1 + Wave 2 のすべての index に依存させること。Leader Todos / Leader Review Brief はオーケストラが自動生成するため tasks には含めないこと。**
+10. **【必須】Wave 2 には ideaman, searcher, researcher を必ず1タスクずつ含め、すべて dependsOn に Wave 1 file-searcher の index を含めること。Wave 3 には designer, imager, planner を必ず1タスクずつ含め、Wave 1 + Wave 2 のすべての index に依存させること。**
 11. 各タスクに "mode" を指定:
     - "chat": テキスト生成タスク（デフォルト。searcher, researcher, file-searcher 等もこれ）
     - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
@@ -125,7 +119,7 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
     { "role": "designer", "mode": "chat", "title": "UIデザイン作成", "description": "既存コードと Wave 2 の調査を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルを具体化するため", "dependsOn": [0, 1, 2, 3] },
     { "role": "imager", "mode": "chat", "title": "画像・ビジュアル作成", "description": "既存コードと Wave 2 のデザイン方針を元に画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2, 3] },
     { "role": "planner", "mode": "chat", "title": "設計・要件定義", "description": "既存コードと Wave 2 の調査を元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "file-searcher", "mode": "chat", "title": "変更対象ファイル特定（再調査）", "description": "Wave 3 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する（Wave 4 / 集中再調査）", "reason": "設計後に変更対象を絞り込んで実装の指示書を作るため", "dependsOn": [4, 5, 6] },
+    { "role": "file-searcher", "mode": "chat", "title": "変更対象ファイル特定（再調査）", "description": "Wave 3 の設計・画像・計画を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する（Wave 4 / 集中再調査）", "reason": "設計後に変更対象を絞り込んで実装の指示書を作るため", "dependsOn": [4, 5, 6] },
     { "role": "coder", "mode": "computer_use", "title": "実装", "description": "Wave 4 の集中再調査の指示に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [7] },
     { "role": "reviewer", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [8] }
   ]
@@ -261,7 +255,7 @@ function normalizeDiagramTaskFlow(tasks: ParsedTaskRow[]): ParsedTaskRow[] {
       mode: "chat",
       title: "変更対象ファイル特定（再調査）",
       description:
-        "Wave 3 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer がそのまま実装できる Markdown レポートを作成する。",
+        "Wave 3 の設計・画像・計画を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer がそのまま実装できる Markdown レポートを作成する。",
       reason: "Wave 4: 設計後の集中再調査（Coder/Writer の直前指示）",
       dependsOn: [],
     });
@@ -434,9 +428,9 @@ taskCreateRouter.post(
       : "";
 
     const workspaceHint = localWorkspaceContext?.trim()
-      ? `\n\n【実行環境】IDE/CLI から localWorkspaceContext（ワークスペーススナップショット）が付与されます。API はローカルディスクを直接読みません。設計後に Leader Todos を挟み、その後の File Search タスクとして file-searcher を必ず含めてください。\n`
+      ? `\n\n【実行環境】IDE/CLI から localWorkspaceContext（ワークスペーススナップショット）が付与されます。API はローカルディスクを直接読みません。設計後に file-searcher（Wave 4 / 集中再調査）タスクを必ず含めてください。\n`
       : workspacePath
-        ? `\n\n【実行環境】ローカルプロジェクトが開かれています（タスク実行時に workspacePath が渡されます）。設計後に Leader Todos を挟み、その後の File Search タスクとして file-searcher を必ず含めてください。\n`
+        ? `\n\n【実行環境】ローカルプロジェクトが開かれています（タスク実行時に workspacePath が渡されます）。設計後に file-searcher（Wave 4 / 集中再調査）タスクを必ず含めてください。\n`
         : "";
 
     const enrichedInput = `${formattedHistory}【ユーザーの最新のリクエスト】\n${input}${workspaceHint}`;

@@ -38,8 +38,33 @@ export type DbProvider = {
  * モデル ID の接頭辞から apiType を推定する。DB に対応する Provider 行が無い
  * 新しいモデル名にもフォールバックで対応できるようにするためのマップ。
  */
+const KNOWN_API_TYPES = new Set([
+  "openai",
+  "anthropic",
+  "google",
+  "xai",
+  "perplexity",
+  "deepseek",
+  "meta",
+  "qwen",
+  "mistral",
+  "cohere",
+  "moonshot",
+]);
+
+const API_TYPE_ALIASES: Record<string, string> = {
+  claude: "anthropic",
+  chatgpt: "openai",
+  gemini: "google",
+  grok: "xai",
+  llama: "meta",
+  kimi: "moonshot",
+};
+
 export function inferApiTypeFromName(name: string): string | undefined {
   const lower = name.toLowerCase();
+  if (KNOWN_API_TYPES.has(lower)) return lower;
+  if (API_TYPE_ALIASES[lower]) return API_TYPE_ALIASES[lower];
   if (lower.startsWith("claude")) return "anthropic";
   if (
     lower.startsWith("gpt") ||
@@ -115,7 +140,10 @@ export async function resolveProvider(rawName: string): Promise<DbProvider | nul
       orderBy: { createdAt: "asc" },
     })) as DbProvider | null;
     if (base) {
-      return { ...base, modelId: normalized };
+      const isApiTypeAlias =
+        normalized.toLowerCase() === apiType ||
+        API_TYPE_ALIASES[normalized.toLowerCase()] === apiType;
+      return { ...base, modelId: isApiTypeAlias ? base.modelId : normalized };
     }
   }
 

@@ -1,0 +1,73 @@
+{
+  "name": "Simple Prompt Flow",
+  "description": "A basic flow that sends a prompt to an AI model and returns the result",
+  "nodes": [
+    {
+      "id": "input",
+      "type": "prompt",
+      "name": "User Input",
+      "description": "Takes user prompt as input",
+      "inputs": [
+        {
+          "name": "prompt",
+          "type": "string",
+          "description": "The user's prompt",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "prompt",
+          "type": "string",
+          "description": "The formatted prompt"
+        }
+      ],
+      "config": {
+        "providerId": "openai",
+        "modelId": "gpt-4",
+        "temperature": 0.7,
+        "maxTokens": 2000
+      },
+      "position": { "x": 100, "y": 100 }
+    },
+    {
+      "id": "output",
+      "type": "output",
+      "name": "Final Output",
+      "description": "Returns the AI response",
+      "inputs": [
+        {
+          "name": "response",
+          "type": "string",
+          "description": "The AI model response",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "response",
+          "type": "string",
+          "description": "The final response"
+        }
+      ],
+      "config": {},
+      "position": { "x": 400, "y": 100 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "input-output",
+      "source": "input",
+      "target": "output",
+      "sourceHandle": "prompt",
+      "targetHandle": "response"
+    }
+  ],
+  "config": {
+    "timeout": 30000,
+    "retryPolicy": {
+      "maxRetries": 3,
+      "backoffMs": 1000
+    }
+  }
+}

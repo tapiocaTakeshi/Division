@@ -168,3 +168,67 @@ model TaskLog {
 
   @@index([projectId])
 }
+
+/// AI Workflow Flow (DAG-based orchestration)
+model Flow {
+  id          String   @id @default(uuid())
+  projectId   String
+  name        String
+  description String?
+  nodes       Json     // FlowNode[] - DAG nodes with inputs/outputs
+  edges       Json     // FlowEdge[] - connections between nodes
+  status      String   @default("draft") // "draft" | "active" | "archived"
+  config      Json?    // Flow-level configuration
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  runs FlowRun[]
+
+  @@index([projectId])
+  @@index([status])
+}
+
+/// Single execution of a Flow
+model FlowRun {
+  id            String   @id @default(uuid())
+  flowId        String
+  status        String   @default("pending") // "pending" | "running" | "completed" | "failed" | "cancelled"
+  input         Json?    // Input parameters for the flow
+  output        Json?    // Final output after completion
+  errorMsg      String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  flow       Flow                    @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  executions FlowNodeExecution[]
+
+  @@index([flowId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/// Execution of individual nodes within a FlowRun
+model FlowNodeExecution {
+  id         String   @id @default(uuid())
+  runId      String
+  nodeId     String   // Reference to the node in the Flow
+  status     String   @default("pending") // "pending" | "running" | "completed" | "failed" | "skipped"
+  input      Json?    // Input for this node
+  output     Json?    // Output from this node
+  errorMsg   String?
+  retries    Int      @default(0)
+  maxRetries Int      @default(3)
+  durationMs Int?
+  costUsd    Decimal  @default(0) @db.Decimal(12, 6)
+  startedAt  DateTime?
+  completedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  run FlowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([nodeId])
+  @@index([status])
+}

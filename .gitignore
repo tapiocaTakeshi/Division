@@ -8,3 +8,4 @@ prisma/prisma/
 prisma/dev.db
 .env*.local
 .history/
+.claude/worktrees/

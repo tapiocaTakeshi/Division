@@ -60,7 +60,13 @@ const FALLBACK_MODELS_PATH: Record<string, string> = {
   google: "/v1beta/models",
   xai: "/v1/models",
   deepseek: "/models",
+  local: "/v1/models",
 };
+
+/**
+ * apiTypes whose model list can be fetched without an API key (local runtimes).
+ */
+const KEYLESS_API_TYPES = new Set(["local"]);
 
 // ===== Env Key Mapping (per apiType) =====
 
@@ -217,6 +223,39 @@ async function fetchDeepSeekModels(baseUrl: string, apiKey: string, modelsPath?:
     .sort((a, b) => a.modelId.localeCompare(b.modelId));
 }
 
+// ===== Local (Ollama / LM Studio) Parser =====
+
+/**
+ * Fetch models from a local runtime. Ollama and LM Studio both expose an
+ * OpenAI-compatible `GET /v1/models`; Ollama additionally serves the native
+ * `GET /api/tags`. We try the OpenAI-compatible path first, then fall back to
+ * Ollama's native tags endpoint. No API key is required.
+ */
+async function fetchLocalModels(baseUrl: string, apiKey: string, modelsPath?: string): Promise<DiscoveredModel[]> {
+  const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+
+  try {
+    interface M { id: string; }
+    const url = `${baseUrl}${modelsPath || FALLBACK_MODELS_PATH["local"]}`;
+    const data = await fetchJson<{ data: M[] }>(url, { headers });
+    if (Array.isArray(data.data) && data.data.length > 0) {
+      return data.data
+        .map((m) => ({ modelId: m.id, displayName: m.id }))
+        .sort((a, b) => a.modelId.localeCompare(b.modelId));
+    }
+  } catch {
+    /* fall through to Ollama native endpoint */
+  }
+
+  // Ollama native /api/tags → { models: [{ name, model }] }
+  interface Tag { name: string; model?: string; }
+  const tagsUrl = `${baseUrl}/api/tags`;
+  const tags = await fetchJson<{ models: Tag[] }>(tagsUrl, { headers });
+  return (tags.models ?? [])
+    .map((m) => ({ modelId: m.model || m.name, displayName: m.name }))
+    .sort((a, b) => a.modelId.localeCompare(b.modelId));
+}
+
 // ===== Perplexity (static — no List Models API) =====
 
 function getPerplexityModels(): DiscoveredModel[] {
@@ -240,6 +279,7 @@ const FETCHER_MAP: Record<string, Fetcher> = {
   google: fetchGoogleModels,
   xai: fetchXAIModels,
   deepseek: fetchDeepSeekModels,
+  local: fetchLocalModels,
 };
 
 // ===== In-Memory Cache =====
@@ -283,14 +323,15 @@ export async function fetchModelsForProvider(provider: ProviderRecord): Promise<
 
   const envKey = ENV_KEYS[provider.apiType];
   const apiKey = envKey ? process.env[envKey] : undefined;
-  if (!apiKey) {
+  const keyless = KEYLESS_API_TYPES.has(provider.apiType);
+  if (!apiKey && !keyless) {
     return { provider: provider.name, apiType: provider.apiType, models: [], error: `${envKey || "API_KEY"} not set` };
   }
 
   const endpoint = `${provider.apiBaseUrl}${modelsPath}`;
 
   try {
-    const models = await fetcher(provider.apiBaseUrl, apiKey, modelsPath);
+    const models = await fetcher(provider.apiBaseUrl, apiKey || "", modelsPath);
     const result: ProviderModels = { provider: provider.name, apiType: provider.apiType, models, endpoint };
     modelCache.set(provider.apiType, { data: result, expiresAt: now + CACHE_TTL_MS });
     return result;
@@ -332,13 +373,14 @@ export async function syncModelsToDb(): Promise<SyncResult> {
 
     const envKey = ENV_KEYS[provider.apiType];
     const apiKey = envKey ? process.env[envKey] : undefined;
-    if (!apiKey) {
+    const keyless = KEYLESS_API_TYPES.has(provider.apiType);
+    if (!apiKey && !keyless) {
       results.push({ provider: provider.name, synced: 0, removed: 0, error: `${envKey || "API_KEY"} not set` });
       continue;
     }
 
     try {
-      const models = await fetcher(provider.apiBaseUrl, apiKey);
+      const models = await fetcher(provider.apiBaseUrl, apiKey || "");
       const apiModelIds = new Set(models.map((m) => m.modelId));
 
       for (const m of models) {

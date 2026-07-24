@@ -49,6 +49,7 @@ const PROVIDER_DISPLAY: Record<string, string> = {
   meta: 'Llama',
   qwen: 'Qwen',
   moonshot: 'Kimi',
+  local: 'Local',
 }
 
 // Derive which roles a given model is best suited for, based on its ID.

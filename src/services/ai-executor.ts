@@ -97,7 +97,17 @@ const ENV_KEY_MAP: Record<string, string> = {
   qwen: "QWEN_API_KEY",
   cohere: "COHERE_API_KEY",
   moonshot: "MOONSHOT_API_KEY",
+  // Local runtimes (Ollama / LM Studio / llama.cpp server). Usually keyless,
+  // but honour an optional token for secured self-hosted gateways.
+  local: "LOCAL_AI_API_KEY",
 };
+
+/**
+ * apiTypes that do NOT require an API key to call. Local runtimes such as
+ * Ollama / LM Studio expose an OpenAI-compatible endpoint on localhost that
+ * accepts requests without (or with an ignored) Authorization header.
+ */
+const KEYLESS_API_TYPES = new Set(["local"]);
 
 /**
  * If Provider.apiType is wrongly left as "openai" while apiBaseUrl points at another vendor,
@@ -137,7 +147,11 @@ function resolveApiKeyFromConfig(
   const fromConfig = normalizeApiKeySegment(config?.apiKey as string | undefined);
   if (fromConfig) return fromConfig;
   const envVar = ENV_KEY_MAP[apiType];
-  if (envVar) return normalizeApiKeySegment(process.env[envVar]);
+  const fromEnv = envVar ? normalizeApiKeySegment(process.env[envVar]) : "";
+  if (fromEnv) return fromEnv;
+  // Local runtimes need no real key; return a placeholder so downstream
+  // "if (!apiKey)" gates don't abort. Ollama/LM Studio ignore the value.
+  if (KEYLESS_API_TYPES.has(apiType)) return "local";
   return "";
 }
 
@@ -154,6 +168,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   qwen: "qwen3-235b-a22b",
   cohere: "command-r-plus",
   moonshot: "kimi-k2",
+  local: "llama3.2",
 };
 
 /** Default base URLs when provider.apiBaseUrl is empty */
@@ -169,6 +184,8 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   qwen: "https://dashscope-intl.aliyuncs.com",
   cohere: "https://api.cohere.com",
   moonshot: "https://api.moonshot.cn",
+  // Ollama default. LM Studio uses http://localhost:1234 — override per provider.
+  local: "http://localhost:11434",
 };
 
 /** API types that use the OpenAI-compatible chat completions format */
@@ -185,6 +202,8 @@ const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
   qwen: "/compatible-mode/v1/chat/completions",
   cohere: "/v2/chat",
   moonshot: "/v1/chat/completions",
+  // Ollama & LM Studio expose an OpenAI-compatible /v1/chat/completions endpoint.
+  local: "/v1/chat/completions",
 };
 
 import { logger } from "../utils/logger";
@@ -401,6 +420,7 @@ function buildRequestBody(
     qwen: "/compatible-mode/v1/chat/completions",
     cohere: "/v2/chat",
     moonshot: "/v1/chat/completions",
+    local: "/v1/chat/completions",
   };
 
   // Resolve the endpoint: prefer DB value, fall back to hardcoded

@@ -15,6 +15,8 @@ const PROVIDER_ENDPOINT_DEFAULTS: Record<string, { apiEndpoint: string; modelsEn
   qwen: { apiEndpoint: "/compatible-mode/v1/chat/completions", modelsEndpoint: "" },
   cohere: { apiEndpoint: "/v2/chat", modelsEndpoint: "/v1/models" },
   moonshot: { apiEndpoint: "/v1/chat/completions", modelsEndpoint: "/v1/models" },
+  // Local runtimes (Ollama / LM Studio) — OpenAI-compatible, keyless.
+  local: { apiEndpoint: "/v1/chat/completions", modelsEndpoint: "/v1/models" },
 };
 
 async function upsertProvider(data: {
@@ -772,11 +774,11 @@ async function main() {
 
   await upsertProvider({
     name: "vicuna-13b",
-    displayName: "Vicuna-13B (LMSYS)",
+    displayName: "Vicuna-13B (Local)",
     apiBaseUrl: "http://localhost:11434",
-    apiType: "openai",
+    apiType: "local",
     modelId: "vicuna-13b",
-    description: "Open-source chatbot — fine-tuned LLaMA, self-hosted",
+    description: "Open-source chatbot — fine-tuned LLaMA, self-hosted via Ollama",
   });
 
   await upsertProvider({
@@ -790,11 +792,61 @@ async function main() {
 
   await upsertProvider({
     name: "minicpm",
-    displayName: "MiniCPM (OpenBMB)",
+    displayName: "MiniCPM (Local)",
     apiBaseUrl: "http://localhost:11434",
-    apiType: "openai",
+    apiType: "local",
     modelId: "minicpm-latest",
-    description: "Ultra-compact — on-device, multimodal capable",
+    description: "Ultra-compact — on-device, multimodal capable, self-hosted via Ollama",
+  });
+
+  // --- Local runtimes (Ollama / LM Studio) ---
+  // Self-hosted, keyless, OpenAI-compatible. Assign these to any role to run
+  // entirely on the user's machine. Override apiBaseUrl to match your setup
+  // (Ollama: http://localhost:11434, LM Studio: http://localhost:1234).
+  const ollamaLlama3 = await upsertProvider({
+    name: "ollama-llama3.2",
+    displayName: "Llama 3.2 (Ollama · Local)",
+    apiBaseUrl: "http://localhost:11434",
+    apiType: "local",
+    modelId: "llama3.2",
+    description: "Local Llama 3.2 via Ollama — runs on your machine, no API key",
+  });
+
+  await upsertProvider({
+    name: "ollama-qwen2.5-coder",
+    displayName: "Qwen2.5 Coder (Ollama · Local)",
+    apiBaseUrl: "http://localhost:11434",
+    apiType: "local",
+    modelId: "qwen2.5-coder",
+    description: "Local coding model via Ollama — code generation & review offline",
+  });
+
+  await upsertProvider({
+    name: "ollama-deepseek-r1",
+    displayName: "DeepSeek-R1 (Ollama · Local)",
+    apiBaseUrl: "http://localhost:11434",
+    apiType: "local",
+    modelId: "deepseek-r1",
+    description: "Local reasoning model via Ollama — chain-of-thought, fully offline",
+  });
+
+  await upsertProvider({
+    name: "lmstudio",
+    displayName: "LM Studio (Local)",
+    apiBaseUrl: "http://localhost:1234",
+    apiType: "local",
+    modelId: "local-model",
+    description: "Whatever model is loaded in LM Studio — OpenAI-compatible, keyless",
+  });
+
+  // Generic alias so callers can request the local runtime by name.
+  await upsertProvider({
+    name: "local",
+    displayName: "Local AI (Ollama)",
+    apiBaseUrl: "http://localhost:11434",
+    apiType: "local",
+    modelId: "llama3.2",
+    description: "Alias → Local Llama 3.2 via Ollama",
   });
 
   // --- Special / Niche ---

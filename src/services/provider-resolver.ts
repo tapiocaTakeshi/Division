@@ -50,6 +50,7 @@ const KNOWN_API_TYPES = new Set([
   "mistral",
   "cohere",
   "moonshot",
+  "local",
 ]);
 
 const API_TYPE_ALIASES: Record<string, string> = {
@@ -59,6 +60,9 @@ const API_TYPE_ALIASES: Record<string, string> = {
   grok: "xai",
   llama: "meta",
   kimi: "moonshot",
+  ollama: "local",
+  lmstudio: "local",
+  localai: "local",
 };
 
 export function inferApiTypeFromName(name: string): string | undefined {

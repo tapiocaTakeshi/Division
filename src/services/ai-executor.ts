@@ -618,6 +618,65 @@ function extractAnthropicToolCallFromMessage(data: unknown): NativeToolCall | nu
   return null;
 }
 
+/** OpenAI Responses API: `output[]` items with `type: "function_call"` carry `name` + JSON-string `arguments`. */
+function extractOpenAIResponsesToolCall(data: unknown): NativeToolCall | null {
+  if (!isPlainObject(data)) return null;
+  const output = data.output as unknown;
+  if (!Array.isArray(output)) return null;
+  for (const item of output) {
+    if (!isPlainObject(item)) continue;
+    if (item.type !== "function_call" || typeof item.name !== "string") continue;
+    const argsRaw = item.arguments;
+    const args =
+      typeof argsRaw === "string"
+        ? parseJsonObjectFragment(argsRaw)
+        : isPlainObject(argsRaw)
+          ? argsRaw
+          : {};
+    return { tool: item.name, args };
+  }
+  return null;
+}
+
+/** Google Gemini `generateContent`: candidate content parts may carry a `functionCall`. */
+function extractGoogleToolCall(data: unknown): NativeToolCall | null {
+  if (!isPlainObject(data)) return null;
+  const candidates = data.candidates as unknown;
+  if (!Array.isArray(candidates) || !isPlainObject(candidates[0])) return null;
+  const content = candidates[0].content;
+  if (!isPlainObject(content)) return null;
+  const parts = content.parts;
+  if (!Array.isArray(parts)) return null;
+  for (const part of parts) {
+    if (!isPlainObject(part)) continue;
+    const fc = part.functionCall;
+    if (!isPlainObject(fc) || typeof fc.name !== "string") continue;
+    return { tool: fc.name, args: isPlainObject(fc.args) ? fc.args : {} };
+  }
+  return null;
+}
+
+/** OpenAI-compatible Chat Completions (xAI, DeepSeek, Mistral, etc.): `choices[0].message.tool_calls`. */
+function extractOpenAICompatToolCall(data: unknown): NativeToolCall | null {
+  if (!isPlainObject(data)) return null;
+  const choices = data.choices as unknown;
+  if (!Array.isArray(choices) || !isPlainObject(choices[0])) return null;
+  const message = choices[0].message;
+  if (!isPlainObject(message)) return null;
+  const toolCalls = message.tool_calls;
+  if (!Array.isArray(toolCalls) || !toolCalls.length || !isPlainObject(toolCalls[0])) return null;
+  const fn = toolCalls[0].function;
+  if (!isPlainObject(fn) || typeof fn.name !== "string") return null;
+  const argsRaw = fn.arguments;
+  const args =
+    typeof argsRaw === "string"
+      ? parseJsonObjectFragment(argsRaw)
+      : isPlainObject(argsRaw)
+        ? argsRaw
+        : {};
+  return { tool: fn.name, args };
+}
+
 /**
  * Parse the response from each API type, extracting thinking and citations
  */
@@ -642,8 +701,12 @@ function parseResponse(apiType: string, data: unknown): ParsedResponse {
         }
       }
     }
+    const openaiToolCall = extractOpenAIResponsesToolCall(data);
     return {
-      output: textParts.join("") || (d as { output_text?: string }).output_text || JSON.stringify(data),
+      output:
+        textParts.join("") ||
+        (d as { output_text?: string }).output_text ||
+        (openaiToolCall ? nativeToolCallToJsonOutput(openaiToolCall) : JSON.stringify(data)),
     };
   }
 
@@ -665,8 +728,9 @@ function parseResponse(apiType: string, data: unknown): ParsedResponse {
     const parts = candidates?.[0]?.content?.parts ?? [];
     const thinkingParts = parts.filter((p) => p.thought === true).map((p) => p.text);
     const textParts = parts.filter((p) => p.thought !== true).map((p) => p.text);
+    const googleToolCall = extractGoogleToolCall(data);
     return {
-      output: textParts.join("") || JSON.stringify(data),
+      output: textParts.join("") || (googleToolCall ? nativeToolCallToJsonOutput(googleToolCall) : JSON.stringify(data)),
       thinking: thinkingParts.length ? thinkingParts.join("") : undefined,
     };
   }
@@ -674,7 +738,8 @@ function parseResponse(apiType: string, data: unknown): ParsedResponse {
   // OpenAI-compatible providers (Perplexity returns citations)
   if (OPENAI_COMPATIBLE_TYPES[apiType]) {
     const choices = d.choices as Array<{ message: { content: string } }>;
-    const output = choices?.[0]?.message?.content || JSON.stringify(data);
+    const compatToolCall = extractOpenAICompatToolCall(data);
+    const output = choices?.[0]?.message?.content || (compatToolCall ? nativeToolCallToJsonOutput(compatToolCall) : JSON.stringify(data));
     const citations = d.citations as string[] | undefined;
     return { output, citations: citations?.length ? citations : undefined };
   }
@@ -881,6 +946,45 @@ const SEARCH_AGENT_PROMPT = `あなたはファイル検索・コード解析エ
 - ツールJSON以外のテキストは出力しない
 - まず list_directory で構造を把握してから他のツールを使う`;
 
+/**
+ * file-searcher 以外のロール（planner / designer / writer / reviewer / ideaman 等）が
+ * 本番回答の前段階でプロジェクトを調査するための、ロールに依存しない探索プロンプト。
+ * 各ロール自身の DB systemPrompt はこの探索フェーズには使わない
+ * （`{"tool":...}` の呼び出し規約を知らないため、多くの場合ループが1回で終わってしまう）。
+ */
+function buildGenericToolExplorationPrompt(roleName: string): string {
+  return `あなたは ${roleName} ロールの本番回答を作成する前段階として、プロジェクトのファイルシステムを調査する読み取り専用の調査エージェントです。
+
+## 利用可能なツール（読み取り専用）
+1. list_directory: {"path": "."} — ディレクトリの内容を一覧表示（まずこれで構造を把握）
+2. read_file: {"path": "...", "startLine": N, "endLine": N} — ファイルを読み取り（行範囲指定可。省略時は全行）
+3. search_files: {"query": "...", "directory": ".", "include": "*.ts"} — パターンでファイル内を検索
+
+## 手順
+1. まず list_directory でプロジェクト構造を把握する
+2. ${roleName} としての回答に必要な既存コード・設定・ドキュメントを read_file / search_files で調査する
+3. 十分な情報が集まったら完了を出力する（回答本文はここでは書かない。調査のみ行う）
+
+## 出力形式 — 必ず以下のJSON形式のみ出力:
+
+ツールを使う場合:
+\`\`\`json
+{
+  "tool": "list_directory",
+  "args": { "path": "." }
+}
+\`\`\`
+
+情報収集が完了した場合:
+\`\`\`json
+{ "done": true }
+\`\`\`
+
+ルール:
+- 1回のレスポンスで1つのツールのみ
+- ツールJSON以外のテキストは出力しない`;
+}
+
 const CODER_AGENT_PROMPT_REMOTE = `You are an expert software engineer. You implement code changes and verify them.
 
 ## Environment
@@ -1005,7 +1109,23 @@ function isWorkspaceAccessible(ws: string | undefined): boolean {
   }
 }
 
-async function gatherToolContext(req: ExecutionRequest): Promise<string> {
+interface ToolLoopOptions {
+  /** Tool names this loop may call. Defaults to the read-only file-search set. */
+  allowedTools?: Set<string>;
+  /**
+   * System prompt used for the exploration turns only (never for the caller's
+   * final generation call). Always overrides `req.systemPrompt` here so that a
+   * role's own DB system prompt — which knows nothing about the `{"tool":...}`
+   * JSON calling convention — can't silently break multi-turn exploration.
+   */
+  explorationSystemPrompt?: string;
+  /** Label used in the returned context header (defaults to a generic file-search label). */
+  contextLabel?: string;
+}
+
+async function gatherToolContext(req: ExecutionRequest, opts?: ToolLoopOptions): Promise<string> {
+  const allowedTools = opts?.allowedTools ?? FILE_SEARCH_TOOLS;
+  const explorationSystemPrompt = opts?.explorationSystemPrompt ?? SEARCH_AGENT_PROMPT;
   const ws = req.workspacePath;
   const canAccessWorkspace = isWorkspaceAccessible(ws);
 
@@ -1016,7 +1136,7 @@ async function gatherToolContext(req: ExecutionRequest): Promise<string> {
     return req.input;
   }
 
-  let toolContext = `## ファイル検索結果（自動収集）\nワークスペース: ${ws}\n\n`;
+  let toolContext = `## ${opts?.contextLabel ?? "ファイル検索結果（自動収集）"}\nワークスペース: ${ws}\n\n`;
 
   // Step 1: List root directory structure
   logger.info(`[Tool Loop] Auto-listing workspace root (${ws})`);
@@ -1050,13 +1170,12 @@ search_files の query にはコード上のキーワード（関数名、変数
   while (loopCount < MAX_LOOPS) {
     loopCount++;
 
-    const systemPrompt = req.systemPrompt || SEARCH_AGENT_PROMPT;
     const modelId = (req.config?.model as string) || req.provider.modelId;
     const requestSpec = buildRequestBody(
       apiTypeEff,
       modelId,
       currentInput,
-      systemPrompt,
+      explorationSystemPrompt,
       req.config || undefined,
       chatHistory,
       req.provider.apiEndpoint,
@@ -1116,11 +1235,11 @@ search_files の query にはコード上のキーワード（関数名、変数
     if (parsed.tool && parsed.args) {
       const toolName = parsed.tool as string;
 
-      if (!FILE_SEARCH_TOOLS.has(toolName)) {
+      if (!allowedTools.has(toolName)) {
         logger.warn(`[Tool Loop] Tool "${toolName}" not allowed`);
         chatHistory.push({ role: "user", content: currentInput });
         chatHistory.push({ role: "assistant", content: result.output });
-        currentInput = `Error: Tool "${toolName}" は使えません。使えるツール: ${[...FILE_SEARCH_TOOLS].join(", ")}`;
+        currentInput = `Error: Tool "${toolName}" は使えません。使えるツール: ${[...allowedTools].join(", ")}`;
         continue;
       }
 
@@ -1141,6 +1260,44 @@ search_files の query にはコード上のキーワード（関数名、変数
   }
 
   return `${toolContext}\n\n## ユーザーのリクエスト:\n${req.input}`;
+}
+
+/**
+ * Roles with their own dedicated tool-loop handling (file-searcher via `gatherToolContext`
+ * above, coder via its own prompt-driven flow) or that never benefit from filesystem tools
+ * (leader decomposes tasks, imager generates images) are excluded from the generic loop below.
+ */
+const GENERIC_TOOL_LOOP_EXCLUDED_ROLES = new Set(["leader", "coder", "imager", "file-searcher"]);
+
+/**
+ * Give any other role (planner / designer / writer / reviewer / ideaman / researcher, etc.)
+ * the same real, executed function calling that file-searcher already has: when the request
+ * has a real, accessible workspace and the assigned provider declares native tools, run a
+ * read-only exploration loop (list_directory / search_files / read_file) and hand the AI's
+ * own final generation call the gathered results. Falls back to `req.input` unchanged
+ * whenever tools can't actually be executed (e.g. production Vercel deployments with no
+ * server-side filesystem), so it never affects the AI's default single-shot behavior there.
+ */
+async function maybeRunGenericToolLoop(req: ExecutionRequest, logPrefix: string): Promise<string> {
+  const roleSlug = req.role.slug;
+  if (GENERIC_TOOL_LOOP_EXCLUDED_ROLES.has(roleSlug)) return req.input;
+  if (!req.provider.toolMap) return req.input;
+  if (effectiveApiType(req.provider) === "perplexity") return req.input; // tools are never sent to Perplexity
+  if (!isWorkspaceAccessible(req.workspacePath)) return req.input;
+
+  logger.info(`${logPrefix} ${roleSlug}: running generic read-only tool loop, workspacePath=${req.workspacePath}`);
+  try {
+    const enriched = await gatherToolContext(req, {
+      allowedTools: FILE_SEARCH_TOOLS,
+      explorationSystemPrompt: buildGenericToolExplorationPrompt(req.role.name),
+      contextLabel: `${req.role.name} 向け調査結果（自動収集）`,
+    });
+    logger.info(`${logPrefix} generic tool loop completed for ${roleSlug}, enrichedInput length=${enriched.length}`);
+    return enriched;
+  } catch (err) {
+    logger.error(`${logPrefix} Error in generic tool loop for ${roleSlug}`, err);
+    return req.input;
+  }
 }
 
 /**
@@ -1293,6 +1450,8 @@ export async function executeTaskStream(
         `[AI Executor] file-searcher: no bundle and no accessible workspacePath; using task input only`
       );
     }
+  } else {
+    enrichedInput = await maybeRunGenericToolLoop(req, "[AI Executor]");
   }
 
   const systemPrompt =
@@ -1411,7 +1570,8 @@ export async function executeTaskStream(
       streamError: string | null;
       lastStopReason: string | null;
       activeAnthropicToolCall: { name: string; inputJson: string } | null;
-      completedAnthropicToolCall: NativeToolCall | null;
+      activeCompatToolCall: { name: string; argsJson: string } | null;
+      completedToolCall: NativeToolCall | null;
     } = {
       accumulated: "",
       accumulatedThinking: "",
@@ -1420,43 +1580,106 @@ export async function executeTaskStream(
       streamError: null,
       lastStopReason: null,
       activeAnthropicToolCall: null,
-      completedAnthropicToolCall: null,
+      activeCompatToolCall: null,
+      completedToolCall: null,
     };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
 
-    const captureAnthropicToolCall = (data: string): void => {
-      if (apiTypeEff !== "anthropic") return;
+    /**
+     * ストリーム中に届く native function-call イベントをプロバイダごとに拾い、
+     * `state.completedToolCall` に正規化して蓄積する。テキストと同じ SSE デコード
+     * ループを再利用するため、`parseStreamChunk` とは別に生 JSON を直接見る。
+     */
+    const captureStreamToolCall = (data: string): void => {
       try {
         const parsed = JSON.parse(data) as Record<string, unknown>;
-        if (parsed.type === "content_block_start" && isPlainObject(parsed.content_block)) {
-          const block = parsed.content_block;
-          if (block.type === "tool_use" && typeof block.name === "string") {
-            const initialInput =
-              isPlainObject(block.input) && Object.keys(block.input).length > 0
-                ? JSON.stringify(block.input)
-                : "";
-            state.activeAnthropicToolCall = { name: block.name, inputJson: initialInput };
+
+        if (apiTypeEff === "anthropic") {
+          if (parsed.type === "content_block_start" && isPlainObject(parsed.content_block)) {
+            const block = parsed.content_block;
+            if (block.type === "tool_use" && typeof block.name === "string") {
+              const initialInput =
+                isPlainObject(block.input) && Object.keys(block.input).length > 0
+                  ? JSON.stringify(block.input)
+                  : "";
+              state.activeAnthropicToolCall = { name: block.name, inputJson: initialInput };
+            }
+            return;
+          }
+          if (
+            parsed.type === "content_block_delta" &&
+            isPlainObject(parsed.delta) &&
+            parsed.delta.type === "input_json_delta" &&
+            typeof parsed.delta.partial_json === "string" &&
+            state.activeAnthropicToolCall
+          ) {
+            state.activeAnthropicToolCall.inputJson += parsed.delta.partial_json;
+            return;
+          }
+          if (parsed.type === "content_block_stop" && state.activeAnthropicToolCall) {
+            state.completedToolCall = {
+              tool: state.activeAnthropicToolCall.name,
+              args: parseJsonObjectFragment(state.activeAnthropicToolCall.inputJson),
+            };
+            state.activeAnthropicToolCall = null;
           }
           return;
         }
-        if (
-          parsed.type === "content_block_delta" &&
-          isPlainObject(parsed.delta) &&
-          parsed.delta.type === "input_json_delta" &&
-          typeof parsed.delta.partial_json === "string" &&
-          state.activeAnthropicToolCall
-        ) {
-          state.activeAnthropicToolCall.inputJson += parsed.delta.partial_json;
+
+        if (apiTypeEff === "openai") {
+          // Responses API の `response.output_item.done` は完成済みの item をそのまま含む。
+          if (parsed.type === "response.output_item.done" && isPlainObject(parsed.item)) {
+            const item = parsed.item;
+            if (item.type === "function_call" && typeof item.name === "string") {
+              const argsRaw = item.arguments;
+              const args =
+                typeof argsRaw === "string"
+                  ? parseJsonObjectFragment(argsRaw)
+                  : isPlainObject(argsRaw)
+                    ? argsRaw
+                    : {};
+              state.completedToolCall = { tool: item.name, args };
+            }
+          }
           return;
         }
-        if (parsed.type === "content_block_stop" && state.activeAnthropicToolCall) {
-          state.completedAnthropicToolCall = {
-            tool: state.activeAnthropicToolCall.name,
-            args: parseJsonObjectFragment(state.activeAnthropicToolCall.inputJson),
-          };
-          state.activeAnthropicToolCall = null;
+
+        if (apiTypeEff === "google") {
+          const toolCall = extractGoogleToolCall(parsed);
+          if (toolCall) state.completedToolCall = toolCall;
+          return;
+        }
+
+        // OpenAI 互換 Chat Completions (xAI / DeepSeek / Mistral 等): delta.tool_calls を蓄積
+        const choice = (parsed.choices as unknown[] | undefined)?.[0];
+        if (isPlainObject(choice)) {
+          const delta = choice.delta;
+          if (isPlainObject(delta) && Array.isArray(delta.tool_calls) && delta.tool_calls.length) {
+            const call = delta.tool_calls[0];
+            if (isPlainObject(call)) {
+              const fn = call.function;
+              if (isPlainObject(fn)) {
+                if (!state.activeCompatToolCall) {
+                  state.activeCompatToolCall = { name: "", argsJson: "" };
+                }
+                if (typeof fn.name === "string" && fn.name) {
+                  state.activeCompatToolCall.name = fn.name;
+                }
+                if (typeof fn.arguments === "string") {
+                  state.activeCompatToolCall.argsJson += fn.arguments;
+                }
+              }
+            }
+          }
+          if (choice.finish_reason === "tool_calls" && state.activeCompatToolCall?.name) {
+            state.completedToolCall = {
+              tool: state.activeCompatToolCall.name,
+              args: parseJsonObjectFragment(state.activeCompatToolCall.argsJson),
+            };
+            state.activeCompatToolCall = null;
+          }
         }
       } catch {
         /* Ignore malformed SSE payloads; normal chunk parsing handles errors. */
@@ -1468,7 +1691,7 @@ export async function executeTaskStream(
       const data = rawLine.slice(6).trim();
       if (!data || data === "[DONE]") return true;
 
-      captureAnthropicToolCall(data);
+      captureStreamToolCall(data);
       const chunk = parseStreamChunk(apiTypeEff, data);
       if (chunk.error) {
         state.streamError = chunk.error;
@@ -1523,7 +1746,7 @@ export async function executeTaskStream(
       lastCitations,
       lastStopReason,
       streamError,
-      completedAnthropicToolCall,
+      completedToolCall,
     } = state;
     console.log(`[API] ──── Stream Complete ────`);
     console.log(`[API]  Duration: ${durationMs}ms`);
@@ -1558,8 +1781,8 @@ export async function executeTaskStream(
      * Anthropic の `refusal` / `max_tokens` や、思考中に枯渇して text を吐けなかった
      * 場合をきちんと error として扱う。
      */
-    if (lastStopReason === "tool_use" && completedAnthropicToolCall) {
-      const toolJson = nativeToolCallToJsonOutput(completedAnthropicToolCall);
+    if (completedToolCall) {
+      const toolJson = nativeToolCallToJsonOutput(completedToolCall);
       const output = accumulated ? `${accumulated}\n\n${toolJson}` : toolJson;
       return {
         output,
@@ -1644,6 +1867,8 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     } else {
       logger.info(`[AI Executor] file-searcher (non-stream): no bundle, no accessible workspace`);
     }
+  } else {
+    enrichedInput = await maybeRunGenericToolLoop(req, "[AI Executor] (non-stream)");
   }
 
   const systemPrompt =

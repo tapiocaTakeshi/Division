@@ -1376,7 +1376,7 @@ async function generateImageOpenAI(
     n: 1,
     size: "1024x1024",
     quality: "hd",
-    response_format: "url",
+    response_format: "b64_json",
   };
 
   console.log(`[API]  POST ${url}`);
@@ -1431,8 +1431,9 @@ async function generateImageOpenAI(
 
   const images = data.data
     .map((img, idx) => {
-      if (img.url) {
-        return `## Image ${idx + 1}\n\n![Generated Image ${idx + 1}](${img.url})`;
+      if (img.b64_json) {
+        const dataUrl = `data:image/png;base64,${img.b64_json}`;
+        return `## Image ${idx + 1}\n\n![Generated Image ${idx + 1}](${dataUrl})`;
       }
       return null;
     })

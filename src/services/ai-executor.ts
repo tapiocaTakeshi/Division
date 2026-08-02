@@ -1301,6 +1301,274 @@ async function maybeRunGenericToolLoop(req: ExecutionRequest, logPrefix: string)
 }
 
 /**
+ * Execute image generation: call the image generation API of the provider
+ * and return the generated image URL(s) and metadata as markdown.
+ */
+async function executeImageGeneration(req: ExecutionRequest): Promise<ExecutionResult> {
+  const start = Date.now();
+  const apiTypeEff = effectiveApiType(req.provider);
+  const modelId = (req.config?.model as string) || req.provider.modelId;
+  const apiKey = resolveApiKeyFromConfig(req.config, apiTypeEff);
+
+  if (!apiKey) {
+    const envVar = ENV_KEY_MAP[apiTypeEff];
+    return {
+      output: "",
+      durationMs: Date.now() - start,
+      status: "error",
+      errorMsg: `No API key found for ${req.provider.name} (${apiTypeEff}). Set ${envVar || "the API key"} environment variable.`,
+    };
+  }
+
+  try {
+    const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[apiTypeEff] || "";
+
+    console.log(`\n[API] ──── Image Generation Request ────`);
+    console.log(`[API]  Provider: ${req.provider.name} (${modelId})`);
+    console.log(`[API]  Prompt: ${truncate(req.input, 200)}`);
+
+    if (apiTypeEff === "openai") {
+      return await generateImageOpenAI(req, apiKey, baseUrl, start);
+    } else if (apiTypeEff === "google") {
+      return await generateImageGoogle(req, apiKey, baseUrl, start);
+    } else {
+      return {
+        output: "",
+        durationMs: Date.now() - start,
+        status: "error",
+        errorMsg: `Image generation not supported for API type: ${apiTypeEff}`,
+      };
+    }
+  } catch (err: unknown) {
+    const durationMs = Date.now() - start;
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    logger.error(`[Image Generation] Error: ${req.provider.displayName}`, { error: errorMsg });
+    console.log(`[API] ──── Image Generation (EXCEPTION) ────`);
+    console.log(`[API]  Duration: ${durationMs}ms`);
+    console.log(`[API]  Error: ${errorMsg}`);
+    return {
+      output: "",
+      durationMs,
+      status: "error",
+      errorMsg,
+    };
+  }
+}
+
+/**
+ * Generate images using OpenAI DALL-E API
+ */
+async function generateImageOpenAI(
+  req: ExecutionRequest,
+  apiKey: string,
+  baseUrl: string,
+  startTime: number
+): Promise<ExecutionResult> {
+  const url = `${baseUrl}/v1/images/generations`;
+  const headers = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${apiKey}`,
+  };
+
+  const body = {
+    model: req.provider.modelId,
+    prompt: req.input,
+    n: 1,
+    size: "1024x1024",
+    quality: "hd",
+    response_format: "url",
+  };
+
+  console.log(`[API]  POST ${url}`);
+  console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(headers))}`);
+  console.log(`[API]  Body: ${JSON.stringify(body)}`);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal: req.signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    const durationMs = Date.now() - startTime;
+    console.log(`[API] ──── Response (ERROR) ────`);
+    console.log(`[API]  Status: ${response.status}`);
+    console.log(`[API]  Error: ${truncate(errorText, 500)}`);
+    return {
+      output: "",
+      durationMs,
+      status: "error",
+      errorMsg: `OpenAI API error ${response.status}: ${errorText}`,
+    };
+  }
+
+  const data = await response.json() as {
+    data?: Array<{ url?: string; b64_json?: string }>;
+    error?: { message: string };
+  };
+
+  if (data.error) {
+    const durationMs = Date.now() - startTime;
+    return {
+      output: "",
+      durationMs,
+      status: "error",
+      errorMsg: `OpenAI error: ${data.error.message}`,
+    };
+  }
+
+  if (!data.data || data.data.length === 0) {
+    const durationMs = Date.now() - startTime;
+    return {
+      output: "",
+      durationMs,
+      status: "error",
+      errorMsg: "No images generated",
+    };
+  }
+
+  const images = data.data
+    .map((img, idx) => {
+      if (img.url) {
+        return `## Image ${idx + 1}\n\n![Generated Image ${idx + 1}](${img.url})`;
+      }
+      return null;
+    })
+    .filter((img) => img !== null)
+    .join("\n\n");
+
+  const durationMs = Date.now() - startTime;
+  const output = `# Generated Images (DALL-E 3)\n\n${images}\n\n---\n\n**Prompt:** ${req.input}`;
+
+  console.log(`[API] ──── Image Generation (OK) ────`);
+  console.log(`[API]  Status: 200`);
+  console.log(`[API]  Duration: ${durationMs}ms`);
+  console.log(`[API]  Generated ${data.data.length} image(s)`);
+
+  return {
+    output,
+    durationMs,
+    status: "success",
+  };
+}
+
+/**
+ * Generate images using Google Imagen API
+ */
+async function generateImageGoogle(
+  req: ExecutionRequest,
+  apiKey: string,
+  baseUrl: string,
+  startTime: number
+): Promise<ExecutionResult> {
+  const projectId = req.config?.googleProjectId as string | undefined;
+  if (!projectId) {
+    const durationMs = Date.now() - startTime;
+    return {
+      output: "",
+      durationMs,
+      status: "error",
+      errorMsg: "Google Imagen requires googleProjectId in config",
+    };
+  }
+
+  const url = `${baseUrl}/v1beta1/projects/${projectId}/locations/global/imageGenerators:generate`;
+  const headers = {
+    "Content-Type": "application/json",
+    "x-goog-api-key": apiKey,
+  };
+
+  const body = {
+    instances: [
+      {
+        prompt: req.input,
+      },
+    ],
+    parameters: {
+      sampleCount: 1,
+      outputFormat: "PNG",
+    },
+  };
+
+  console.log(`[API]  POST ${url}`);
+  console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(headers))}`);
+  console.log(`[API]  Body: ${JSON.stringify(body)}`);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal: req.signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    const durationMs = Date.now() - startTime;
+    console.log(`[API] ──── Response (ERROR) ----`);
+    console.log(`[API]  Status: ${response.status}`);
+    console.log(`[API]  Error: ${truncate(errorText, 500)}`);
+    return {
+      output: "",
+      durationMs,
+      status: "error",
+      errorMsg: `Google Imagen API error ${response.status}: ${errorText}`,
+    };
+  }
+
+  const data = await response.json() as {
+    predictions?: Array<{ bytesBase64Encoded?: string }>;
+    error?: { message: string };
+  };
+
+  if (data.error) {
+    const durationMs = Date.now() - startTime;
+    return {
+      output: "",
+      durationMs,
+      status: "error",
+      errorMsg: `Google Imagen error: ${data.error.message}`,
+    };
+  }
+
+  if (!data.predictions || data.predictions.length === 0) {
+    const durationMs = Date.now() - startTime;
+    return {
+      output: "",
+      durationMs,
+      status: "error",
+      errorMsg: "No images generated",
+    };
+  }
+
+  const images = data.predictions
+    .map((pred, idx) => {
+      if (pred.bytesBase64Encoded) {
+        const dataUrl = `data:image/png;base64,${pred.bytesBase64Encoded}`;
+        return `## Image ${idx + 1}\n\n![Generated Image ${idx + 1}](${dataUrl})`;
+      }
+      return null;
+    })
+    .filter((img) => img !== null)
+    .join("\n\n");
+
+  const durationMs = Date.now() - startTime;
+  const output = `# Generated Images (Google Imagen)\n\n${images}\n\n---\n\n**Prompt:** ${req.input}`;
+
+  console.log(`[API] ──---- Image Generation (OK) ----`);
+  console.log(`[API]  Status: 200`);
+  console.log(`[API]  Duration: ${durationMs}ms`);
+  console.log(`[API]  Generated ${data.predictions.length} image(s)`);
+
+  return {
+    output,
+    durationMs,
+    status: "success",
+  };
+}
+
+/**
  * Execute a coder agent loop: read → edit → verify → repeat.
  * Returns the accumulated log of all actions and the final summary.
  */
@@ -1427,6 +1695,14 @@ export async function executeTaskStream(
   onThinkingChunk?: (text: string) => void
 ): Promise<ExecutionResult> {
   const start = Date.now();
+
+  if (req.role.slug === "imager") {
+    const result = await executeImageGeneration(req);
+    if (result.status === "success") {
+      onChunk(result.output);
+    }
+    return result;
+  }
 
   // file-searcher: prefer client-provided snapshot (IDE pattern); else server-side tool loop only if path is on this machine.
   let enrichedInput = req.input;
@@ -1847,6 +2123,10 @@ export async function executeTaskStream(
  */
 export async function executeTask(req: ExecutionRequest): Promise<ExecutionResult> {
   const start = Date.now();
+
+  if (req.role.slug === "imager") {
+    return executeImageGeneration(req);
+  }
 
   let enrichedInput = req.input;
   if (req.role.slug === "file-searcher") {

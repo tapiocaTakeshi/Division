@@ -158,17 +158,6 @@ function handleSSEEvent(
       break
     }
 
-    case 'wave_start': {
-      const taskIds = event.taskIds as string[]
-      const waveIndex = event.waveIndex as number
-      store.setWaves([
-        ...(useOrchestraStore.getState().session?.waves ?? []),
-        { waveIndex, taskIds },
-      ])
-      taskIds.forEach((id) => store.updateAgentStatus(id, 'running'))
-      break
-    }
-
     case 'leader_chunk': {
       const chunkText = event.text as string
       const currentLeader = useOrchestraStore.getState().session?.leaderOutput ?? ''

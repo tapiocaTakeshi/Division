@@ -450,6 +450,32 @@ function normalizeDiagramFlow(tasks: SubTask[]): SubTask[] {
     focusedFsOldIdx = base.length - 1;
   }
 
+  // Wave 3（designer / imager / planner）は Leader プロンプトで「必須」と指示しているだけで
+  // コード側の担保が無かったため、Leader がしばしば省略し designer 等が一切実行されない
+  // 不具合になっていた。file-searcher と同様に欠けているロールを自動補完する。
+  const WAVE3_DEFAULTS: Record<string, { input: string; reason: string }> = {
+    designer: {
+      input: "既存コードと Wave 2 の調査を元に UI/UX デザイン・プロトタイプ HTML/CSS を作成する。",
+      reason: "Wave 3: ビジュアルイメージを具体化するため",
+    },
+    imager: {
+      input: "既存コードと Wave 2 の調査を元に必要な画像・ビジュアル素材の案を作成する。",
+      reason: "Wave 3: 視覚要素を具体化するため",
+    },
+    planner: {
+      input: "既存コードと Wave 2 の調査を元に要件定義・設計・実装方針を作成する。",
+      reason: "Wave 3: 実装の方向性を決めるため",
+    },
+  };
+  const presentLayer2 = new Set(
+    base.map((t) => normalizeRoleSlug(t.role)).filter((r) => layer2RoleSet.has(r))
+  );
+  for (const role of layer2RoleSet) {
+    if (presentLayer2.has(role)) continue;
+    const d = WAVE3_DEFAULTS[role];
+    base.push({ role, mode: "chat", input: d.input, reason: d.reason, dependsOn: [] });
+  }
+
   // group 番号 = Wave 番号 - 1
   const groupOf = (task: SubTask, oldIndex: number): number => {
     if (oldIndex === primaryFsOldIdx) return 0;   // Wave 1

@@ -220,74 +220,46 @@ export interface OrchestratorResult {
 
 // --- Leader Prompt ---
 
-const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、以下の Wave 構造でタスクを分解してください。
+const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユーザーのリクエストを分析し、必要なタスクに分解してください。他のロールはあなたが出したタスクの通りに動くだけなので、実際に必要なタスクと依存関係をあなた自身が正確に決めてください。
 
-## パイプライン構造（必ずこの Wave 順序で多層化する）
-
-【Wave 1 — 初回ファイルスキャン】単独実行（dependsOn: []）
-- file-searcher（**初回スキャン**）: プロジェクト内の **すべてのフォルダ・ファイル** を最初に読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる（GPT担当）。**ideaman / searcher / researcher より前**に必ず単独で走り、後続全員にプロジェクトの「現在の真実」を渡す。
-
-【Wave 2 — 調査・発想】Wave 1 に依存（dependsOn: [Wave 1 の file-searcher の index]）
-- ideaman: 創造的ブレインストーミング・アイデア出し（Claude担当）。既存コードを把握した上でアイデアを出す。
+## 利用可能なロールと担当
+- file-searcher: プロジェクト内のファイル・既存実装の調査（GPT担当）
+- ideaman: 創造的ブレインストーミング・アイデア出し（Claude担当）
 - searcher: ウェブ検索・情報収集（Perplexity担当）
-- researcher: 調査・分析・レポート（Perplexity Deep Research担当）
-
-【Wave 3 — 設計・デザイン】Wave 1 + Wave 2 に依存
+- researcher: 深い調査・分析・レポート（Perplexity Deep Research担当）
 - designer: UI/UXデザイン・HTML/CSS生成・ランディングページ・プロトタイプ（Gemini担当。完全に自己完結したHTMLを生成）
 - imager: 画像生成・ビジュアルコンテンツ・イラスト（GPT Image担当）
 - planner: 企画・設計・アーキテクチャ・戦略立案（Gemini担当）
-
-【Wave 4 — File Search（集中再調査）】Wave 3 に依存
-- file-searcher（**集中再調査**）: Wave 3 の設計・画像・計画を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査し、Coder/Writer がそのまま実装できる詳細な Markdown レポートを作成する（GPT担当）
-
-【Wave 5 — 実装・執筆】Wave 4 の集中再調査に依存
 - coder: コード生成・実装・デバッグ（Claude担当）
 - writer: 文章作成・ドキュメント（Claude担当）
+- reviewer: 品質確認・レビュー・改善提案（GPT担当）
 
-【Wave 6 — レビュー】Wave 5に依存（最終ステップ）
-- reviewer: 品質確認・レビュー・改善提案（GPT担当）※ dependsOn には必ず「レビュー対象の coder または writer」のタスク index を含める
+**重要**: 各タスクは Leader が出した tasks JSON の指示通りに 1 度だけ実行されます。他のロールは追加のロールを勝手に呼んだり、あなたが書かなかったタスクを実行したりしません。Reviewer ↔ Coder のフィードバックループや、Todos / Brief Gate の自動挿入もありません。後続で必要になる作業は、あらかじめ tasks に書いてください。
 
-【最終統合】reviewer 完了後に自動実行（tasksに含めない）
-
-**重要**: 各タスクは Leader が出した tasks JSON の指示通りに 1 度だけ実行されます。Reviewer ↔ Coder のフィードバックループや、Leader による Todos / Brief Gate の自動挿入はありません。Reviewer の指摘で再修正させたい場合は、必要なタスクをあらかじめ tasks に書いてください。
-
-## 利用可能なロール一覧
-ideaman, searcher, researcher, file-searcher, designer, imager, planner, coder, writer, reviewer
+【最終統合】reviewer（レビューが無い場合は最後の coder/writer）完了後に自動実行（tasksに含めない）
 
 ## ルール
 1. 各タスクには0始まりのインデックスが付与されます（0, 1, 2...）
-2. dependsOn で依存先のインデックスを指定。空=並列実行
-3. **【必須】file-searcher を 2 タスク含めること**:
-   - 1 つ目（**Wave 1 = 初回スキャン**）: 配列の **先頭（index 0）** に置く。dependsOn: [] で **単独で先に**実行する。input には「プロジェクト内のすべてのフォルダ・ファイルを読み込んで構造を把握する」ことを必ず含める。
-   - 2 つ目（**Wave 4 = 集中再調査**）: dependsOn には Wave 3（designer/imager/planner）の index を含める。input には「Wave 3 の設計を踏まえて、変更対象ファイルと差分を集中的に調査する」ことを必ず含める。
-4. **【必須】Wave 2 には ideaman, searcher, researcher を必ず1タスクずつ含め、すべて dependsOn に Wave 1 file-searcher の index を含めること。Wave 3 には designer, imager, planner を必ず1タスクずつ含め、Wave 1 + Wave 2 のすべての index に依存させること。**
-5. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること。Coder/Writer や file-searcher（再調査）に何を読ませて何を作らせたいかは、Leader が input にすべて書き切ること。
-6. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
-7. タスクは最低5個以上。複雑な場合は8〜15個に細分化
-8. 1タスクに複数作業を詰め込まず細かく分割
-9. 同じロールでも異なる観点なら別タスクに分ける
-10. 各タスクに "mode" を指定:
+2. dependsOn には「このタスクの前に完了しているべきタスク」のインデックスを指定してください。dependsOn には必ず自分より前のインデックスのみを指定できます。空配列 [] は依存なし＝他タスクと並列実行されます。
+3. リクエストの内容に本当に必要なロールだけを選んでください。無関係なロールを形だけ含める必要はありません。単純な依頼なら数タスクで十分です。
+4. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること。前のタスクの結果を踏まえてほしい場合は、inputにその旨とdependsOnを明記してください。
+5. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
+6. 1タスクに複数作業を詰め込まず、必要なら細かく分割する
+7. 同じロールでも異なる観点なら別タスクに分けてよい
+8. 各タスクに "mode" を指定:
     - "chat": テキスト生成タスク（デフォルト。searcher, researcher, file-searcher 等もこれ）
     - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
-    - "function_calling": 使用しない（廃止）
     ※ searcher / researcher ロールは Perplexity が Web 検索するため mode="chat" にすること
-11. "finalRole" を必ず指定:
+9. "finalRole" を必ず指定:
     - "coder": コードが主な成果物の場合
     - "writer": ドキュメント・文章が主な成果物の場合
 
 \`\`\`json
 {
   "tasks": [
-    { "role": "file-searcher", "mode": "chat", "input": "プロジェクト内のすべてのフォルダ・ファイルを読み込み、構造・既存実装・変更候補・注意点を Markdown レポートにまとめる（Wave 1 / 初回スキャン）", "reason": "Wave 2 以降の全員に既存コードベース全体を渡すため", "dependsOn": [] },
-    { "role": "ideaman", "mode": "chat", "input": "Wave 1 の既存コードスキャンを踏まえ、ユーザーのリクエストに対する革新的なアプローチを複数提案", "reason": "多角的な視点を得るため", "dependsOn": [0] },
-    { "role": "searcher", "mode": "chat", "input": "Wave 1 の既存コードを踏まえ、技術的な実現可能性と最新のベストプラクティスを検索", "reason": "正確な前提知識を得るため", "dependsOn": [0] },
-    { "role": "researcher", "mode": "chat", "input": "Wave 1 の既存コードを踏まえ、関連する技術トレンドと事例を調査", "reason": "深い理解を得るため", "dependsOn": [0] },
-    { "role": "designer", "mode": "chat", "input": "既存コードと Wave 2 の調査を元にUIデザインとプロトタイプHTMLを作成", "reason": "ビジュアルイメージを具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "imager", "mode": "chat", "input": "既存コードと Wave 2 のデザイン方針を元に必要な画像/ビジュアル案を作成", "reason": "視覚要素を具体化するため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "planner", "mode": "chat", "input": "既存コードと Wave 2 の調査を元に要件定義と設計を作成", "reason": "実装の方向性を決めるため", "dependsOn": [0, 1, 2, 3] },
-    { "role": "file-searcher", "mode": "chat", "input": "Wave 3 の設計・画像・計画を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査して Coder/Writer 向け Markdown レポートを作成する（Wave 4 / 集中再調査）", "reason": "設計後に変更対象を絞り込んで実装の指示書を作るため", "dependsOn": [4, 5, 6] },
-    { "role": "coder", "mode": "computer_use", "input": "Wave 4 の集中再調査の指示に沿って実装", "reason": "動作するコードを生成するため", "dependsOn": [7] },
-    { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [8] }
+    { "role": "file-searcher", "mode": "chat", "input": "プロジェクト内の関連ファイルを読み込み、既存実装・変更候補・注意点を Markdown レポートにまとめる", "reason": "実装前に既存コードを把握するため", "dependsOn": [] },
+    { "role": "coder", "mode": "computer_use", "input": "file-searcher の調査結果を踏まえて実装する", "reason": "動作するコードを生成するため", "dependsOn": [0] },
+    { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [1] }
   ],
   "finalRole": "coder"
 }
@@ -380,194 +352,18 @@ function buildDependencyMarkdown(
 }
 
 /**
- * Coder/Writer 相当の「実装タスク」か判定する。`normalizeDiagramFlow` のグルーピングに利用。
+ * Leader が指定した dependsOn をそのまま信頼する。ここでは「自分より前のタスクだけを
+ * 指す整数インデックス」であることだけを保証する（範囲外・自己参照・未来参照を除去）。
+ * ロールの強制挿入や dependsOn の上書きは行わない — Leader が出したタスク構成が
+ * そのまま実行される。
  */
-function isImplementationTask(t: SubTask): boolean {
-  const role = normalizeRoleSlug(t.role);
-  return role === "coder" || role === "writer" || t.mode === "computer_use";
-}
-
-/**
- * file-searcher が 2 タスク構成になるよう正規化する:
- *  - "primary"  file-searcher: **Wave 1（最初に単独で実行）**。プロジェクト全体を最初に読む。
- *  - "focused"  file-searcher: Wave 4（dependsOn = Wave 3 の設計）。設計を踏まえて再調査。
- *
- * Wave 構造:
- *   Wave 1: primary file-searcher（単独）
- *   Wave 2: ideaman / searcher / researcher（並列、primary fs に依存）
- *   Wave 3: designer / imager / planner（並列、Wave 1 + Wave 2 に依存）
- *   Wave 4: focused file-searcher（Wave 3 に依存）
- *   Wave 5: coder / writer（focused fs に依存）
- *   Wave 6: reviewer（implementer に依存）
- *
- * Leader が出してきたタスクの dependsOn を見て、Layer 2（designer/imager/planner）に
- * 依存している file-searcher を "focused"、そうでないものを "primary" に分類する。
- * どちらかが欠けていれば自動で挿入する。
- */
-function normalizeDiagramFlow(tasks: SubTask[]): SubTask[] {
-  const layer1RoleSet = new Set(["ideaman", "searcher", "researcher"]);
-  const layer2RoleSet = new Set(["designer", "imager", "planner"]);
-
-  let primaryFsOldIdx = -1;
-  let focusedFsOldIdx = -1;
-  for (let i = 0; i < tasks.length; i++) {
-    if (normalizeRoleSlug(tasks[i].role) !== "file-searcher") continue;
-    const deps = tasks[i].dependsOn || [];
-    const hasLayer2Dep = deps.some((d) => {
-      const u = tasks[d];
-      return u && layer2RoleSet.has(normalizeRoleSlug(u.role));
-    });
-    if (hasLayer2Dep) {
-      if (focusedFsOldIdx < 0) focusedFsOldIdx = i;
-    } else {
-      if (primaryFsOldIdx < 0) primaryFsOldIdx = i;
-    }
-  }
-
-  const base: SubTask[] = tasks.map((t) => ({ ...t }));
-
-  if (primaryFsOldIdx < 0) {
-    base.push({
-      role: "file-searcher",
-      mode: "chat",
-      input:
-        "プロジェクト内のすべてのフォルダ・ファイルを最初から読み込んで構造を把握し、ユーザーのリクエストに関連する既存実装・変更候補・注意点を Markdown レポートにまとめる。",
-      reason: "Wave 1: ideaman / searcher / researcher の前にプロジェクト全体を把握するため",
-      dependsOn: [],
-    });
-    primaryFsOldIdx = base.length - 1;
-  }
-
-  if (focusedFsOldIdx < 0) {
-    base.push({
-      role: "file-searcher",
-      mode: "chat",
-      input:
-        "Layer 2 の設計・画像・計画と Leader Todos を元に、変更対象ファイル・既存実装の差分・注意点を集中的に調査し、Coder/Writer がそのまま実装できる詳細な Markdown レポートを作成する。",
-      reason: "Wave 4: 設計後の集中再調査（Coder/Writer の直前指示）",
-      dependsOn: [],
-    });
-    focusedFsOldIdx = base.length - 1;
-  }
-
-  // Wave 3（designer / imager / planner）は Leader プロンプトで「必須」と指示しているだけで
-  // コード側の担保が無かったため、Leader がしばしば省略し designer 等が一切実行されない
-  // 不具合になっていた。file-searcher と同様に欠けているロールを自動補完する。
-  const WAVE3_DEFAULTS: Record<string, { input: string; reason: string }> = {
-    designer: {
-      input: "既存コードと Wave 2 の調査を元に UI/UX デザイン・プロトタイプ HTML/CSS を作成する。",
-      reason: "Wave 3: ビジュアルイメージを具体化するため",
-    },
-    imager: {
-      input: "既存コードと Wave 2 の調査を元に必要な画像・ビジュアル素材の案を作成する。",
-      reason: "Wave 3: 視覚要素を具体化するため",
-    },
-    planner: {
-      input: "既存コードと Wave 2 の調査を元に要件定義・設計・実装方針を作成する。",
-      reason: "Wave 3: 実装の方向性を決めるため",
-    },
-  };
-  const presentLayer2 = new Set(
-    base.map((t) => normalizeRoleSlug(t.role)).filter((r) => layer2RoleSet.has(r))
-  );
-  for (const role of layer2RoleSet) {
-    if (presentLayer2.has(role)) continue;
-    const d = WAVE3_DEFAULTS[role];
-    base.push({ role, mode: "chat", input: d.input, reason: d.reason, dependsOn: [] });
-  }
-
-  // group 番号 = Wave 番号 - 1
-  const groupOf = (task: SubTask, oldIndex: number): number => {
-    if (oldIndex === primaryFsOldIdx) return 0;   // Wave 1
-    if (oldIndex === focusedFsOldIdx) return 3;   // Wave 4
-    const role = normalizeRoleSlug(task.role);
-    if (layer1RoleSet.has(role)) return 1;         // Wave 2: ideaman/searcher/researcher
-    if (layer2RoleSet.has(role)) return 2;         // Wave 3: designer/imager/planner
-    if (isImplementationTask(task)) return 4;      // Wave 5: coder/writer
-    if (role === "reviewer") return 5;             // Wave 6: reviewer
-    return 2;
-  };
-
-  const orderedWithMeta = base
-    .map((task, oldIndex) => ({
-      task,
-      oldIndex,
-      group: groupOf(task, oldIndex),
-      isPrimary: oldIndex === primaryFsOldIdx,
-      isFocused: oldIndex === focusedFsOldIdx,
-    }))
-    .sort((a, b) => {
-      if (a.group !== b.group) return a.group - b.group;
-      return a.oldIndex - b.oldIndex;
-    });
-
-  const ordered = orderedWithMeta.map(({ task }) => ({ ...task }));
-
-  const newPrimaryFsIdx = orderedWithMeta.findIndex((m) => m.isPrimary);
-  const newFocusedFsIdx = orderedWithMeta.findIndex((m) => m.isFocused);
-
-  const indicesByGroup = (group: number) =>
-    orderedWithMeta.map((m, i) => (m.group === group ? i : -1)).filter((i) => i >= 0);
-
-  const wave2Indices = indicesByGroup(1); // ideaman / searcher / researcher
-  const wave3Indices = indicesByGroup(2); // designer / imager / planner
-  const implementerIndices = indicesByGroup(4); // coder / writer
-  const reviewerIndices = indicesByGroup(5);
-
-  const dedupSorted = (arr: number[]) =>
-    Array.from(new Set(arr)).sort((a, b) => a - b);
-
-  for (let i = 0; i < ordered.length; i++) {
-    if (i === newPrimaryFsIdx) {
-      // Wave 1: primary file-searcher 単独。誰にも依存しない。
-      ordered[i].dependsOn = [];
-    } else if (i === newFocusedFsIdx) {
-      // Wave 4: focused file-searcher は Wave 3（設計）に依存。
-      ordered[i].dependsOn = wave3Indices.length
-        ? [...wave3Indices]
-        : wave2Indices.length
-        ? [...wave2Indices]
-        : newPrimaryFsIdx >= 0
-        ? [newPrimaryFsIdx]
-        : [];
-    } else if (wave2Indices.includes(i)) {
-      // Wave 2: ideaman / searcher / researcher は primary file-searcher に依存。
-      ordered[i].dependsOn = newPrimaryFsIdx >= 0 ? [newPrimaryFsIdx] : [];
-    } else if (wave3Indices.includes(i)) {
-      // Wave 3: designer / imager / planner は primary fs + Wave 2 に依存。
-      const deps: number[] = [];
-      if (newPrimaryFsIdx >= 0) deps.push(newPrimaryFsIdx);
-      deps.push(...wave2Indices);
-      ordered[i].dependsOn = dedupSorted(deps);
-    } else if (implementerIndices.includes(i)) {
-      // Wave 5: coder / writer は focused file-searcher にのみ依存。
-      const deps =
-        newFocusedFsIdx >= 0
-          ? [newFocusedFsIdx]
-          : wave3Indices.length
-          ? [...wave3Indices]
-          : wave2Indices.length
-          ? [...wave2Indices]
-          : newPrimaryFsIdx >= 0
-          ? [newPrimaryFsIdx]
-          : [];
-      ordered[i].dependsOn = dedupSorted(deps);
-    } else if (reviewerIndices.includes(i)) {
-      ordered[i].dependsOn = implementerIndices.length
-        ? [...implementerIndices]
-        : newFocusedFsIdx >= 0
-        ? [newFocusedFsIdx]
-        : wave3Indices.length
-        ? [...wave3Indices]
-        : wave2Indices.length
-        ? [...wave2Indices]
-        : newPrimaryFsIdx >= 0
-        ? [newPrimaryFsIdx]
-        : [];
-    }
-  }
-
-  return ordered;
+function sanitizeDependsOn(tasks: SubTask[]): SubTask[] {
+  return tasks.map((t, i) => ({
+    ...t,
+    dependsOn: (t.dependsOn || []).filter(
+      (d) => Number.isInteger(d) && d >= 0 && d < i
+    ),
+  }));
 }
 
 // --- API Key Resolution ---
@@ -631,7 +427,7 @@ function parseLeaderResponse(output: string): LeaderParsedResponse {
 
     const finalRole = parsed.finalRole === "coder" ? "coder" : "writer";
 
-    return { tasks: normalizeDiagramFlow(tasks), finalRole };
+    return { tasks: sanitizeDependsOn(tasks), finalRole };
   } catch (err) {
     throw new Error(
       `Failed to parse Leader response: ${err instanceof Error ? err.message : String(err)}\nRaw output: ${output}`
@@ -803,7 +599,7 @@ export async function runAgent(
   logger.info(`[Agent] Starting session`, { sessionId, projectId: req.projectId });
 
   // NOTE: Leader の systemPrompt は **常にコード側の LEADER_SYSTEM_PROMPT を使う**。
-  // DB (Role.systemPrompt) に古いプロンプトが残っていると Wave 構造の変更が反映されないため。
+  // DB (Role.systemPrompt) に古いプロンプトが残っていると Leader プロンプトの変更が反映されないため。
   if (leaderRole.systemPrompt && leaderRole.systemPrompt !== LEADER_SYSTEM_PROMPT) {
     logger.info(
       `[Agent] DB の leaderRole.systemPrompt を無視してコード側 LEADER_SYSTEM_PROMPT を使用`
@@ -1467,7 +1263,7 @@ async function runAgentStreamCore(
 
   // 3. Ask Leader to decompose (streaming)
   // NOTE: Leader の systemPrompt は **常にコード側の LEADER_SYSTEM_PROMPT を使う**。
-  // DB (Role.systemPrompt) に古いプロンプトが残っていると Wave 構造の変更が反映されないため。
+  // DB (Role.systemPrompt) に古いプロンプトが残っていると Leader プロンプトの変更が反映されないため。
   if (leaderRole.systemPrompt && leaderRole.systemPrompt !== LEADER_SYSTEM_PROMPT) {
     logger.info(
       `[AgentStream] DB の leaderRole.systemPrompt を無視してコード側 LEADER_SYSTEM_PROMPT を使用`

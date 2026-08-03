@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import type {
   OrchestraSession,
   AgentNode,
-  WaveGroup,
   ViewMode,
   PipelineTemplate,
   PipelineStep,
@@ -34,7 +33,6 @@ interface OrchestraState {
   updateAgentStatus: (agentId: string, status: AgentStatus, data?: Partial<AgentNode>) => void
   setLeaderOutput: (output: string) => void
   addAgents: (agents: AgentNode[]) => void
-  setWaves: (waves: WaveGroup[]) => void
   startSynthesis: (role: string, provider: string, model: string) => void
   appendSynthesisChunk: (text: string) => void
   completeSynthesis: (output: string) => void
@@ -57,7 +55,6 @@ const defaultMetrics: SessionMetrics = {
   totalDurationMs: 0,
   successRate: 0,
   agentCount: 0,
-  waveCount: 0,
 }
 
 const defaultTemplates: PipelineTemplate[] = [
@@ -125,7 +122,6 @@ export const useOrchestraStore = create<OrchestraState>((set) => ({
         input,
         status: 'running',
         agents: [],
-        waves: [],
       },
       isRunning: true,
       metrics: { ...defaultMetrics },
@@ -161,12 +157,6 @@ export const useOrchestraStore = create<OrchestraState>((set) => ({
         ? { ...state.session, agents: [...state.session.agents, ...agents] }
         : null,
       metrics: { ...state.metrics, agentCount: (state.session?.agents.length ?? 0) + agents.length },
-    })),
-
-  setWaves: (waves) =>
-    set((state) => ({
-      session: state.session ? { ...state.session, waves } : null,
-      metrics: { ...state.metrics, waveCount: waves.length },
     })),
 
   startSynthesis: (role, provider, model) =>

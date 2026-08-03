@@ -92,11 +92,11 @@ export function MetaDashboard() {
         </div>
       )}
 
-      {/* Wave info */}
-      {session && session.waves.length > 0 && (
+      {/* Agent count */}
+      {session && session.agents.length > 0 && (
         <div className="mt-3 pt-3 border-t border-conductor-border">
           <span className="text-xs text-conductor-muted">
-            Wave: {metrics.waveCount} | Agents: {metrics.agentCount}
+            Agents: {metrics.agentCount}
           </span>
         </div>
       )}

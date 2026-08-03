@@ -284,7 +284,7 @@ const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです。
  * 当該プロジェクトに assignment が無ければ leader と同じプロバイダーで自動 assign する。
  *
  * これがないと、`db:seed` を昔のバージョンで実行した既存ユーザーは file-searcher タスクが
- * 「Role not found: file-searcher」エラーで wave 1 で必ず失敗してしまう。
+ * 「Role not found: file-searcher」エラーで必ず失敗してしまう。
  */
 async function ensureFileSearcherSetup(
   projectId: string,
@@ -1107,22 +1107,6 @@ export interface StreamEventHeartbeat {
   id: string;
   timestamp: number;
 }
-export interface StreamEventWaveStart {
-  type: "wave_start";
-  id: string;
-  waveIndex: number;
-  wave: number;
-  taskIds: string[];
-  taskIndices: number[];
-}
-export interface StreamEventWaveDone {
-  type: "wave_done";
-  id: string;
-  waveIndex: number;
-  wave: number;
-  taskIds: string[];
-  taskIndices: number[];
-}
 export interface StreamEventSynthesisStart {
   type: "synthesis_start";
   id: string;
@@ -1158,8 +1142,6 @@ export type StreamEvent =
   | StreamEventTaskError
   | StreamEventSessionDone
   | StreamEventHeartbeat
-  | StreamEventWaveStart
-  | StreamEventWaveDone
   | StreamEventSynthesisStart
   | StreamEventSynthesisChunk
   | StreamEventSynthesisDone;
@@ -1613,10 +1595,10 @@ async function runAgentStreamCore(
   }
 
   // --- Dependency-aware parallel scheduler ---
-  // Build waves: each wave contains tasks whose dependencies are all in prior waves.
+  // Repeatedly run every task whose dependsOn are all completed, until none remain.
+  // Each task's own lifecycle is reported via task_start/task_chunk/task_done/task_error.
 
   const remaining = new Set(subTasks.map((_, idx) => idx));
-  let waveNum = 0;
 
   while (remaining.size > 0) {
     // Find tasks whose dependencies are all satisfied
@@ -1640,19 +1622,13 @@ async function runAgentStreamCore(
       remaining.delete(idx);
     }
 
-    // Emit wave start (indicates which tasks are running in parallel)
-    emit({ type: "wave_start", id: nextId(), waveIndex: waveNum, wave: waveNum, taskIds: ready.map(taskIdOf), taskIndices: ready });
-
-    // Execute this wave concurrently
+    // Execute this batch concurrently
     await Promise.all(ready.map((idx) => executeSubTask(idx)));
 
     // Mark as completed
     for (const idx of ready) {
       completed.add(idx);
     }
-
-    emit({ type: "wave_done", id: nextId(), waveIndex: waveNum, wave: waveNum, taskIds: ready.map(taskIdOf), taskIndices: ready });
-    waveNum++;
   }
 
   // [strict-mode] Reviewer ↔ Coder/Writer ↔ File Search の自動フィードバックループは廃止。

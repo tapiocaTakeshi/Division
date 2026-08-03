@@ -14,7 +14,7 @@ export function ConductorView({ onRerunAgent }: ConductorViewProps) {
     return <EmptyState />
   }
 
-  const { agents, waves, leaderOutput } = session
+  const { agents, leaderOutput } = session
 
   return (
     <div className="flex flex-col gap-6 animate-fade-in">
@@ -47,71 +47,15 @@ export function ConductorView({ onRerunAgent }: ConductorViewProps) {
         )}
       </div>
 
-      {/* Wave-based pipeline */}
-      {waves.length > 0 && (
-        <div className="flex flex-col gap-4">
-          {waves.map((wave, waveIdx) => {
-            const waveAgents = wave.taskIds
-              .map((id) => agents.find((a) => a.id === id))
-              .filter(Boolean) as typeof agents
-
-            return (
-              <div key={waveIdx} className="animate-slide-up" style={{ animationDelay: `${waveIdx * 100}ms` }}>
-                {/* Wave header with connector */}
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="flex items-center gap-2">
-                    <WaveIndicator index={waveIdx} total={waves.length} />
-                    <span className="text-xs font-bold text-conductor-muted uppercase tracking-wider">
-                      Wave {waveIdx + 1}
-                    </span>
-                  </div>
-                  <div className="flex-1 h-px bg-gradient-to-r from-conductor-border to-transparent" />
-                  <span className="text-[10px] text-conductor-muted">
-                    {waveAgents.length} agents
-                    {waveAgents.length > 1 && ' (並列実行)'}
-                  </span>
-                </div>
-
-                {/* Agent cards */}
-                <div className={`grid gap-3 ${waveAgents.length === 1 ? 'grid-cols-1 max-w-md' : waveAgents.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
-                  {waveAgents.map((agent) => (
-                    <AgentCard
-                      key={agent.id}
-                      agent={agent}
-                      onRerun={onRerunAgent}
-                      onChangeProvider={onRerunAgent ? () => onRerunAgent(agent.id) : undefined}
-                    />
-                  ))}
-                </div>
-
-                {/* Flow connector between waves */}
-                {waveIdx < waves.length - 1 && (
-                  <div className="flex justify-center py-2">
-                    <svg width="24" height="32" viewBox="0 0 24 32" className="text-conductor-accent/40">
-                      <line
-                        x1="12" y1="0" x2="12" y2="24"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        className="flow-connector"
-                      />
-                      <polygon points="6,24 12,32 18,24" fill="currentColor" />
-                    </svg>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Agents without waves (fallback flat view) */}
-      {waves.length === 0 && agents.length > 0 && (
+      {/* Agents (flat grid; ordering/parallelism is driven by each task's own dependsOn) */}
+      {agents.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {agents.map((agent) => (
             <AgentCard
               key={agent.id}
               agent={agent}
               onRerun={onRerunAgent}
+              onChangeProvider={onRerunAgent ? () => onRerunAgent(agent.id) : undefined}
             />
           ))}
         </div>
@@ -121,7 +65,7 @@ export function ConductorView({ onRerunAgent }: ConductorViewProps) {
       {(session.synthesisStatus || session.finalOutput) && (
         <>
           {/* Flow connector to synthesis */}
-          {waves.length > 0 && (
+          {agents.length > 0 && (
             <div className="flex justify-center py-2">
               <svg width="24" height="32" viewBox="0 0 24 32" className="text-conductor-accent/40">
                 <line x1="12" y1="0" x2="12" y2="24" stroke="currentColor" strokeWidth="2" className="flow-connector" />
@@ -179,23 +123,6 @@ export function ConductorView({ onRerunAgent }: ConductorViewProps) {
           </div>
         </>
       )}
-    </div>
-  )
-}
-
-function WaveIndicator({ index, total }: { index: number; total: number }) {
-  const progress = total > 1 ? index / (total - 1) : 1
-  const hue = 240 + progress * 120 // indigo → green
-
-  return (
-    <div
-      className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
-      style={{
-        backgroundColor: `hsl(${hue}, 60%, 50%, 0.2)`,
-        color: `hsl(${hue}, 60%, 70%)`,
-      }}
-    >
-      {index + 1}
     </div>
   )
 }

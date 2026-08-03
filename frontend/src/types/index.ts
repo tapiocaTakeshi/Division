@@ -20,18 +20,12 @@ export interface AgentNode {
   previewUrl?: string
 }
 
-export interface WaveGroup {
-  waveIndex: number
-  taskIds: string[]
-}
-
 export interface OrchestraSession {
   sessionId: string
   projectId: string
   input: string
   status: 'pending' | 'running' | 'success' | 'error'
   agents: AgentNode[]
-  waves: WaveGroup[]
   leaderOutput?: string
   finalOutput?: string
   synthesisOutput?: string
@@ -91,8 +85,6 @@ export type SSEEventType =
   | 'leader_chunk'
   | 'leader_done'
   | 'leader_error'
-  | 'wave_start'
-  | 'wave_done'
   | 'task_start'
   | 'task_chunk'
   | 'task_thinking_chunk'
@@ -118,7 +110,6 @@ export interface SessionMetrics {
   totalDurationMs: number
   successRate: number
   agentCount: number
-  waveCount: number
 }
 
 // ===== View Mode =====

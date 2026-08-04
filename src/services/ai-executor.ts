@@ -894,7 +894,7 @@ function parseStreamChunk(apiType: string, data: string): StreamChunkResult {
 
 // --- Tool permissions per role ---
 
-const FILE_SEARCH_TOOLS = new Set(["read_file", "search_files", "list_directory"]);
+const FILE_SEARCH_TOOLS = new Set(["read_file", "search_files", "list_directory", "execute_command"]);
 const CODER_TOOLS = new Set(["read_file", "write_file", "edit_file", "execute_command", "list_directory", "search_files"]);
 
 // --- Tool loop system prompts ---
@@ -907,10 +907,11 @@ const SEARCH_AGENT_PROMPT = `あなたはファイル検索・コード解析エ
 - TypeScript (.ts/.tsx), JavaScript (.js/.jsx), その他あらゆるソースファイルが存在します
 - ワークスペースルートはユーザーのプロジェクトディレクトリです
 
-## 利用可能なツール（読み取り専用）
+## 利用可能なツール
 1. list_directory: {"path": "."} — ディレクトリの内容を一覧表示（まずこれで構造を把握）
 2. read_file: {"path": "...", "startLine": N, "endLine": N} — ファイルを読み取り（行範囲指定可。省略時は全行）
 3. search_files: {"query": "...", "directory": ".", "include": "*.ts"} — パターンでファイル内を検索
+4. execute_command: {"command": "...", "timeout": 30000} — シェルコマンド実行（ls, grep, npm test 等の調査用途）
 
 ## 手順
 1. まず list_directory でプロジェクト構造を把握する
@@ -953,12 +954,13 @@ const SEARCH_AGENT_PROMPT = `あなたはファイル検索・コード解析エ
  * （`{"tool":...}` の呼び出し規約を知らないため、多くの場合ループが1回で終わってしまう）。
  */
 function buildGenericToolExplorationPrompt(roleName: string): string {
-  return `あなたは ${roleName} ロールの本番回答を作成する前段階として、プロジェクトのファイルシステムを調査する読み取り専用の調査エージェントです。
+  return `あなたは ${roleName} ロールの本番回答を作成する前段階として、プロジェクトのファイルシステムを調査する調査エージェントです。
 
-## 利用可能なツール（読み取り専用）
+## 利用可能なツール
 1. list_directory: {"path": "."} — ディレクトリの内容を一覧表示（まずこれで構造を把握）
 2. read_file: {"path": "...", "startLine": N, "endLine": N} — ファイルを読み取り（行範囲指定可。省略時は全行）
 3. search_files: {"query": "...", "directory": ".", "include": "*.ts"} — パターンでファイル内を検索
+4. execute_command: {"command": "...", "timeout": 30000} — シェルコマンド実行（ls, grep, npm test 等の調査用途）
 
 ## 手順
 1. まず list_directory でプロジェクト構造を把握する
@@ -1110,7 +1112,7 @@ function isWorkspaceAccessible(ws: string | undefined): boolean {
 }
 
 interface ToolLoopOptions {
-  /** Tool names this loop may call. Defaults to the read-only file-search set. */
+  /** Tool names this loop may call. Defaults to the shared file-search + execute_command set. */
   allowedTools?: Set<string>;
   /**
    * System prompt used for the exploration turns only (never for the caller's
@@ -1272,9 +1274,9 @@ const GENERIC_TOOL_LOOP_EXCLUDED_ROLES = new Set(["leader", "coder", "imager", "
 /**
  * Give any other role (planner / designer / writer / reviewer / ideaman / researcher, etc.)
  * the same real, executed function calling that file-searcher already has: when the request
- * has a real, accessible workspace and the assigned provider declares native tools, run a
- * read-only exploration loop (list_directory / search_files / read_file) and hand the AI's
- * own final generation call the gathered results. Falls back to `req.input` unchanged
+ * has a real, accessible workspace and the assigned provider declares native tools, run an
+ * exploration loop (list_directory / search_files / read_file / execute_command) and hand the
+ * AI's own final generation call the gathered results. Falls back to `req.input` unchanged
  * whenever tools can't actually be executed (e.g. production Vercel deployments with no
  * server-side filesystem), so it never affects the AI's default single-shot behavior there.
  */
@@ -1285,7 +1287,7 @@ async function maybeRunGenericToolLoop(req: ExecutionRequest, logPrefix: string)
   if (effectiveApiType(req.provider) === "perplexity") return req.input; // tools are never sent to Perplexity
   if (!isWorkspaceAccessible(req.workspacePath)) return req.input;
 
-  logger.info(`${logPrefix} ${roleSlug}: running generic read-only tool loop, workspacePath=${req.workspacePath}`);
+  logger.info(`${logPrefix} ${roleSlug}: running generic tool loop, workspacePath=${req.workspacePath}`);
   try {
     const enriched = await gatherToolContext(req, {
       allowedTools: FILE_SEARCH_TOOLS,

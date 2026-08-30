@@ -279,62 +279,6 @@ const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです。
 5. 冗長な重複は排除し、簡潔で実用的な成果物にまとめてください
 6. ユーザーのリクエストに直接答える形で出力してください`;
 
-/**
- * file-searcher ロールが DB に存在しない場合は自動で作成し、
- * 当該プロジェクトに assignment が無ければ leader と同じプロバイダーで自動 assign する。
- *
- * これがないと、`db:seed` を昔のバージョンで実行した既存ユーザーは file-searcher タスクが
- * 「Role not found: file-searcher」エラーで必ず失敗してしまう。
- */
-async function ensureFileSearcherSetup(
-  projectId: string,
-  leaderProviderId: string
-): Promise<void> {
-  const role = await prisma.role.upsert({
-    where: { slug: "file-searcher" },
-    update: {},
-    create: {
-      slug: "file-searcher",
-      name: "File Searcher",
-      description:
-        "Project-wide file scanner: reads all folders/files in Layer 1 and re-investigates focused areas in Layer 3 after the design phase.",
-    },
-  });
-
-  // プロジェクト内 assignment があれば何もしない
-  const existing = await prisma.roleAssignment.findFirst({
-    where: { projectId, roleId: role.id },
-  });
-  if (existing) return;
-
-  // 優先: 有効な OpenAI プロバイダー（GPT は file-searcher に最適）
-  let provider = await prisma.provider.findFirst({
-    where: { apiType: "openai", isEnabled: true },
-    orderBy: { createdAt: "asc" },
-  });
-
-  // フォールバック: leader と同じプロバイダー（必ず存在する）
-  if (!provider) {
-    provider = await prisma.provider.findUnique({
-      where: { id: leaderProviderId },
-    });
-  }
-  if (!provider) return;
-
-  await prisma.roleAssignment.create({
-    data: {
-      projectId,
-      roleId: role.id,
-      providerId: provider.id,
-      priority: 10,
-      config: JSON.stringify({ model: provider.modelId }),
-    },
-  });
-  logger.info(
-    `[Agent] Auto-bootstrapped file-searcher assignment: project=${projectId} -> ${provider.displayName} (${provider.modelId})`
-  );
-}
-
 function buildDependencyMarkdown(
   task: SubTask,
   taskOutputs: string[],
@@ -588,9 +532,6 @@ export async function runAgent(
     req.apiKeys,
     req.authenticated
   );
-
-  // 1.5. file-searcher ロール / assignment を自動セットアップ（既存 DB 互換）
-  await ensureFileSearcherSetup(req.projectId, leaderAssignment.provider.id);
 
   // 2. Ask Leader to decompose the task
   log(`[Agent] Session ${sessionId}`);
@@ -1223,9 +1164,6 @@ async function runAgentStreamCore(
     req.apiKeys,
     req.authenticated
   );
-
-  // 1.5. file-searcher ロール / assignment を自動セットアップ（既存 DB 互換）
-  await ensureFileSearcherSetup(req.projectId, leaderAssignment.provider.id);
 
   // 2. Emit session start
   emit({

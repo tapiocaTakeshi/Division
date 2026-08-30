@@ -1777,6 +1777,12 @@ export async function executeTaskStream(
     };
   }
 
+  // leader だけは常にタスク分解 JSON を直接返す必要がある。tools を渡すと
+  // モデルが native tool_use（list_directory 等）で応答し、実行されないまま
+  // `{"tool":...}` として output に漏れて "tasks" 配列パースに失敗する
+  // （GENERIC_TOOL_LOOP_EXCLUDED_ROLES で除外している設計意図と揃える）。
+  const finalCallToolMap = req.role.slug === "leader" ? undefined : req.provider.toolMap;
+
   function buildAuthedStreamSpec(disableThinking: boolean) {
     const spec = buildRequestBody(
       apiTypeEff,
@@ -1786,7 +1792,7 @@ export async function executeTaskStream(
       req.config || undefined,
       req.chatHistory,
       req.provider.apiEndpoint,
-      req.provider.toolMap,
+      finalCallToolMap,
       disableThinking
     );
     if (!spec) return null;
@@ -2216,6 +2222,12 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     };
   }
 
+  // leader だけは常にタスク分解 JSON を直接返す必要がある。tools を渡すと
+  // モデルが native tool_use（list_directory 等）で応答し、実行されないまま
+  // `{"tool":...}` として output に漏れて "tasks" 配列パースに失敗する
+  // （GENERIC_TOOL_LOOP_EXCLUDED_ROLES で除外している設計意図と揃える）。
+  const finalCallToolMap = req.role.slug === "leader" ? undefined : req.provider.toolMap;
+
   function buildAuthedSpec(disableThinking: boolean) {
     const spec = buildRequestBody(
       apiTypeEff,
@@ -2225,7 +2237,7 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
       req.config || undefined,
       req.chatHistory,
       req.provider.apiEndpoint,
-      req.provider.toolMap,
+      finalCallToolMap,
       disableThinking
     );
     if (!spec) return spec;

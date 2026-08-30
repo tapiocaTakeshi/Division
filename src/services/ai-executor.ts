@@ -399,7 +399,9 @@ function buildRequestBody(
   config?: Record<string, unknown>,
   chatHistory?: ChatMessage[],
   apiEndpoint?: string,
-  toolMap?: unknown
+  toolMap?: unknown,
+  /** Force-omit thinking/reasoning config even for models normally believed to support it (used for retry-without-thinking). */
+  disableThinking?: boolean
 ): { url: string; headers: Record<string, string>; body: unknown } | null {
   const apiKey = config?.apiKey as string | undefined;
   const maxTokens = (config?.maxTokens as number) || 8192;
@@ -469,7 +471,7 @@ function buildRequestBody(
      * Do NOT use /opus-4/ — that matches Opus 4.5 / 4.1 / 4.0 IDs and triggers 400s.
      * Claude Haiku 3.x: omit thinking (not supported like Claude 4 family).
      */
-    const omitThinking = /haiku-3-|claude-3-haiku|claude-haiku-3-\d/.test(resolvedModelId);
+    const omitThinking = disableThinking || /haiku-3-|claude-3-haiku|claude-haiku-3-\d/.test(resolvedModelId);
     const useAdaptive =
       resolvedModelId.startsWith("claude-opus-4-7") ||
       resolvedModelId.startsWith("claude-opus-4-6") ||
@@ -530,7 +532,9 @@ function buildRequestBody(
         contents,
         generationConfig: {
           maxOutputTokens: maxTokens,
-          thinkingConfig: { thinkingBudget: Math.min(Math.floor(maxTokens * 0.5), 32768) },
+          ...(disableThinking
+            ? {}
+            : { thinkingConfig: { thinkingBudget: Math.min(Math.floor(maxTokens * 0.5), 32768) } }),
         },
         ...(googleTools ? { tools: googleTools } : {}),
       },
@@ -575,6 +579,29 @@ function buildRequestBody(
   }
 
   return null;
+}
+
+/**
+ * Detect whether an API error response was caused by the model not supporting
+ * extended thinking / reasoning config, rather than some unrelated failure.
+ * Providers vary in wording (Anthropic: "thinking is not supported" / mentions
+ * `budget_tokens`; Google: "thinking" / "thinkingConfig" is not a supported field),
+ * so this is a best-effort text match rather than a hardcoded model allowlist —
+ * it lets us recover from models we don't yet know lack thinking support.
+ */
+function isThinkingUnsupportedError(apiType: string, status: number, errorText: string): boolean {
+  if (status !== 400) return false;
+  if (apiType !== "anthropic" && apiType !== "google") return false;
+  const text = errorText.toLowerCase();
+  if (!text.includes("thinking")) return false;
+  return (
+    text.includes("not support") ||
+    text.includes("unsupported") ||
+    text.includes("invalid") ||
+    text.includes("unknown field") ||
+    text.includes("unrecognized") ||
+    text.includes("budget_tokens")
+  );
 }
 
 interface ParsedResponse {
@@ -1738,25 +1765,6 @@ export async function executeTaskStream(
 
   const apiTypeEff = effectiveApiType(req.provider);
   const modelId = (req.config?.model as string) || req.provider.modelId;
-  const requestSpec = buildRequestBody(
-    apiTypeEff,
-    modelId,
-    enrichedInput,
-    systemPrompt,
-    req.config || undefined,
-    req.chatHistory,
-    req.provider.apiEndpoint,
-    req.provider.toolMap
-  );
-
-  if (!requestSpec) {
-    return {
-      output: "",
-      durationMs: Date.now() - start,
-      status: "error",
-      errorMsg: `Unsupported API type: ${apiTypeEff}`,
-    };
-  }
 
   const apiKey = resolveApiKeyFromConfig(req.config, apiTypeEff);
   if (!apiKey) {
@@ -1769,52 +1777,89 @@ export async function executeTaskStream(
     };
   }
 
-  // Update headers with the resolved API key
-  if (apiTypeEff === "openai") {
-    requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
-  } else if (apiTypeEff === "anthropic") {
-    requestSpec.headers["x-api-key"] = apiKey;
-  } else if (apiTypeEff === "google") {
-    requestSpec.headers["x-goog-api-key"] = apiKey;
-  } else if (OPENAI_COMPATIBLE_TYPES[apiTypeEff]) {
-    requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
+  function buildAuthedStreamSpec(disableThinking: boolean) {
+    const spec = buildRequestBody(
+      apiTypeEff,
+      modelId,
+      enrichedInput,
+      systemPrompt,
+      req.config || undefined,
+      req.chatHistory,
+      req.provider.apiEndpoint,
+      req.provider.toolMap,
+      disableThinking
+    );
+    if (!spec) return null;
+    if (apiTypeEff === "openai") {
+      spec.headers["Authorization"] = `Bearer ${apiKey}`;
+    } else if (apiTypeEff === "anthropic") {
+      spec.headers["x-api-key"] = apiKey;
+    } else if (apiTypeEff === "google") {
+      spec.headers["x-goog-api-key"] = apiKey;
+    } else if (OPENAI_COMPATIBLE_TYPES[apiTypeEff]) {
+      spec.headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+    const { url: streamUrl, body: streamBody } = enableStreaming(apiTypeEff, spec.url, spec.body);
+    return { headers: spec.headers, url: streamUrl, body: streamBody };
   }
 
-  // Enable streaming
-  const { url: streamUrl, body: streamBody } = enableStreaming(
-    apiTypeEff,
-    requestSpec.url,
-    requestSpec.body
-  );
+  let requestSpec = buildAuthedStreamSpec(false);
+
+  if (!requestSpec) {
+    return {
+      output: "",
+      durationMs: Date.now() - start,
+      status: "error",
+      errorMsg: `Unsupported API type: ${apiTypeEff}`,
+    };
+  }
 
   try {
     const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[apiTypeEff] || "";
-    const fullUrl = `${baseUrl}${streamUrl}`;
 
-    console.log(`\n[API] ──── Stream Request ────`);
-    console.log(`[API]  POST ${fullUrl}`);
-    console.log(
-      `[API]  Provider: ${req.provider.name} (${req.provider.modelId})` +
-        (apiTypeEff !== req.provider.apiType ? ` [apiType ${req.provider.apiType}→${apiTypeEff}]` : "")
-    );
-    console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
-    console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
-    console.log(`[API]  Body: ${truncate(JSON.stringify(streamBody), 300)}`);
+    let response: Response;
+    let attempt = 0;
+    for (;;) {
+      const fullUrl = `${baseUrl}${requestSpec.url}`;
+      console.log(`\n[API] ──── Stream Request ────`);
+      console.log(`[API]  POST ${fullUrl}`);
+      console.log(
+        `[API]  Provider: ${req.provider.name} (${req.provider.modelId})` +
+          (apiTypeEff !== req.provider.apiType ? ` [apiType ${req.provider.apiType}→${apiTypeEff}]` : "")
+      );
+      console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
+      console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
+      console.log(`[API]  Body: ${truncate(JSON.stringify(requestSpec.body), 300)}`);
 
-    const response = await fetch(fullUrl, {
-      method: "POST",
-      headers: requestSpec.headers,
-      body: JSON.stringify(streamBody),
-      signal: req.signal,
-    });
+      response = await fetch(fullUrl, {
+        method: "POST",
+        headers: requestSpec.headers,
+        body: JSON.stringify(requestSpec.body),
+        signal: req.signal,
+      });
 
-    if (!response.ok) {
+      if (response.ok) break;
+
       const errorText = await response.text();
-      const durationMs = Date.now() - start;
       console.log(`[API] ──── Stream Response (ERROR) ────`);
       console.log(`[API]  Status: ${response.status} ${response.statusText}`);
-      console.log(`[API]  Duration: ${durationMs}ms`);
       console.log(`[API]  Error: ${truncate(errorText, 500)}`);
+
+      if (attempt === 0 && isThinkingUnsupportedError(apiTypeEff, response.status, errorText)) {
+        attempt++;
+        logger.warn(
+          `[AI Executor] Model ${modelId} rejected thinking config; retrying stream without thinking`,
+          { provider: req.provider.name }
+        );
+        const retrySpec = buildAuthedStreamSpec(true);
+        if (retrySpec) {
+          requestSpec = retrySpec;
+          continue;
+        }
+      }
+
+      const durationMs = Date.now() - start;
+      console.log(`[API]  Duration: ${durationMs}ms`);
       return {
         output: "",
         durationMs,
@@ -2159,26 +2204,6 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
 
   const apiTypeEff = effectiveApiType(req.provider);
   const modelId = (req.config?.model as string) || req.provider.modelId;
-  const requestSpec = buildRequestBody(
-    apiTypeEff,
-    modelId,
-    enrichedInput,
-    systemPrompt,
-    req.config || undefined,
-    req.chatHistory,
-    req.provider.apiEndpoint,
-    req.provider.toolMap
-  );
-
-  if (!requestSpec) {
-    logger.error(`[AI Executor] Unsupported API type: ${apiTypeEff}`, { provider: req.provider.name });
-    return {
-      output: "",
-      durationMs: Date.now() - start,
-      status: "error",
-      errorMsg: `Unsupported API type: ${apiTypeEff}`,
-    };
-  }
 
   const apiKey = resolveApiKeyFromConfig(req.config, apiTypeEff);
   if (!apiKey) {
@@ -2191,45 +2216,90 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
     };
   }
 
-  // Update headers with the resolved API key
-  if (apiTypeEff === "openai") {
-    requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
-  } else if (apiTypeEff === "anthropic") {
-    requestSpec.headers["x-api-key"] = apiKey;
-  } else if (apiTypeEff === "google") {
-    requestSpec.headers["x-goog-api-key"] = apiKey;
-  } else if (OPENAI_COMPATIBLE_TYPES[apiTypeEff]) {
-    requestSpec.headers["Authorization"] = `Bearer ${apiKey}`;
+  function buildAuthedSpec(disableThinking: boolean) {
+    const spec = buildRequestBody(
+      apiTypeEff,
+      modelId,
+      enrichedInput,
+      systemPrompt,
+      req.config || undefined,
+      req.chatHistory,
+      req.provider.apiEndpoint,
+      req.provider.toolMap,
+      disableThinking
+    );
+    if (!spec) return spec;
+    if (apiTypeEff === "openai") {
+      spec.headers["Authorization"] = `Bearer ${apiKey}`;
+    } else if (apiTypeEff === "anthropic") {
+      spec.headers["x-api-key"] = apiKey;
+    } else if (apiTypeEff === "google") {
+      spec.headers["x-goog-api-key"] = apiKey;
+    } else if (OPENAI_COMPATIBLE_TYPES[apiTypeEff]) {
+      spec.headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+    return spec;
+  }
+
+  let requestSpec = buildAuthedSpec(false);
+
+  if (!requestSpec) {
+    logger.error(`[AI Executor] Unsupported API type: ${apiTypeEff}`, { provider: req.provider.name });
+    return {
+      output: "",
+      durationMs: Date.now() - start,
+      status: "error",
+      errorMsg: `Unsupported API type: ${apiTypeEff}`,
+    };
   }
 
   try {
     const baseUrl = req.provider.apiBaseUrl || DEFAULT_BASE_URLS[apiTypeEff] || "";
-    const fullUrl = `${baseUrl}${requestSpec.url}`;
 
-    console.log(`\n[API] ──── Request ────`);
-    console.log(`[API]  POST ${fullUrl}`);
-    console.log(
-      `[API]  Provider: ${req.provider.name} (${req.provider.modelId})` +
-        (apiTypeEff !== req.provider.apiType ? ` [apiType ${req.provider.apiType}→${apiTypeEff}]` : "")
-    );
-    console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
-    console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
-    console.log(`[API]  Body: ${truncate(JSON.stringify(requestSpec.body), 300)}`);
+    let response: Response;
+    let errorText = "";
+    let attempt = 0;
+    for (;;) {
+      const fullUrl = `${baseUrl}${requestSpec.url}`;
+      console.log(`\n[API] ──── Request ────`);
+      console.log(`[API]  POST ${fullUrl}`);
+      console.log(
+        `[API]  Provider: ${req.provider.name} (${req.provider.modelId})` +
+          (apiTypeEff !== req.provider.apiType ? ` [apiType ${req.provider.apiType}→${apiTypeEff}]` : "")
+      );
+      console.log(`[API]  Role: ${req.role.name} (${req.role.slug})`);
+      console.log(`[API]  Headers: ${JSON.stringify(maskHeaders(requestSpec.headers))}`);
+      console.log(`[API]  Body: ${truncate(JSON.stringify(requestSpec.body), 300)}`);
 
-    const response = await fetch(fullUrl, {
-      method: "POST",
-      headers: requestSpec.headers,
-      body: JSON.stringify(requestSpec.body),
-      signal: req.signal,
-    });
+      response = await fetch(fullUrl, {
+        method: "POST",
+        headers: requestSpec.headers,
+        body: JSON.stringify(requestSpec.body),
+        signal: req.signal,
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      const durationMs = Date.now() - start;
+      if (response.ok) break;
+
+      errorText = await response.text();
       console.log(`[API] ──── Response (ERROR) ────`);
       console.log(`[API]  Status: ${response.status} ${response.statusText}`);
-      console.log(`[API]  Duration: ${durationMs}ms`);
       console.log(`[API]  Error: ${truncate(errorText, 500)}`);
+
+      if (attempt === 0 && isThinkingUnsupportedError(apiTypeEff, response.status, errorText)) {
+        attempt++;
+        logger.warn(
+          `[AI Executor] Model ${modelId} rejected thinking config; retrying without thinking`,
+          { provider: req.provider.name }
+        );
+        const retrySpec = buildAuthedSpec(true);
+        if (retrySpec) {
+          requestSpec = retrySpec;
+          continue;
+        }
+      }
+
+      const durationMs = Date.now() - start;
+      console.log(`[API]  Duration: ${durationMs}ms`);
       return {
         output: "",
         durationMs,

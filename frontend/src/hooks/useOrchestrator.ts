@@ -18,6 +18,7 @@ export function useOrchestrator() {
 
       // resetSession より前にスナップショットを取る（ストアのリセットで消えないよう順序固定）
       const snapshot = useOrchestraStore.getState().localWorkspaceContext?.trim()
+      const workspacePath = useOrchestraStore.getState().workspacePath?.trim()
 
       store.resetSession()
 
@@ -27,6 +28,7 @@ export function useOrchestrator() {
         if (token) headers['Authorization'] = `Bearer ${token}`
         const body: Record<string, unknown> = { projectId, input, overrides }
         if (snapshot) body.localWorkspaceContext = snapshot
+        if (workspacePath) body.workspacePath = workspacePath
 
         const res = await fetch(`${API_BASE}/agent/stream`, {
           method: 'POST',

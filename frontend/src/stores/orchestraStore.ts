@@ -17,6 +17,8 @@ interface OrchestraState {
   isRunning: boolean
   /** IDE 連携: ローカルで読んだワークスペーススナップショット（API ボディ localWorkspaceContext に載せる） */
   localWorkspaceContext: string
+  /** API をローカルで起動しているときのみ有効: サーバー側ファイルツールに渡すワークスペース絶対パス（API ボディ workspacePath に載せる） */
+  workspacePath: string
 
   // Pipeline builder
   pipelineSteps: PipelineStep[]
@@ -29,6 +31,7 @@ interface OrchestraState {
   setViewMode: (mode: ViewMode) => void
   setLocalWorkspaceContext: (text: string) => void
   clearLocalWorkspaceContext: () => void
+  setWorkspacePath: (path: string) => void
   startSession: (sessionId: string, projectId: string, input: string) => void
   updateAgentStatus: (agentId: string, status: AgentStatus, data?: Partial<AgentNode>) => void
   setLeaderOutput: (output: string) => void
@@ -104,6 +107,7 @@ export const useOrchestraStore = create<OrchestraState>((set) => ({
   viewMode: 'pipeline',
   isRunning: false,
   localWorkspaceContext: '',
+  workspacePath: '',
   pipelineSteps: [],
   templates: defaultTemplates,
   metrics: defaultMetrics,
@@ -113,6 +117,8 @@ export const useOrchestraStore = create<OrchestraState>((set) => ({
   setLocalWorkspaceContext: (text) => set({ localWorkspaceContext: text }),
 
   clearLocalWorkspaceContext: () => set({ localWorkspaceContext: '' }),
+
+  setWorkspacePath: (path) => set({ workspacePath: path }),
 
   startSession: (sessionId, projectId, input) =>
     set({

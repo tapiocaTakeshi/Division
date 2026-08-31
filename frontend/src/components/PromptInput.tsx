@@ -16,6 +16,8 @@ export function PromptInput({ onSubmit, isRunning, onStop }: PromptInputProps) {
   const localWorkspaceContext = useOrchestraStore((s) => s.localWorkspaceContext)
   const setLocalWorkspaceContext = useOrchestraStore((s) => s.setLocalWorkspaceContext)
   const clearLocalWorkspaceContext = useOrchestraStore((s) => s.clearLocalWorkspaceContext)
+  const workspacePath = useOrchestraStore((s) => s.workspacePath)
+  const setWorkspacePath = useOrchestraStore((s) => s.setWorkspacePath)
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -144,6 +146,17 @@ export function PromptInput({ onSubmit, isRunning, onStop }: PromptInputProps) {
         {snapshotError ? (
           <p className="text-[10px] text-conductor-error">{snapshotError}</p>
         ) : null}
+        <div className="flex items-center gap-2 text-[10px] text-conductor-muted">
+          <span className="text-white/50 whitespace-nowrap">ワークスペースパス</span>
+          <input
+            type="text"
+            value={workspacePath}
+            onChange={(e) => setWorkspacePath(e.target.value)}
+            disabled={isRunning}
+            placeholder="/Users/you/project（Division API をローカル起動しているときのみ有効）"
+            className="flex-1 min-w-0 bg-white/5 rounded-lg px-2 py-1 text-white/70 placeholder-white/30 outline-none disabled:opacity-40"
+          />
+        </div>
       </div>
     </div>
   )

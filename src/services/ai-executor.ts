@@ -36,6 +36,12 @@ export interface ExecutionRequest {
   /** Override workspace root for file-search / coder tools (absolute path on the host) */
   workspacePath?: string;
   /**
+   * Division project ID. When a local agent (Orchestra's Electron main
+   * process) is connected for this project, file/command tool calls are
+   * dispatched to it instead of running server-side — see local-runtime.ts.
+   */
+  projectId?: string;
+  /**
    * IDE / CLI がローカルで読んだワークスペースのスナップショット（Markdown 等）。
    * 指定時は本番 API はユーザーのディスクを読まず、この内容を一次資料にする（Cursor 系の流れ）。
    */
@@ -207,7 +213,7 @@ const OPENAI_COMPATIBLE_TYPES: Record<string, string> = {
 };
 
 import { logger } from "../utils/logger";
-import { executeNativeTool } from "./agent-tools";
+import { executeTool } from "./agent-tools";
 import { isAbortError } from "./task-registry";
 
 /**
@@ -1169,10 +1175,10 @@ async function gatherToolContext(req: ExecutionRequest, opts?: ToolLoopOptions):
 
   // Step 1: List root directory structure
   logger.info(`[Tool Loop] Auto-listing workspace root (${ws})`);
-  const rootListing = await executeNativeTool("list_directory", { path: "." }, ws);
+  const rootListing = await executeTool("list_directory", { path: "." }, { workspaceRoot: ws, projectId: req.projectId });
   toolContext += `### ワークスペース構造\n${rootListing}\n\n`;
 
-  const srcListing = await executeNativeTool("list_directory", { path: "src" }, ws);
+  const srcListing = await executeTool("list_directory", { path: "src" }, { workspaceRoot: ws, projectId: req.projectId });
   if (!srcListing.startsWith("Error:")) {
     toolContext += `### src/ 構造\n${srcListing}\n\n`;
   }
@@ -1273,7 +1279,7 @@ search_files の query にはコード上のキーワード（関数名、変数
       }
 
       logger.info(`[Tool Loop] Executing: ${toolName}(${JSON.stringify(parsed.args).slice(0, 100)})`);
-      const toolResult = await executeNativeTool(toolName, parsed.args as Record<string, unknown>, ws);
+      const toolResult = await executeTool(toolName, parsed.args as Record<string, unknown>, { workspaceRoot: ws, projectId: req.projectId });
 
       toolContext += `### ${toolName}\nArgs: ${JSON.stringify(parsed.args)}\nResult:\n${toolResult}\n\n`;
 
@@ -1687,7 +1693,7 @@ export async function executeCoderLoop(
 
       log(`Tool: ${toolName} → ${JSON.stringify(toolArgs).slice(0, 200)}`);
 
-      const toolResult = await executeNativeTool(toolName, toolArgs, req.workspacePath);
+      const toolResult = await executeTool(toolName, toolArgs, { workspaceRoot: req.workspacePath, projectId: req.projectId });
       const truncatedResult = toolResult.length > 40000 ? toolResult.slice(0, 40000) + "\n...[truncated]" : toolResult;
       log(`Result: ${truncatedResult.slice(0, 300)}${truncatedResult.length > 300 ? "..." : ""}`);
 

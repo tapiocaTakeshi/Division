@@ -9,6 +9,7 @@ import {
   isMarkdownPath,
   isReadBlockedByMarkdownPolicy,
 } from "../utils/division-ignore";
+import { dispatchToLocalAgent, isLocalAgentConnected } from "./local-runtime";
 
 const execFileAsync = util.promisify(execFile);
 const execAsync = util.promisify(exec);
@@ -163,6 +164,28 @@ const BLOCKED_COMMANDS = [
 
 function isCommandSafe(cmd: string): boolean {
   return !BLOCKED_COMMANDS.some((re) => re.test(cmd));
+}
+
+/**
+ * Runs a NATIVE_TOOLS call, preferring a connected local agent (Orchestra's
+ * Electron main process) so the tool executes on the user's own machine and
+ * filesystem. Falls back to server-side execution (`executeNativeTool`) when
+ * no agent is connected for `projectId`, or when dispatch to it fails.
+ */
+export async function executeTool(
+  name: string,
+  args: Record<string, unknown>,
+  opts: { workspaceRoot?: string; projectId?: string } = {}
+): Promise<string> {
+  const { workspaceRoot, projectId } = opts;
+  if (projectId && isLocalAgentConnected(projectId)) {
+    try {
+      return await dispatchToLocalAgent(projectId, name, args);
+    } catch (err) {
+      logger.warn(`[Tools] Local agent dispatch failed for "${name}", falling back to server-side execution: ${(err as Error).message}`);
+    }
+  }
+  return executeNativeTool(name, args, workspaceRoot);
 }
 
 export async function executeNativeTool(name: string, args: Record<string, unknown>, workspaceRoot?: string): Promise<string> {

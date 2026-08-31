@@ -17,6 +17,7 @@ import { knockRouter } from "./routes/knock";
 import { previewRouter } from "./routes/preview";
 import { webhookRouter } from "./routes/webhook";
 import flowsRouter from "./routes/flows";
+import { localAgentRouter } from "./routes/local-agent";
 import { divisionAuth } from "./middleware/auth";
 import { webhookTrigger } from "./middleware/webhook-trigger";
 const app = express();
@@ -80,6 +81,7 @@ app.use("/api/agent", divisionAuth, agentRouter);
 app.use("/api/generate", divisionAuth, generateRouter);
 app.use("/api/sse", divisionAuth, sseRouter);
 app.use("/api/flows", divisionAuth, flowsRouter);
+app.use("/api/local-agent", localAgentRouter);
 app.use("/mcp", divisionAuth, mcpRouter);
 
 // Error handler

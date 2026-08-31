@@ -739,6 +739,7 @@ export async function runAgent(
       mode: task.mode,
       workspacePath: req.workspacePath,
       localWorkspaceContext: req.localWorkspaceContext,
+      projectId: req.projectId,
       ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
       signal: req.signal,
     });
@@ -1429,6 +1430,7 @@ async function runAgentStreamCore(
         mode: task.mode,
         workspacePath: req.workspacePath,
         localWorkspaceContext: req.localWorkspaceContext,
+        projectId: req.projectId,
         ...(roleSystemPrompt ? { systemPrompt: roleSystemPrompt } : {}),
         signal: req.signal,
       },

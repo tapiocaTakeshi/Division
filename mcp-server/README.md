@@ -73,3 +73,15 @@ IDEのAIアシスタントに：
 > "division_list_modelsで使えるモデルを見せて"
 
 > "division_runで coding を gemini-3-pro に override して実行して"
+
+## 既存プロジェクトの修正（workspacePath）
+
+`division_run` に `workspacePath`（プロジェクトの絶対パス）を渡すと、このサーバーが
+ローカルで実行されていることを利用してその場でファイルを読み込み、内容を
+`localWorkspaceContext` として API に送信します。Division の API 自体はユーザーの
+ディスクを直接読まないため、`workspacePath` を渡さないと coder / file-searcher は
+既存ファイルの中身を一切参照できません（「元のファイルを読み込めていない」状態になります）。
+
+> "division_runで workspacePath /Users/me/my-app の Header.tsx にダークモード切り替えを追加して"
+
+`.git` / `node_modules` / ビルド成果物 / `.env*` / バイナリファイルは自動的に除外されます。

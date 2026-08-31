@@ -17,6 +17,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import fs from "fs/promises";
+import path from "path";
 
 // --- Configuration ---
 function getApiBaseUrl(): string {
@@ -56,6 +58,110 @@ async function apiRequest(
   return response.json();
 }
 
+// --- Local workspace snapshot ---
+//
+// This server runs as a local `node` process spawned by the IDE, so unlike the
+// remote Division API it *can* see the user's disk. Division's file-searcher /
+// coder roles need the actual current content of the project ("元のファイル")
+// to work from — the API itself never reads the caller's filesystem and relies
+// entirely on a client-supplied `localWorkspaceContext` snapshot for that
+// (see src/services/orchestrator.ts). Build that snapshot here from
+// `workspacePath` so IDE users get the same behavior as the web UI's manual
+// file upload, instead of the agents having no access to existing files.
+
+const DEFAULT_IGNORE_DIRS = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  ".next",
+  ".nuxt",
+  ".turbo",
+  ".cache",
+  "coverage",
+  "target",
+  "vendor",
+  "__pycache__",
+  ".venv",
+  "venv",
+]);
+
+// Files that are either secrets, binary, or too noisy/low-value to ship to an LLM.
+const SKIP_FILENAME_RE = /^\.env(\..*)?$|\.(pem|key|p12|pfx)$/i;
+const SKIP_EXTENSION_RE =
+  /\.(png|jpe?g|gif|webp|svg|ico|bmp|pdf|zip|tar|gz|7z|rar|mp4|mp3|wav|mov|avi|woff2?|ttf|eot|otf|wasm|db|sqlite3?|lock)$/i;
+
+const MAX_FILE_CHARS = 60_000;
+const MAX_TOTAL_CHARS = 400_000;
+
+async function collectWorkspaceSnapshot(root: string): Promise<string> {
+  const absRoot = path.resolve(root);
+  const stat = await fs.stat(absRoot);
+  if (!stat.isDirectory()) {
+    throw new Error(`workspacePath is not a directory: ${absRoot}`);
+  }
+
+  const parts: string[] = [];
+  let totalChars = 0;
+  let truncated = false;
+
+  async function walk(dir: string): Promise<void> {
+    if (truncated) return;
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (truncated) return;
+      if (entry.name.startsWith(".") && entry.name !== ".divisionignore") {
+        if (entry.isDirectory() && !DEFAULT_IGNORE_DIRS.has(entry.name)) {
+          // allow dotdirs other than the well-known noisy ones (e.g. .github) to be skipped by default too
+          continue;
+        }
+        if (!entry.isDirectory()) continue;
+      }
+
+      const abs = path.join(dir, entry.name);
+      const rel = path.relative(absRoot, abs).split(path.sep).join("/");
+
+      if (entry.isDirectory()) {
+        if (DEFAULT_IGNORE_DIRS.has(entry.name)) continue;
+        await walk(abs);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      if (SKIP_FILENAME_RE.test(entry.name) || SKIP_EXTENSION_RE.test(entry.name)) continue;
+
+      let content: string;
+      try {
+        content = await fs.readFile(abs, "utf-8");
+      } catch {
+        continue; // unreadable / binary
+      }
+      if (content.includes(String.fromCharCode(0))) continue; // binary sniff
+
+      if (content.length > MAX_FILE_CHARS) {
+        content = content.slice(0, MAX_FILE_CHARS) + "\n...[truncated]";
+      }
+
+      const block = `### ${rel}\n\`\`\`\n${content}\n\`\`\`\n\n`;
+      if (totalChars + block.length > MAX_TOTAL_CHARS) {
+        truncated = true;
+        return;
+      }
+      parts.push(block);
+      totalChars += block.length;
+    }
+  }
+
+  await walk(absRoot);
+
+  const header = `# ローカルワークスペーススナップショット（MCP サーバーがローカルで収集）\n\nroot: ${absRoot}\n\n`;
+  const footer = truncated
+    ? "\n> ...スナップショットが上限に達したため、以降のファイルは省略されました。\n"
+    : "";
+  return header + parts.join("") + footer;
+}
+
 // --- MCP Server ---
 const server = new McpServer({
   name: "division",
@@ -80,12 +186,33 @@ server.tool(
       .describe(
         "Override default AI for specific roles. Keys are role slugs (coding, search, planning, writing, review), values are model names (e.g. claude-opus-4.6, gemini-3-pro, gpt-5.2, grok-4.1-fast, deepseek-r1)"
       ),
+    workspacePath: z
+      .string()
+      .optional()
+      .describe(
+        "Absolute path to the local project directory. When set, this server reads the existing files itself (it runs locally, unlike the API) and sends their content along so agents work from the real, current files instead of guessing."
+      ),
   },
-  async ({ input, projectId, overrides }) => {
+  async ({ input, projectId, overrides, workspacePath }) => {
     try {
       const body: Record<string, unknown> = { projectId, input };
       if (overrides && Object.keys(overrides).length > 0) {
         body.overrides = overrides;
+      }
+      if (workspacePath) {
+        try {
+          body.localWorkspaceContext = await collectWorkspaceSnapshot(workspacePath);
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Error: could not read workspacePath "${workspacePath}": ${err instanceof Error ? err.message : String(err)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
       }
 
       const result = (await apiRequest("POST", "/api/agent/run", body)) as {

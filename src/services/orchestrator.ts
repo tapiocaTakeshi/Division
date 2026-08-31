@@ -18,6 +18,14 @@ import {
   wrapCoderInput as sharedWrapCoderInput,
   coderOutputHasCode as sharedCoderOutputHasCode,
 } from "./coder-guard";
+import {
+  FILE_SEARCHER_OUTPUT_CONTRACT,
+  isEmptyProjectContext,
+  mergeProjectContext,
+  parseProjectContext,
+  renderContextForRole,
+  type ProjectContext,
+} from "./project-context";
 
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
@@ -243,6 +251,8 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 2. dependsOn には「このタスクの前に完了しているべきタスク」のインデックスを指定してください。dependsOn には必ず自分より前のインデックスのみを指定できます。空配列 [] は依存なし＝他タスクと並列実行されます。
 3. リクエストの内容に本当に必要なロールだけを選んでください。無関係なロールを形だけ含める必要はありません。単純な依頼なら数タスクで十分です。
 4. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること。前のタスクの結果を踏まえてほしい場合は、inputにその旨とdependsOnを明記してください。
+   - ただし **file-searcher の調査結果だけは例外** です。file-searcher の成果は「プロジェクト共有コンテキスト」に変換され、後続の全ロールへ自動的に配布されます（各ロールには要約・ファイル一覧・依存関係と、そのロールに関係するファイル本文だけが渡ります）。したがって全ロールから file-searcher へ dependsOn を張る必要はありません。file-searcher は 1 つ、依存なし（dependsOn: []）で先頭に置くのが基本です。
+   - 調査対象が途中で変わる場合（例: coder の実装後に別領域を調べ直したい）は、2 つ目の file-searcher タスクを追加してかまいません。共有コンテキストは上書きではなくマージされます。
 5. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
 6. 1タスクに複数作業を詰め込まず、必要なら細かく分割する
 7. 同じロールでも異なる観点なら別タスクに分けてよい
@@ -279,20 +289,110 @@ const SYNTHESIS_SYSTEM_PROMPT = `あなたは優秀な統合担当AIです。
 5. 冗長な重複は排除し、簡潔で実用的な成果物にまとめてください
 6. ユーザーのリクエストに直接答える形で出力してください`;
 
+export const FILE_SEARCHER_ROLE = "file-searcher";
+
+export function isFileSearcherRole(roleSlug: string): boolean {
+  return normalizeRoleSlug(roleSlug) === FILE_SEARCHER_ROLE;
+}
+
+/**
+ * dependsOn で指定された上流タスクの出力を貼り付ける。
+ *
+ * file-searcher だけは例外扱いする。その全文レポートは巨大になりがちで、
+ * 直接の依存先だけに全文を配るとトークンが跳ね上がり、他のロールには何も届かない。
+ * 代わりに `buildProjectContextBlock` が生成する共有コンテキスト
+ * （Level 1 = 全ロール共通の要約 / Level 2 = ロール別の関連ファイル本文）を
+ * すべてのロールに配る。
+ */
 function buildDependencyMarkdown(
   task: SubTask,
   taskOutputs: string[],
   taskRoleNames: string[],
-  taskProviderNames: string[]
+  taskProviderNames: string[],
+  subTaskRoles?: string[]
 ): string {
   const deps = task.dependsOn || [];
   const contextParts: string[] = [];
   for (const depIdx of deps) {
-    if (taskOutputs[depIdx]) {
-      contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
-    }
+    if (!taskOutputs[depIdx]) continue;
+    if (subTaskRoles && isFileSearcherRole(subTaskRoles[depIdx] || "")) continue;
+    contextParts.push(`### ${taskRoleNames[depIdx]} (${taskProviderNames[depIdx]}):\n${taskOutputs[depIdx]}`);
   }
   return contextParts.join("\n\n");
+}
+
+/**
+ * file-searcher が作った共有コンテキストを、このロール向けの形に整えて返す。
+ * dependsOn の有無に関係なく全ロールへ渡す（＝ Leader が依存を張り忘れても届く）。
+ */
+function buildProjectContextBlock(
+  ctx: ProjectContext | null,
+  roleSlug: string
+): string {
+  if (!ctx || isEmptyProjectContext(ctx)) return "";
+  if (isFileSearcherRole(roleSlug)) return "";
+  return renderContextForRole(ctx, normalizeRoleSlug(roleSlug));
+}
+
+/**
+ * file-searcher の出力を構造化コンテキストへ変換し、既存のコンテキストにマージする。
+ * 2 回目以降の file-searcher 実行はコンテキストを置き換えず積み上げる
+ * （file-searcher を 1 回きりの検索役ではなく Context Manager として使う）。
+ */
+function absorbFileSearcherOutput(
+  current: ProjectContext | null,
+  output: string | undefined
+): ProjectContext | null {
+  const text = (output || "").trim();
+  if (!text) return current;
+  const parsed = parseProjectContext(text);
+  if (isEmptyProjectContext(parsed)) return current;
+  const merged = mergeProjectContext(current, parsed);
+  logger.info(
+    `[ProjectContext] absorbed file-searcher output: ${text.length} chars -> ` +
+      `${merged.files.length} files, ${merged.relevantFiles.length} relevant, ` +
+      `${merged.dependencies.length} deps, ${merged.symbols.length} symbols`
+  );
+  return merged;
+}
+
+/**
+ * 非 file-searcher タスクは、原則としてすべての file-searcher タスクの完了を待ってから
+ * 開始する。これにより「まず FileSearcher、その結果を全ロールが参照」というフローが
+ * Leader の dependsOn の書き方に依存せず常に成立する。
+ *
+ * ただしその file-searcher 自身が依存している（＝先に走る必要がある）タスクは待たない。
+ * 例: planner → file-searcher → coder の並びでは planner はバリアの対象外になる。
+ * これにより循環待ちは発生しない。
+ *
+ * @returns タスク index ごとの「完了を待つべき file-searcher タスク index の配列」
+ */
+function buildFileSearcherBarriers(subTasks: SubTask[]): number[][] {
+  const fileSearcherIndices: number[] = [];
+  subTasks.forEach((t, i) => {
+    if (isFileSearcherRole(t.role)) fileSearcherIndices.push(i);
+  });
+  if (fileSearcherIndices.length === 0) return subTasks.map(() => []);
+
+  const ancestorsOf = (idx: number): Set<number> => {
+    const out = new Set<number>();
+    const stack = [...(subTasks[idx].dependsOn || [])];
+    while (stack.length > 0) {
+      const d = stack.pop() as number;
+      if (!Number.isInteger(d) || d < 0 || d >= subTasks.length || out.has(d)) continue;
+      out.add(d);
+      stack.push(...(subTasks[d].dependsOn || []));
+    }
+    return out;
+  };
+
+  const ancestors = new Map<number, Set<number>>();
+  for (const f of fileSearcherIndices) ancestors.set(f, ancestorsOf(f));
+
+  return subTasks.map((t, i) => {
+    if (isFileSearcherRole(t.role)) return [];
+    return fileSearcherIndices.filter((f) => f !== i && !(ancestors.get(f) as Set<number>).has(i));
+  });
 }
 
 /**
@@ -616,6 +716,14 @@ export async function runAgent(
   const taskProviderNames: string[] = new Array(subTasks.length).fill("");
   const completed = new Set<number>();
 
+  /**
+   * file-searcher が作る共有コンテキスト。全ロールへ Level 1 + Level 2 の形で配布し、
+   * file-searcher が複数回走る場合はマージして更新していく。
+   */
+  let projectContext: ProjectContext | null = null;
+  /** タスクごとに「先に完了していてほしい file-searcher タスク」の一覧 */
+  const fileSearcherBarriers = buildFileSearcherBarriers(subTasks);
+
   async function executeSubTaskNonStream(
     i: number,
     opts?: { inputOverride?: string }
@@ -703,9 +811,27 @@ export async function runAgent(
       enrichedInput = opts.inputOverride;
     } else {
       enrichedInput = task.input;
-      const upstreamMarkdown = buildDependencyMarkdown(task, taskOutputs, taskRoleNames, taskProviderNames);
-      if (upstreamMarkdown) {
-        enrichedInput = `## これまでの他のエージェントの作業結果:\n${upstreamMarkdown}\n\n## あなたへの指示:\n${task.input}`;
+      if (isFileSearcherRole(task.role)) {
+        // 後続ロールへ機械的に配布できるよう、構造化コンテキストの出力契約を付ける。
+        enrichedInput = `${enrichedInput}${FILE_SEARCHER_OUTPUT_CONTRACT}`;
+      } else {
+        const sections: string[] = [];
+        const contextBlock = buildProjectContextBlock(projectContext, task.role);
+        if (contextBlock) sections.push(contextBlock);
+        const upstreamMarkdown = buildDependencyMarkdown(
+          task,
+          taskOutputs,
+          taskRoleNames,
+          taskProviderNames,
+          subTasks.map((t) => t.role)
+        );
+        if (upstreamMarkdown) {
+          sections.push(`## これまでの他のエージェントの作業結果:\n${upstreamMarkdown}`);
+        }
+        if (sections.length > 0) {
+          sections.push(`## あなたへの指示:\n${task.input}`);
+          enrichedInput = sections.join("\n\n---\n\n");
+        }
       }
     }
 
@@ -775,6 +901,10 @@ export async function runAgent(
     };
     taskOutputs[i] = result.output;
 
+    if (isFileSearcherRole(task.role) && result.status === "success") {
+      projectContext = absorbFileSearcherOutput(projectContext, result.output);
+    }
+
     // Record usage & cost (webhook fires async)
     if (result.status === "success") {
       const inputTokens = Math.ceil(enrichedInput.length / 3);
@@ -824,7 +954,9 @@ export async function runAgent(
     const ready: number[] = [];
     for (const idx of remaining) {
       const deps = subTasks[idx].dependsOn || [];
-      if (deps.every((d) => completed.has(d))) {
+      // file-searcher は共有コンテキストの生成役なので、他ロールより先に完了させる。
+      const barrier = fileSearcherBarriers[idx] || [];
+      if (deps.every((d) => completed.has(d)) && barrier.every((d) => completed.has(d))) {
         ready.push(idx);
       }
     }
@@ -851,14 +983,16 @@ export async function runAgent(
 
   // 5. Synthesis step — collect all outputs and pass to Coder/Writer
   const filledResults = results.filter(Boolean);
-  const successfulOutputs = filledResults
-    .filter((r) => r.status === "success" && r.output)
+  const successfulResults = filledResults.filter((r) => r.status === "success" && r.output);
+  // file-searcher の全文レポートは共有コンテキストとして別途渡すので、統合入力からは外す。
+  const successfulOutputs = successfulResults
+    .filter((r) => !isFileSearcherRole(r.role))
     .map((r) => `### ${r.role} (${r.provider}):\n${r.output}`);
 
   let finalOutput: string | undefined;
   let finalCode: string | undefined;
 
-  if (successfulOutputs.length > 0) {
+  if (successfulResults.length > 0) {
     const synthesisRoleSlug = normalizeRoleSlug(finalRole);
     const synthesisRole = await prisma.role.findUnique({ where: { slug: synthesisRoleSlug } });
 
@@ -889,7 +1023,12 @@ export async function runAgent(
     }
 
     const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
-    const synthesisInput = `## ユーザーの元のリクエスト:\n${augmentLeaderInput(req)}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+    const synthesisContextBlock = buildProjectContextBlock(projectContext, synthesisRoleSlug);
+    const synthesisInput = [
+      `## ユーザーの元のリクエスト:\n${augmentLeaderInput(req)}`,
+      ...(synthesisContextBlock ? [synthesisContextBlock] : []),
+      `## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`,
+    ].join("\n\n---\n\n");
 
     log(`[Agent] Synthesis step: ${finalRole} → ${synthesisProvider.displayName}`);
     const synthesisMaxTokens = ROLE_SYNTHESIS_MAX_TOKENS[synthesisRoleSlug];
@@ -1289,6 +1428,14 @@ async function runAgentStreamCore(
   const taskProviderNames: string[] = new Array(subTasks.length).fill("");
   const completed = new Set<number>();
 
+  /**
+   * file-searcher が作る共有コンテキスト。全ロールへ Level 1 + Level 2 の形で配布し、
+   * file-searcher が複数回走る場合はマージして更新していく。
+   */
+  let projectContext: ProjectContext | null = null;
+  /** タスクごとに「先に完了していてほしい file-searcher タスク」の一覧 */
+  const fileSearcherBarriers = buildFileSearcherBarriers(subTasks);
+
   /** Execute a single sub-task at the given index */
   async function executeSubTask(
     i: number,
@@ -1384,9 +1531,27 @@ async function runAgentStreamCore(
       enrichedInput = opts.inputOverride;
     } else {
       enrichedInput = task.input;
-      const upstreamMarkdown = buildDependencyMarkdown(task, taskOutputs, taskRoleNames, taskProviderNames);
-      if (upstreamMarkdown) {
-        enrichedInput = `## これまでの他のエージェントの作業結果:\n${upstreamMarkdown}\n\n## あなたへの指示:\n${task.input}`;
+      if (isFileSearcherRole(task.role)) {
+        // 後続ロールへ機械的に配布できるよう、構造化コンテキストの出力契約を付ける。
+        enrichedInput = `${enrichedInput}${FILE_SEARCHER_OUTPUT_CONTRACT}`;
+      } else {
+        const sections: string[] = [];
+        const contextBlock = buildProjectContextBlock(projectContext, task.role);
+        if (contextBlock) sections.push(contextBlock);
+        const upstreamMarkdown = buildDependencyMarkdown(
+          task,
+          taskOutputs,
+          taskRoleNames,
+          taskProviderNames,
+          subTasks.map((t) => t.role)
+        );
+        if (upstreamMarkdown) {
+          sections.push(`## これまでの他のエージェントの作業結果:\n${upstreamMarkdown}`);
+        }
+        if (sections.length > 0) {
+          sections.push(`## あなたへの指示:\n${task.input}`);
+          enrichedInput = sections.join("\n\n---\n\n");
+        }
       }
     }
 
@@ -1509,6 +1674,10 @@ async function runAgentStreamCore(
     };
     taskOutputs[i] = result.output;
 
+    if (isFileSearcherRole(task.role) && result.status === "success") {
+      projectContext = absorbFileSearcherOutput(projectContext, result.output);
+    }
+
     // Record usage & cost (wait for webhook so serverless does not drop it)
     if (result.status === "success") {
       const inputTokens = Math.ceil(enrichedInput.length / 3);
@@ -1543,7 +1712,9 @@ async function runAgentStreamCore(
     const ready: number[] = [];
     for (const idx of remaining) {
       const deps = subTasks[idx].dependsOn || [];
-      if (deps.every((d) => completed.has(d))) {
+      // file-searcher は共有コンテキストの生成役なので、他ロールより先に完了させる。
+      const barrier = fileSearcherBarriers[idx] || [];
+      if (deps.every((d) => completed.has(d)) && barrier.every((d) => completed.has(d))) {
         ready.push(idx);
       }
     }
@@ -1574,13 +1745,15 @@ async function runAgentStreamCore(
 
   // 6. Synthesis step — collect all outputs and pass to Coder/Writer
   const filledResults = taskResults.filter(Boolean);
-  const successfulOutputs = filledResults
-    .filter((r) => r.status === "success" && r.output)
+  const successfulResults = filledResults.filter((r) => r.status === "success" && r.output);
+  // file-searcher の全文レポートは共有コンテキストとして別途渡すので、統合入力からは外す。
+  const successfulOutputs = successfulResults
+    .filter((r) => !isFileSearcherRole(r.role))
     .map((r) => `### ${r.role} (${r.provider}):\n${r.output}`);
 
   let finalOutput: string | undefined;
 
-  if (successfulOutputs.length > 0) {
+  if (successfulResults.length > 0) {
     // Resolve the synthesis role (coder or writer)
     const synthesisRoleSlug = normalizeRoleSlug(finalRole);
     const synthesisRole = await prisma.role.findUnique({
@@ -1633,7 +1806,12 @@ async function runAgentStreamCore(
       req.authenticated
     );
 
-    const synthesisInput = `## ユーザーの元のリクエスト:\n${augmentLeaderInput(req)}\n\n## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`;
+    const synthesisContextBlock = buildProjectContextBlock(projectContext, synthesisRoleSlug);
+    const synthesisInput = [
+      `## ユーザーの元のリクエスト:\n${augmentLeaderInput(req)}`,
+      ...(synthesisContextBlock ? [synthesisContextBlock] : []),
+      `## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`,
+    ].join("\n\n---\n\n");
 
     emit({
       type: "synthesis_start",

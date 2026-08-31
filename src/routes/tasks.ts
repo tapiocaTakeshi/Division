@@ -8,6 +8,7 @@ import {
   coderOutputHasCode,
   isCoderRoleSlug,
 } from "../services/coder-guard";
+import { FILE_SEARCHER_OUTPUT_CONTRACT } from "../services/project-context";
 import {
   abortAllRuns,
   abortRun,
@@ -237,8 +238,15 @@ taskRouter.post("/execute", asyncHandler(async (req: Request, res: Response) => 
     localWorkspaceContext
   );
 
-  // 4. Coder では入力にもガードを差し込む（system prompt が無視されたときの保険）。
-  const finalInput = isCoderRole ? wrapCoderInput(inputWithWorkspace) : inputWithWorkspace;
+  // 4. file-searcher には構造化コンテキストの出力契約を付ける。呼び出し側（Orchestra 等）が
+  //    この JSON を読み取り、後続ロールへ Level 1 / Level 2 に分けて配布できるようにする。
+  const inputWithContract =
+    role.slug === "file-searcher"
+      ? `${inputWithWorkspace}${FILE_SEARCHER_OUTPUT_CONTRACT}`
+      : inputWithWorkspace;
+
+  // 5. Coder では入力にもガードを差し込む（system prompt が無視されたときの保険）。
+  const finalInput = isCoderRole ? wrapCoderInput(inputWithContract) : inputWithContract;
 
   const execReq = {
     provider: effectiveProvider,

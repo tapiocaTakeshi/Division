@@ -23,9 +23,19 @@ import {
   isEmptyProjectContext,
   mergeProjectContext,
   parseProjectContext,
-  renderContextForRole,
+  renderSharedContext,
+  selectRelevantFilesForRole,
+  type ContextFile,
   type ProjectContext,
 } from "./project-context";
+import {
+  applyContextPolicy,
+  ContextRequestLedger,
+  parseContextRequest,
+  renderDecision,
+  roleReceivesFileBodies,
+  type ContextRequest,
+} from "./context-policy";
 
 // --- Role Alias Mapping ---
 const ROLE_ALIASES: Record<string, string> = {
@@ -161,6 +171,12 @@ export interface SubTask {
   reason: string;
   /** Zero-based indices of tasks that must complete before this one starts */
   dependsOn?: number[];
+  /**
+   * Leader がこのタスクに配分したファイルパス。
+   * 空/未指定ならロール別の自動選択にフォールバックする。
+   * いずれの場合も context-policy のゲートを通ってから渡される。
+   */
+  context?: string[];
 }
 
 export interface SubTaskResult extends SubTask {
@@ -253,6 +269,8 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 4. 各タスクのinputはそのロールのAIに直接渡す具体的な指示にすること。前のタスクの結果を踏まえてほしい場合は、inputにその旨とdependsOnを明記してください。
    - ただし **file-searcher の調査結果だけは例外** です。file-searcher の成果は「プロジェクト共有コンテキスト」に変換され、後続の全ロールへ自動的に配布されます（各ロールには要約・ファイル一覧・依存関係と、そのロールに関係するファイル本文だけが渡ります）。したがって全ロールから file-searcher へ dependsOn を張る必要はありません。file-searcher は 1 つ、依存なし（dependsOn: []）で先頭に置くのが基本です。
    - 調査対象が途中で変わる場合（例: coder の実装後に別領域を調べ直したい）は、2 つ目の file-searcher タスクを追加してかまいません。共有コンテキストは上書きではなくマージされます。
+   - 各タスクには任意で `"context": ["src/auth/Auth.ts", ...]` を書けます。**そのタスクが実際に読む必要のあるファイルだけ**を挙げてください（多く渡すほど良いわけではありません）。省略した場合はロール別に自動選択されます。file-searcher の調査が終わった時点で、あなたにもう一度「配分だけ」を尋ねる機会があるので、この時点で分からなければ省略してかまいません。
+   - なお、ファイルサイズ上限・秘密情報の除外・ロール権限・コンテキスト上限・要求回数の上限は Division API 側が別途強制します。あなたが指定しても、それらに反するものは渡りません。
 5. 必ず以下のJSON形式のみで回答。挨拶や説明文は【絶対に】出力しない
 6. 1タスクに複数作業を詰め込まず、必要なら細かく分割する
 7. 同じロールでも異なる観点なら別タスクに分けてよい
@@ -268,8 +286,8 @@ const LEADER_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。ユ
 {
   "tasks": [
     { "role": "file-searcher", "mode": "chat", "input": "プロジェクト内の関連ファイルを読み込み、既存実装・変更候補・注意点を Markdown レポートにまとめる", "reason": "実装前に既存コードを把握するため", "dependsOn": [] },
-    { "role": "coder", "mode": "computer_use", "input": "file-searcher の調査結果を踏まえて実装する", "reason": "動作するコードを生成するため", "dependsOn": [0] },
-    { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [1] }
+    { "role": "coder", "mode": "computer_use", "input": "file-searcher の調査結果を踏まえて実装する", "reason": "動作するコードを生成するため", "dependsOn": [0], "context": [] },
+    { "role": "reviewer", "mode": "chat", "input": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [1], "context": [] }
   ],
   "finalRole": "coder"
 }
@@ -321,17 +339,226 @@ function buildDependencyMarkdown(
   return contextParts.join("\n\n");
 }
 
+/** file-searcher の成果をロールに渡すときの構成要素。 */
+interface RoleContextBlock {
+  /** プロンプトに差し込む Markdown */
+  markdown: string;
+  /** 実際に本文を渡したパス */
+  grantedPaths: string[];
+}
+
 /**
  * file-searcher が作った共有コンテキストを、このロール向けの形に整えて返す。
- * dependsOn の有無に関係なく全ロールへ渡す（＝ Leader が依存を張り忘れても届く）。
+ *
+ * - Level 1（サマリ・ファイル一覧・依存関係）は dependsOn の有無に関係なく全ロールへ。
+ * - Level 2（ファイル本文）は **Leader が配分した `task.context`** を優先し、
+ *   指定が無ければロール別の自動選択にフォールバックする。
+ * - どちらの経路でも context-policy のゲートを必ず通る。サイズ上限・秘密情報の除外・
+ *   ロール権限・コンテキスト上限は Leader の判断では動かせない。
  */
 function buildProjectContextBlock(
   ctx: ProjectContext | null,
-  roleSlug: string
+  task: SubTask,
+  opts: { extraPaths?: string[] } = {}
+): RoleContextBlock {
+  const empty: RoleContextBlock = { markdown: "", grantedPaths: [] };
+  if (!ctx || isEmptyProjectContext(ctx)) return empty;
+
+  const roleSlug = normalizeRoleSlug(task.role);
+  if (isFileSearcherRole(roleSlug)) return empty;
+
+  const shared = renderSharedContext(ctx);
+  if (!roleReceivesFileBodies(roleSlug)) {
+    // 本文を受け取らないロール（planner / searcher など）は Level 1 だけ。
+    return { markdown: shared, grantedPaths: [] };
+  }
+
+  const byPath = new Map(ctx.relevantFiles.map((f) => [f.path, f]));
+  const toContextFile = (path: string, reason?: string): ContextFile => {
+    const known = byPath.get(path);
+    if (!known) return { path, ...(reason ? { reason } : {}) };
+    return reason ? { ...known, reason } : known;
+  };
+
+  const leaderRouted = (task.context ?? []).filter(Boolean);
+  const requested: ContextFile[] = [];
+  for (const p of opts.extraPaths ?? []) {
+    requested.push(toContextFile(p, "このタスクからの追加要求"));
+  }
+  if (leaderRouted.length > 0) {
+    for (const p of leaderRouted) requested.push(toContextFile(p, "Leader が配分"));
+  } else {
+    requested.push(...selectRelevantFilesForRole(ctx, roleSlug));
+  }
+
+  // Pull 型の再依頼は「記憶の無い新しい呼び出し」なので、前回渡したものも含めて
+  // 毎回すべて渡し直す。`alreadyGranted` は台帳側の循環検出だけに使う。
+  const decision = applyContextPolicy(roleSlug, requested, ctx);
+  const rendered = renderDecision(roleSlug, decision);
+
+  return {
+    markdown: [shared, rendered, PULL_REQUEST_INSTRUCTIONS].filter(Boolean).join("\n\n"),
+    grantedPaths: decision.granted.map((g) => g.path),
+  };
+}
+
+/**
+ * Pull 型。各ロールは足りないファイルを自分から要求できる。
+ *
+ *   Coder → 「Auth.ts が必要」 → Leader/Policy → FileSearcher の成果 → Coder
+ *
+ * 要求は context-policy のゲートを通り、回数にも上限がある（暴走と循環の防止）。
+ */
+const PULL_REQUEST_INSTRUCTIONS = `## 足りないファイルの要求
+
+上に載っていないファイルが必要なら、回答の末尾に次のブロックを付けてください。追加のファイルを添えてもう一度あなたに依頼します。
+
+\`\`\`json context-request
+{ "paths": ["src/auth/Auth.ts"], "reason": "実装に必要" }
+\`\`\`
+
+- 本当に必要なファイルだけを挙げてください（1 回につき最大 8 件、1 タスクにつき最大 2 回）。
+- 要求と同時に、いま分かる範囲での回答も書いてください。要求だけを返さないでください。`;
+
+const CONTEXT_ROUTING_SYSTEM_PROMPT = `あなたはAIチームのリーダーです。file-searcher の調査が終わったので、これから走る各タスクに「どのファイルを渡すか」を配分してください。
+
+## 配分の考え方
+- そのタスクを遂行するのに実際に読む必要があるファイルだけを挙げてください。多く渡すほど良いわけではありません。
+- ロールによって必要なものは違います。実装なら変更対象と呼び出し元、レビューなら実装とテスト、テストならテストと対象実装、セキュリティなら認証・権限・設定まわり。
+- ファイル一覧に無いパスは書かないでください。
+- 配分を決めきれないタスクは routes から省いてください。自動選択にフォールバックします。
+
+## 出力
+次の JSON だけを出力してください。挨拶や説明文は出力しないでください。
+
+\`\`\`json
+{
+  "routes": [
+    { "task": 1, "context": ["src/auth/Auth.ts", "src/pages/Login.tsx"] },
+    { "task": 2, "context": ["src/auth/Auth.ts", "tests/auth.test.ts"] }
+  ]
+}
+\`\`\``;
+
+/**
+ * file-searcher の成果を Leader に戻し、残りのタスクへのファイル配分を決めさせる。
+ *
+ *   User → Leader →「FileSearcher に調査させよう」→ FileSearcher → 検索結果
+ *        → Leader →「この情報なら Coder には A,B,C を渡そう」→ Coder
+ *
+ * Leader は「誰に何を渡すか」だけを決める。サイズ上限・秘密情報・ロール権限・
+ * コンテキスト上限は context-policy が別に見るので、ここで守らせる必要はない。
+ * 失敗しても致命ではない — 配分が得られなければロール別の自動選択に戻るだけ。
+ */
+async function routeContextWithLeader(params: {
+  provider: Parameters<typeof executeTask>[0]["provider"];
+  apiKey: string | undefined;
+  userInput: string;
+  ctx: ProjectContext;
+  subTasks: SubTask[];
+  pendingIndices: number[];
+  signal?: AbortSignal;
+}): Promise<number> {
+  const { provider, apiKey, userInput, ctx, subTasks, pendingIndices, signal } = params;
+
+  // 既に Leader が配分済み / 本文を受け取らないロールは聞くまでもない。
+  const targets = pendingIndices.filter((idx) => {
+    const t = subTasks[idx];
+    if (!t) return false;
+    if (isFileSearcherRole(t.role)) return false;
+    if ((t.context ?? []).length > 0) return false;
+    return roleReceivesFileBodies(normalizeRoleSlug(t.role));
+  });
+  if (targets.length === 0) return 0;
+
+  const taskList = targets
+    .map((idx) => {
+      const t = subTasks[idx];
+      return `- task ${idx}: role=${normalizeRoleSlug(t.role)} / ${t.input.slice(0, 200)}`;
+    })
+    .join("\n");
+
+  const input = [
+    `## ユーザーの元のリクエスト\n${userInput}`,
+    renderSharedContext(ctx),
+    `## 配分先のタスク\n${taskList}`,
+  ].join("\n\n---\n\n");
+
+  let output = "";
+  try {
+    const result = await executeTask({
+      provider,
+      config: { apiKey },
+      input,
+      role: { slug: "leader", name: "Leader" },
+      systemPrompt: CONTEXT_ROUTING_SYSTEM_PROMPT,
+      signal,
+    });
+    if (result.status !== "success") {
+      logger.warn(`[ContextRouting] Leader failed: ${result.errorMsg || "unknown"}`);
+      return 0;
+    }
+    output = result.output || "";
+  } catch (err) {
+    logger.warn(
+      `[ContextRouting] Leader threw: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 0;
+  }
+
+  let routes: unknown;
+  try {
+    routes = (JSON.parse(extractJson(output)) as Record<string, unknown>).routes;
+  } catch (err) {
+    logger.warn(
+      `[ContextRouting] Unparsable routing response: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 0;
+  }
+  if (!Array.isArray(routes)) return 0;
+
+  const knownPaths = new Set(ctx.files);
+  const targetSet = new Set(targets);
+  let applied = 0;
+
+  for (const route of routes) {
+    if (!route || typeof route !== "object") continue;
+    const rec = route as Record<string, unknown>;
+    const idx = Number(rec.task ?? rec.taskIndex ?? rec.index);
+    if (!Number.isInteger(idx) || !targetSet.has(idx)) continue;
+    const paths = (parseContextPaths(rec.context ?? rec.files) ?? []).filter((pth) =>
+      knownPaths.has(pth)
+    );
+    if (paths.length === 0) continue;
+    subTasks[idx].context = paths;
+    applied++;
+    logger.info(`[ContextRouting] task ${idx} (${subTasks[idx].role}) <- ${paths.join(", ")}`);
+  }
+
+  return applied;
+}
+
+/** Pull 型で追加ファイルを渡すときの、再依頼用の入力を組み立てる。 */
+function buildPullFollowUpInput(
+  previousInput: string,
+  previousOutput: string | undefined,
+  request: ContextRequest,
+  contextBlock: RoleContextBlock
 ): string {
-  if (!ctx || isEmptyProjectContext(ctx)) return "";
-  if (isFileSearcherRole(roleSlug)) return "";
-  return renderContextForRole(ctx, normalizeRoleSlug(roleSlug));
+  const sections = [
+    contextBlock.markdown,
+    `## 追加コンテキストを渡しました`,
+    [
+      `あなたが要求したファイル${request.reason ? `（理由: ${request.reason}）` : ""}を上に添付しました。`,
+      `要求が却下されたファイルは理由つきで記載しています。それらは前提から外して進めてください。`,
+      `今度は context-request を出さず、最終的な回答を書いてください。`,
+    ].join("\n"),
+  ];
+  if (previousOutput && previousOutput.trim()) {
+    sections.push(`## あなたの前回の回答（追加コンテキスト無しで書いたもの）\n${previousOutput.trim()}`);
+  }
+  sections.push(previousInput);
+  return sections.filter(Boolean).join("\n\n---\n\n");
 }
 
 /**
@@ -444,6 +671,24 @@ function extractJson(text: string): string {
   return text;
 }
 
+/** Leader が書いた `context` 配列を、パスの配列として読む。 */
+function parseContextPaths(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const paths: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry === "string" && entry.trim()) {
+      paths.push(entry.trim().replace(/^\.\//, ""));
+      continue;
+    }
+    // `{"path": "..."}` の形で書いてくることがあるので拾う
+    if (entry && typeof entry === "object") {
+      const p = (entry as Record<string, unknown>).path;
+      if (typeof p === "string" && p.trim()) paths.push(p.trim().replace(/^\.\//, ""));
+    }
+  }
+  return paths.length > 0 ? paths : undefined;
+}
+
 interface LeaderParsedResponse {
   tasks: SubTask[];
   finalRole: "coder" | "writer";
@@ -467,6 +712,7 @@ function parseLeaderResponse(output: string): LeaderParsedResponse {
       input: String(t.input || ""),
       reason: String(t.reason || ""),
       dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn.filter((v: unknown) => typeof v === "number") as number[] : undefined,
+      context: parseContextPaths(t.context ?? t.files),
     }));
 
     const finalRole = parsed.finalRole === "coder" ? "coder" : "writer";
@@ -721,12 +967,16 @@ export async function runAgent(
    * file-searcher が複数回走る場合はマージして更新していく。
    */
   let projectContext: ProjectContext | null = null;
+  /** Pull 型の追加要求を数え、循環と暴走を止める台帳 */
+  const contextLedger = new ContextRequestLedger();
+  /** file-searcher の成果を Leader へ戻す配分ステップは 1 実行につき 1 回だけ */
+  let contextRoutingDone = false;
   /** タスクごとに「先に完了していてほしい file-searcher タスク」の一覧 */
   const fileSearcherBarriers = buildFileSearcherBarriers(subTasks);
 
   async function executeSubTaskNonStream(
     i: number,
-    opts?: { inputOverride?: string }
+    opts?: { inputOverride?: string; isPullRetry?: boolean }
   ): Promise<void> {
     const task = subTasks[i];
     task.role = normalizeRoleSlug(task.role);
@@ -816,8 +1066,9 @@ export async function runAgent(
         enrichedInput = `${enrichedInput}${FILE_SEARCHER_OUTPUT_CONTRACT}`;
       } else {
         const sections: string[] = [];
-        const contextBlock = buildProjectContextBlock(projectContext, task.role);
-        if (contextBlock) sections.push(contextBlock);
+        const contextBlock = buildProjectContextBlock(projectContext, task);
+        if (contextBlock.markdown) sections.push(contextBlock.markdown);
+        contextLedger.recordGranted(i, contextBlock.grantedPaths);
         const upstreamMarkdown = buildDependencyMarkdown(
           task,
           taskOutputs,
@@ -945,6 +1196,44 @@ export async function runAgent(
       const baseUrl = process.env.DIVISION_API_URL || "https://api.division.he-ro.jp";
       results[i].previewUrl = `${baseUrl}/api/preview/${taskLog.id}`;
     }
+
+    // --- Pull 型: ロールからの追加コンテキスト要求 ---
+    //
+    //   Coder →「Auth.ts が必要」→ Policy Layer → file-searcher の成果 → Coder
+    //
+    // 要求はポリシーのゲートを通り、台帳が回数と繰り返しを見張る。1 タスクにつき
+    // 最大 2 回、実行全体で最大 6 回。再依頼は記憶の無い新しい呼び出しなので、
+    // 前回渡した分も含めて全部渡し直す。
+    if (result.status === "success" && !opts?.isPullRetry && !isFileSearcherRole(task.role)) {
+      const request = parseContextRequest(result.output || "");
+      if (request) {
+        const denial = contextLedger.tryConsume(i, request);
+        if (denial) {
+          log(`[Agent] Context request from [${task.role}] denied: ${denial}`);
+        } else {
+          const followUp = buildProjectContextBlock(projectContext, task, {
+            extraPaths: request.paths,
+          });
+          const newlyGranted = followUp.grantedPaths.filter(
+            (pth) => !contextLedger.grantedPathsFor(i).has(pth)
+          );
+          if (newlyGranted.length > 0) {
+            contextLedger.recordGranted(i, followUp.grantedPaths);
+            log(
+              `[Agent] Context request from [${task.role}]: granting ${newlyGranted.join(", ")}`
+            );
+            await executeSubTaskNonStream(i, {
+              inputOverride: buildPullFollowUpInput(enrichedInput, result.output, request, followUp),
+              isPullRetry: true,
+            });
+          } else {
+            log(
+              `[Agent] Context request from [${task.role}]: nothing new to grant (${request.paths.join(", ")})`
+            );
+          }
+        }
+      }
+    }
   }
 
   // Dependency-aware parallel scheduler
@@ -975,6 +1264,22 @@ export async function runAgent(
 
     for (const idx of ready) {
       completed.add(idx);
+    }
+
+    // file-searcher が終わった直後に、その成果を Leader へ戻して残りタスクへの
+    // ファイル配分を決めさせる。次の wave からこの配分が使われる。
+    if (!contextRoutingDone && projectContext && !isEmptyProjectContext(projectContext)) {
+      contextRoutingDone = true;
+      const applied = await routeContextWithLeader({
+        provider: leaderProvider,
+        apiKey: leaderApiKey,
+        userInput: req.input,
+        ctx: projectContext,
+        subTasks,
+        pendingIndices: [...remaining],
+        signal: req.signal,
+      });
+      log(`[Agent] Leader routed context for ${applied} task(s)`);
     }
   }
 
@@ -1023,10 +1328,15 @@ export async function runAgent(
     }
 
     const synthesisApiKey = resolveApiKey(synthesisProvider.name, synthesisProvider.apiType, req.apiKeys, req.authenticated);
-    const synthesisContextBlock = buildProjectContextBlock(projectContext, synthesisRoleSlug);
+    const synthesisContextBlock = buildProjectContextBlock(projectContext, {
+      role: synthesisRoleSlug,
+      mode: "chat",
+      input: "",
+      reason: "synthesis",
+    });
     const synthesisInput = [
       `## ユーザーの元のリクエスト:\n${augmentLeaderInput(req)}`,
-      ...(synthesisContextBlock ? [synthesisContextBlock] : []),
+      ...(synthesisContextBlock.markdown ? [synthesisContextBlock.markdown] : []),
       `## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`,
     ].join("\n\n---\n\n");
 
@@ -1433,13 +1743,17 @@ async function runAgentStreamCore(
    * file-searcher が複数回走る場合はマージして更新していく。
    */
   let projectContext: ProjectContext | null = null;
+  /** Pull 型の追加要求を数え、循環と暴走を止める台帳 */
+  const contextLedger = new ContextRequestLedger();
+  /** file-searcher の成果を Leader へ戻す配分ステップは 1 実行につき 1 回だけ */
+  let contextRoutingDone = false;
   /** タスクごとに「先に完了していてほしい file-searcher タスク」の一覧 */
   const fileSearcherBarriers = buildFileSearcherBarriers(subTasks);
 
   /** Execute a single sub-task at the given index */
   async function executeSubTask(
     i: number,
-    opts?: { inputOverride?: string }
+    opts?: { inputOverride?: string; isPullRetry?: boolean }
   ): Promise<void> {
     const task = subTasks[i];
     task.role = normalizeRoleSlug(task.role);
@@ -1536,8 +1850,9 @@ async function runAgentStreamCore(
         enrichedInput = `${enrichedInput}${FILE_SEARCHER_OUTPUT_CONTRACT}`;
       } else {
         const sections: string[] = [];
-        const contextBlock = buildProjectContextBlock(projectContext, task.role);
-        if (contextBlock) sections.push(contextBlock);
+        const contextBlock = buildProjectContextBlock(projectContext, task);
+        if (contextBlock.markdown) sections.push(contextBlock.markdown);
+        contextLedger.recordGranted(i, contextBlock.grantedPaths);
         const upstreamMarkdown = buildDependencyMarkdown(
           task,
           taskOutputs,
@@ -1699,6 +2014,44 @@ async function runAgentStreamCore(
         );
       }
     }
+
+    // --- Pull 型: ロールからの追加コンテキスト要求 ---
+    //
+    //   Coder →「Auth.ts が必要」→ Policy Layer → file-searcher の成果 → Coder
+    //
+    // 要求はポリシーのゲートを通り、台帳が回数と繰り返しを見張る。1 タスクにつき
+    // 最大 2 回、実行全体で最大 6 回。再依頼は記憶の無い新しい呼び出しなので、
+    // 前回渡した分も含めて全部渡し直す。
+    if (result.status === "success" && !opts?.isPullRetry && !isFileSearcherRole(task.role)) {
+      const request = parseContextRequest(result.output || "");
+      if (request) {
+        const denial = contextLedger.tryConsume(i, request);
+        if (denial) {
+          logger.info(`[Agent] Context request from [${task.role}] denied: ${denial}`);
+        } else {
+          const followUp = buildProjectContextBlock(projectContext, task, {
+            extraPaths: request.paths,
+          });
+          const newlyGranted = followUp.grantedPaths.filter(
+            (pth) => !contextLedger.grantedPathsFor(i).has(pth)
+          );
+          if (newlyGranted.length > 0) {
+            contextLedger.recordGranted(i, followUp.grantedPaths);
+            logger.info(
+              `[Agent] Context request from [${task.role}]: granting ${newlyGranted.join(", ")}`
+            );
+            await executeSubTask(i, {
+              inputOverride: buildPullFollowUpInput(enrichedInput, result.output, request, followUp),
+              isPullRetry: true,
+            });
+          } else {
+            logger.info(
+              `[Agent] Context request from [${task.role}]: nothing new to grant (${request.paths.join(", ")})`
+            );
+          }
+        }
+      }
+    }
   }
 
   // --- Dependency-aware parallel scheduler ---
@@ -1737,6 +2090,22 @@ async function runAgentStreamCore(
     // Mark as completed
     for (const idx of ready) {
       completed.add(idx);
+    }
+
+    // file-searcher が終わった直後に、その成果を Leader へ戻して残りタスクへの
+    // ファイル配分を決めさせる。次の wave からこの配分が使われる。
+    if (!contextRoutingDone && projectContext && !isEmptyProjectContext(projectContext)) {
+      contextRoutingDone = true;
+      const applied = await routeContextWithLeader({
+        provider: leaderProvider,
+        apiKey: leaderApiKey,
+        userInput: req.input,
+        ctx: projectContext,
+        subTasks,
+        pendingIndices: [...remaining],
+        signal: req.signal,
+      });
+      logger.info(`[AgentStream] Leader routed context for ${applied} task(s)`);
     }
   }
 
@@ -1806,10 +2175,15 @@ async function runAgentStreamCore(
       req.authenticated
     );
 
-    const synthesisContextBlock = buildProjectContextBlock(projectContext, synthesisRoleSlug);
+    const synthesisContextBlock = buildProjectContextBlock(projectContext, {
+      role: synthesisRoleSlug,
+      mode: "chat",
+      input: "",
+      reason: "synthesis",
+    });
     const synthesisInput = [
       `## ユーザーの元のリクエスト:\n${augmentLeaderInput(req)}`,
-      ...(synthesisContextBlock ? [synthesisContextBlock] : []),
+      ...(synthesisContextBlock.markdown ? [synthesisContextBlock.markdown] : []),
       `## 各エージェントの作業結果:\n${successfulOutputs.join("\n\n")}`,
     ].join("\n\n---\n\n");
 

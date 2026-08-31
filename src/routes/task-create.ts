@@ -90,13 +90,15 @@ const TASK_CREATION_PROMPT = `あなたはAIチームのリーダーです。ユ
     - "chat": テキスト生成タスク（デフォルト。searcher, researcher, file-searcher 等もこれ）
     - "computer_use": コード実行・テストが必要なタスク（coder ロール用）
     ※ searcher / researcher ロールは Perplexity が Web 検索するため mode="chat" にすること
+10. 各タスクには任意で "context": ["src/auth/Auth.ts", ...] を書けます。**そのタスクが実際に読む必要のあるファイルだけ**を挙げてください（多く渡すほど良いわけではありません）。省略した場合はロール別に自動選択されます。file-searcher の調査前でパスが分からない段階では省略してかまいません。
+    ※ ファイルサイズ上限・秘密情報の除外・ロール権限・コンテキスト上限は実行側が別途強制します。あなたが指定しても、それらに反するものは渡りません。
 
 \`\`\`json
 {
   "tasks": [
     { "role": "file-searcher", "mode": "chat", "title": "既存実装の調査", "description": "プロジェクト内の関連ファイルを読み込み、既存実装・変更候補・注意点を Markdown レポートにまとめる", "reason": "実装前に既存コードを把握するため", "dependsOn": [] },
-    { "role": "coder", "mode": "computer_use", "title": "実装", "description": "file-searcher の調査結果を踏まえて実装する", "reason": "動作するコードを生成するため", "dependsOn": [0] },
-    { "role": "reviewer", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [1] }
+    { "role": "coder", "mode": "computer_use", "title": "実装", "description": "file-searcher の調査結果を踏まえて実装する", "reason": "動作するコードを生成するため", "dependsOn": [0], "context": [] },
+    { "role": "reviewer", "mode": "chat", "title": "品質レビュー", "description": "実装結果の品質確認と改善提案。OK/Not OK を明示する", "reason": "品質保証のため", "dependsOn": [1], "context": [] }
   ]
 }
 \`\`\``;
@@ -162,7 +164,31 @@ type ParsedTaskRow = {
   description: string;
   reason?: string;
   dependsOn?: number[];
+  /**
+   * Leader がこのタスクに配分したファイルパス。
+   * Task テーブルには持たせず、この作成レスポンスにだけ載せる。実行側
+   * （Orchestra のローカル orchestration）が受け取って即座に使うためのもので、
+   * ポリシー適用後に何が実際に渡ったかは実行側の記録が正となる。
+   */
+  context?: string[];
 };
+
+/** Leader が書いた `context` 配列をパスの配列として読む。 */
+function parseTaskContextPaths(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const paths: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry === "string" && entry.trim()) {
+      paths.push(entry.trim().replace(/^\.\//, ""));
+      continue;
+    }
+    if (entry && typeof entry === "object") {
+      const p = (entry as Record<string, unknown>).path;
+      if (typeof p === "string" && p.trim()) paths.push(p.trim().replace(/^\.\//, ""));
+    }
+  }
+  return paths.length > 0 ? paths : undefined;
+}
 
 function normalizeTaskRole(role: string): string {
   return role === "file_searcher" ? "file-searcher" : role;
@@ -286,6 +312,7 @@ taskCreateRouter.post(
       description: string;
       reason?: string;
       dependsOn?: number[];
+      context?: string[];
     }>;
 
     try {
@@ -306,6 +333,7 @@ taskCreateRouter.post(
               (v: unknown) => typeof v === "number"
             ) as number[])
             : undefined,
+          context: parseTaskContextPaths(t.context ?? t.files),
         })
       );
 
@@ -355,9 +383,10 @@ taskCreateRouter.post(
         model: leaderAssignment.provider.modelId,
       },
       taskCount: createdTasks.length,
-      tasks: createdTasks.map((t) => ({
+      tasks: createdTasks.map((t, index) => ({
         ...t,
         dependsOn: t.dependsOn ? JSON.parse(t.dependsOn) : [],
+        context: parsedTasks[index]?.context ?? [],
       })),
     });
   })

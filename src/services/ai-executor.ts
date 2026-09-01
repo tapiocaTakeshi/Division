@@ -1292,11 +1292,22 @@ search_files の query にはコード上のキーワード（関数名、変数
 }
 
 /**
- * Roles with their own dedicated tool-loop handling (file-searcher via `gatherToolContext`
- * above, coder via its own prompt-driven flow) or that never benefit from filesystem tools
- * (leader decomposes tasks, imager generates images) are excluded from the generic loop below.
+ * Roles that get the same direct, unconditional file-gathering treatment as file-searcher:
+ * prefer a client-supplied `localWorkspaceContext` snapshot, else — when the API is running
+ * as a local main process (`workspacePath` actually resolves on this machine, e.g. `npm run
+ * dev`, never Vercel) — run `gatherToolContext` to read the real project files. Unlike
+ * `maybeRunGenericToolLoop` below, this does not require the assigned provider to declare a
+ * `toolMap`, since `/api/generate` (single-model, no orchestration) intentionally has none.
  */
-const GENERIC_TOOL_LOOP_EXCLUDED_ROLES = new Set(["leader", "coder", "imager", "file-searcher"]);
+const AUTO_FILE_CONTEXT_ROLES = new Set(["file-searcher", "generate"]);
+
+/**
+ * Roles with their own dedicated tool-loop handling (file-searcher / generate via
+ * `gatherToolContext` above, coder via its own prompt-driven flow) or that never benefit from
+ * filesystem tools (leader decomposes tasks, imager generates images) are excluded from the
+ * generic loop below.
+ */
+const GENERIC_TOOL_LOOP_EXCLUDED_ROLES = new Set(["leader", "coder", "imager", "file-searcher", "generate"]);
 
 /**
  * Give any other role (planner / designer / writer / reviewer / ideaman / researcher, etc.)
@@ -1734,17 +1745,18 @@ export async function executeTaskStream(
     return result;
   }
 
-  // file-searcher: prefer client-provided snapshot (IDE pattern); else server-side tool loop only if path is on this machine.
+  // file-searcher / generate (単独モデル): prefer client-provided snapshot (IDE pattern);
+  // else server-side tool loop only if path is on this machine (local main process).
   let enrichedInput = req.input;
-  if (req.role.slug === "file-searcher") {
+  if (AUTO_FILE_CONTEXT_ROLES.has(req.role.slug)) {
     const bundle = (req.localWorkspaceContext || "").trim();
     if (bundle.length > 0) {
       logger.info(
-        `[AI Executor] file-searcher: client localWorkspaceContext (${bundle.length} chars), skip server fs`
+        `[AI Executor] ${req.role.slug}: client localWorkspaceContext (${bundle.length} chars), skip server fs`
       );
       enrichedInput = `# ローカルワークスペーススナップショット（IDE / CLI が収集）\n\n${bundle}\n\n---\n\n## 依頼・分析してほしいこと\n\n${req.input}`;
     } else if (isWorkspaceAccessible(req.workspacePath)) {
-      logger.info(`[AI Executor] file-searcher: server gatherToolContext, workspacePath=${req.workspacePath}`);
+      logger.info(`[AI Executor] ${req.role.slug}: server gatherToolContext, workspacePath=${req.workspacePath}`);
       try {
         enrichedInput = await gatherToolContext(req);
         logger.info(`[AI Executor] gatherToolContext completed, enrichedInput length=${enrichedInput.length}`);
@@ -1753,7 +1765,7 @@ export async function executeTaskStream(
       }
     } else {
       logger.info(
-        `[AI Executor] file-searcher: no bundle and no accessible workspacePath; using task input only`
+        `[AI Executor] ${req.role.slug}: no bundle and no accessible workspacePath; using task input only`
       );
     }
   } else {
@@ -2183,15 +2195,15 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
   }
 
   let enrichedInput = req.input;
-  if (req.role.slug === "file-searcher") {
+  if (AUTO_FILE_CONTEXT_ROLES.has(req.role.slug)) {
     const bundle = (req.localWorkspaceContext || "").trim();
     if (bundle.length > 0) {
       logger.info(
-        `[AI Executor] file-searcher (non-stream): client localWorkspaceContext (${bundle.length} chars)`
+        `[AI Executor] ${req.role.slug} (non-stream): client localWorkspaceContext (${bundle.length} chars)`
       );
       enrichedInput = `# ローカルワークスペーススナップショット（IDE / CLI が収集）\n\n${bundle}\n\n---\n\n## 依頼・分析してほしいこと\n\n${req.input}`;
     } else if (isWorkspaceAccessible(req.workspacePath)) {
-      logger.info(`[AI Executor] file-searcher (non-stream), workspacePath=${req.workspacePath || "(none)"}`);
+      logger.info(`[AI Executor] ${req.role.slug} (non-stream), workspacePath=${req.workspacePath || "(none)"}`);
       try {
         enrichedInput = await gatherToolContext(req);
         logger.info(`[AI Executor] gatherToolContext completed (non-stream), enrichedInput length=${enrichedInput.length}`);
@@ -2199,7 +2211,7 @@ export async function executeTask(req: ExecutionRequest): Promise<ExecutionResul
         logger.error("[AI Executor] Error in gatherToolContext (non-stream)", err);
       }
     } else {
-      logger.info(`[AI Executor] file-searcher (non-stream): no bundle, no accessible workspace`);
+      logger.info(`[AI Executor] ${req.role.slug} (non-stream): no bundle, no accessible workspace`);
     }
   } else {
     enrichedInput = await maybeRunGenericToolLoop(req, "[AI Executor] (non-stream)");

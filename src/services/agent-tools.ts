@@ -8,6 +8,7 @@ import {
   loadDivisionIgnore,
   isMarkdownPath,
   isReadBlockedByMarkdownPolicy,
+  isMarkdownReadPolicyEnforced,
 } from "../utils/division-ignore";
 
 const execFileAsync = util.promisify(execFile);
@@ -41,7 +42,9 @@ function checkIgnored(
 }
 
 /**
- * 読み取り限定ポリシー: Markdown 以外のファイルを全ロールで読み取り不可にする。
+ * 読み取り限定ポリシー: Vercel 等の本番ホストでは Markdown 以外のファイルを全ロールで
+ * 読み取り不可にする。ローカル main process（workspacePath で自分のマシンに直接
+ * アクセスする実行環境）では file-searcher 等が実際のソースを読めるよう適用しない。
  * ワークスペース外（/tmp 等）には適用しない。`isDirectory: true` のときは常に許可
  * （中身の列挙は許可されるが、個別ファイルは拡張子で再判定される）。
  */
@@ -292,11 +295,12 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
         if (dirIgnoreErr) return dirIgnoreErr;
 
         const matcher = loadDivisionIgnore(root);
+        const enforceMarkdownOnly = isMarkdownReadPolicyEnforced();
         const grepArgs = ["-RnI", "--color=never"];
         if (args.include) grepArgs.push(`--include=${args.include}`);
-        // Markdown 限定ポリシーを grep 段階で適用しておく（後段でも再フィルタする）。
-        // ユーザー指定の include が無いときだけ自動で .md/.markdown/.mdx に絞る。
-        if (!args.include) {
+        // Markdown 限定ポリシーが強制される環境（Vercel 等）でのみ grep 段階で適用する
+        // （後段でも再フィルタする）。ユーザー指定の include が無いときだけ自動で絞る。
+        if (!args.include && enforceMarkdownOnly) {
           for (const ext of ["*.md", "*.markdown", "*.mdx"]) {
             grepArgs.push(`--include=${ext}`);
           }
@@ -320,7 +324,7 @@ export async function executeNativeTool(name: string, args: Record<string, unkno
             const abs = path.resolve(filePath);
             if (!abs.startsWith(root)) return true;
             const rel = path.relative(root, abs);
-            if (!isMarkdownPath(rel)) {
+            if (enforceMarkdownOnly && !isMarkdownPath(rel)) {
               nonMarkdownFiltered++;
               return false;
             }

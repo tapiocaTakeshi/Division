@@ -42,17 +42,31 @@ const DEFAULT_IGNORE_PATTERNS = [".git/", "node_modules/", ".divisionignore"];
 
 /**
  * Division 全体ポリシー: サーバー側ファイル読み取りツール（read_file / list_directory /
- * search_files）が返してよいファイルは **Markdown のみ** とする。
+ * search_files）が返してよいファイルを **Markdown のみ** に絞るかどうか。
  *
  * 背景: ソースコードそのものは IDE / CLI が `localWorkspaceContext` として
- * スナップショットで渡す前提（Cursor 系フロー）のため、サーバー側ツールは
+ * スナップショットで渡す前提（Cursor 系フロー）の実行環境（= Vercel 等の本番ホスト）では、
+ * API プロセス自身がユーザーのディスクに触れるべきではないため、サーバー側ツールは
  * 公開ドキュメント（.md / .markdown / .mdx）の参照だけに絞ってロール横断で安全にする。
  *
- * - ロールに依らず適用される（file-searcher / coder / writer 等すべて）
+ * 一方、ローカルで起動した main process（`npm run dev` など、Vercel 以外）は
+ * `workspacePath` 経由でユーザー自身のマシン上のプロジェクトに直接アクセスする前提の
+ * 実行環境であり、file-searcher 等のロールが実際のソースコードを読めてはじめて機能する。
+ * そのためこのポリシーは Vercel 上でのみ強制し、ローカル main process では適用しない。
+ *
+ * - 適用時はロールに依らず一律に効く（file-searcher / coder / writer 等すべて）
  * - 書き込み系（write_file / edit_file）はこの制限の対象外。実装ファイルへの書き込みは
  *   従来通り `.divisionignore` のみで制御する。
  */
 const ALLOWED_READ_EXTENSIONS = new Set([".md", ".markdown", ".mdx"]);
+
+/**
+ * Markdown 限定の読み取りポリシーを強制すべき実行環境かどうか。
+ * Vercel 等の本番ホストでは true、ローカル main process では false。
+ */
+export function isMarkdownReadPolicyEnforced(): boolean {
+  return !!process.env.VERCEL;
+}
 
 /**
  * 渡されたパスが「Markdown ファイル」と見なせるかを返す。
@@ -66,13 +80,14 @@ export function isMarkdownPath(relOrAbsPath: string): boolean {
 /**
  * 読み取り系ツールから見たときに、当該パスを「無視扱い」にすべきかを返す。
  * ディレクトリは常に「読める」（中身を列挙してから個別に判定する）。
- * ファイルは Markdown 拡張子以外なら無視扱い。
+ * Markdown ポリシーが強制される環境では、ファイルは Markdown 拡張子以外なら無視扱い。
  */
 export function isReadBlockedByMarkdownPolicy(
   relOrAbsPath: string,
   isDirectory: boolean
 ): boolean {
   if (isDirectory) return false;
+  if (!isMarkdownReadPolicyEnforced()) return false;
   return !isMarkdownPath(relOrAbsPath);
 }
 

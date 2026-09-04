@@ -1312,16 +1312,18 @@ const GENERIC_TOOL_LOOP_EXCLUDED_ROLES = new Set(["leader", "coder", "imager", "
 /**
  * Give any other role (planner / designer / writer / reviewer / ideaman / researcher, etc.)
  * the same real, executed function calling that file-searcher already has: when the request
- * has a real, accessible workspace and the assigned provider declares native tools, run an
- * exploration loop (list_directory / search_files / read_file / execute_command) and hand the
- * AI's own final generation call the gathered results. Falls back to `req.input` unchanged
- * whenever tools can't actually be executed (e.g. production Vercel deployments with no
- * server-side filesystem), so it never affects the AI's default single-shot behavior there.
+ * has a real, accessible workspace (local main process), run an exploration loop
+ * (list_directory / search_files / read_file / execute_command) and hand the AI's own final
+ * generation call the gathered results. This uses the same prompt-driven JSON tool-calling
+ * convention as `gatherToolContext`, so it runs regardless of whether the assigned provider
+ * declares a native `toolMap` — every role gets code context locally, not just providers with
+ * native function calling. Falls back to `req.input` unchanged whenever tools can't actually be
+ * executed (e.g. production Vercel deployments with no server-side filesystem), so it never
+ * affects the AI's default single-shot behavior there.
  */
 async function maybeRunGenericToolLoop(req: ExecutionRequest, logPrefix: string): Promise<string> {
   const roleSlug = req.role.slug;
   if (GENERIC_TOOL_LOOP_EXCLUDED_ROLES.has(roleSlug)) return req.input;
-  if (!req.provider.toolMap) return req.input;
   if (effectiveApiType(req.provider) === "perplexity") return req.input; // tools are never sent to Perplexity
   if (!isWorkspaceAccessible(req.workspacePath)) return req.input;
 

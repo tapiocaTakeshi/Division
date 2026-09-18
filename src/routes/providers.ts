@@ -21,6 +21,7 @@ const createProviderSchema = z.object({
     "qwen",
     "cohere",
     "moonshot",
+    "typesafe",
     "local",
     "custom",
   ]),

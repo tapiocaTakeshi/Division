@@ -1812,6 +1812,13 @@ export async function executeTaskStream(
 ): Promise<ExecutionResult> {
   const start = Date.now();
 
+  // Jev returns one JSON response, not an SSE text stream.
+  if (effectiveApiType(req.provider) === "typesafe") {
+    const result = await executeTask(req);
+    if (result.status === "success") onChunk(result.output);
+    return result;
+  }
+
   if (req.role.slug === "imager") {
     const result = await executeImageGeneration(req);
     if (result.status === "success") {

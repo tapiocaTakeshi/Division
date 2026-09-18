@@ -320,6 +320,7 @@ const API_KEY_ALIASES: Record<string, string[]> = {
   perplexity: ["perplexity", "PERPLEXITY_API_KEY"],
   xai: ["xai", "grok", "XAI_API_KEY"],
   deepseek: ["deepseek", "DEEPSEEK_API_KEY"],
+  typesafe: ["typesafe", "jev", "TYPESAFE_API_KEY"],
 };
 
 // --- Core Functions ---
@@ -387,6 +388,7 @@ const ENV_KEY_MAP: Record<string, string> = {
   perplexity: "PERPLEXITY_API_KEY",
   xai: "XAI_API_KEY",
   deepseek: "DEEPSEEK_API_KEY",
+  typesafe: "TYPESAFE_API_KEY",
 };
 
 /**

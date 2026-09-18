@@ -9,8 +9,8 @@
       "agents": [
         {
           "role": "leader",
-          "provider": "openAI",
-          "model": "gpt-4o"
+          "provider": "typesafe",
+          "model": "jev-latest"
         },
         {
           "role": "coder",

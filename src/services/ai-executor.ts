@@ -97,6 +97,7 @@ const ENV_KEY_MAP: Record<string, string> = {
   qwen: "QWEN_API_KEY",
   cohere: "COHERE_API_KEY",
   moonshot: "MOONSHOT_API_KEY",
+  typesafe: "TYPESAFE_API_KEY",
   // Local runtimes (Ollama / LM Studio / llama.cpp server). Usually keyless,
   // but honour an optional token for secured self-hosted gateways.
   local: "LOCAL_AI_API_KEY",
@@ -168,6 +169,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   qwen: "qwen3-235b-a22b",
   cohere: "command-r-plus",
   moonshot: "kimi-k2",
+  typesafe: "jev-latest",
   local: "llama3.2",
 };
 
@@ -184,6 +186,7 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   qwen: "https://dashscope-intl.aliyuncs.com",
   cohere: "https://api.cohere.com",
   moonshot: "https://api.moonshot.cn",
+  typesafe: "https://api.typesafe.ai",
   // Ollama default. LM Studio uses http://localhost:1234 — override per provider.
   local: "http://localhost:11434",
 };
@@ -429,6 +432,48 @@ function buildRequestBody(
   let resolvedEndpoint = apiEndpoint || FALLBACK_ENDPOINTS[apiType] || "";
   if (apiType === "perplexity" && resolvedEndpoint === "/v1/sonar") {
     resolvedEndpoint = "/chat/completions";
+  }
+
+  // TypeSafe Jev: typed decision API used by the Leader role.
+  if (apiType === "typesafe") {
+    const state = [systemPrompt, input].filter(Boolean).join("\n\n");
+    return {
+      url: resolvedEndpoint || "/v1/systemone",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey || ""}` },
+      body: {
+        state,
+        model: resolvedModelId,
+        questions: {
+          primary_role: {
+            type: "choice",
+            instructions: "Which primary specialist should handle this request?",
+            criteria: {
+              "file-searcher": "Inspect an existing project or local files",
+              coder: "Implement, modify, debug, or test code",
+              planner: "Plan architecture, strategy, or requirements",
+              searcher: "Search the web or collect current information",
+              writer: "Write documentation or prose",
+              designer: "Design UI, UX, HTML, CSS, or visual layout"
+            }
+          },
+          needs_file_search: {
+            type: "noul",
+            instructions: "Does this request require inspecting an existing project or files?",
+            criteria: { "true": "Existing files or code must be examined", "false": "No project inspection is needed" }
+          },
+          needs_review: {
+            type: "noul",
+            instructions: "Would a review or verification step materially improve the result?",
+            criteria: { "true": "Review, validation, or testing is useful", "false": "Review is unnecessary" }
+          },
+          final_role: {
+            type: "choice",
+            instructions: "What should produce the final deliverable?",
+            criteria: { coder: "The main deliverable is code", writer: "The main deliverable is prose or analysis" }
+          }
+        }
+      }
+    };
   }
 
   // OpenAI Responses API (/v1/responses)
@@ -704,11 +749,39 @@ function extractOpenAICompatToolCall(data: unknown): NativeToolCall | null {
   return { tool: fn.name, args };
 }
 
+function buildJevLeaderPlan(data: unknown, requestInput: string): string {
+  const root = data as Record<string, unknown>;
+  const answers = isPlainObject(root?.answers) ? root.answers as Record<string, unknown> : {};
+  const choice = (key: string, fallback: string): string => {
+    const a = isPlainObject(answers[key]) ? answers[key] as Record<string, unknown> : {};
+    return typeof a.choice === "string" ? a.choice : fallback;
+  };
+  const yes = (key: string): boolean => {
+    const a = isPlainObject(answers[key]) ? answers[key] as Record<string, unknown> : {};
+    return typeof a.noul === "number" && a.noul >= 0.5;
+  };
+  const primary = choice("primary_role", "planner");
+  const finalRole = choice("final_role", primary === "coder" ? "coder" : "writer") === "coder" ? "coder" : "writer";
+  const tasks: Array<Record<string, unknown>> = [];
+  const add = (role: string, mode: string, input: string, reason: string, dependsOn: number[] = []) =>
+    tasks.push({ role, mode, input, reason, dependsOn });
+  const request = requestInput.trim();
+  if (yes("needs_file_search") && primary !== "file-searcher") {
+    add("file-searcher", "chat", "関連する既存ファイルを調査し、変更候補と注意点をMarkdownで報告してください。\n\n元の依頼:\n" + request, "既存プロジェクトを正確に把握するため");
+  }
+  const dep = tasks.length ? [tasks.length - 1] : [];
+  add(primary, primary === "coder" ? "computer_use" : "chat", "元のユーザー依頼を担当ロールとして実行してください。\n\n依頼:\n" + request + (tasks.length ? "\n\n先行するfile-searcherの結果を活用してください。" : ""), "Jevが主担当として判定", dep);
+  if (yes("needs_review")) add("reviewer", "chat", "直前の成果物をレビューし、問題点と必要な修正を具体的に示してください。元の依頼:\n" + request, "品質確認のため", [tasks.length - 1]);
+  return JSON.stringify({ tasks, finalRole });
+}
+
 /**
  * Parse the response from each API type, extracting thinking and citations
  */
-function parseResponse(apiType: string, data: unknown): ParsedResponse {
+function parseResponse(apiType: string, data: unknown, requestInput = ""): ParsedResponse {
   const d = data as Record<string, unknown>;
+
+  if (apiType === "typesafe") return { output: buildJevLeaderPlan(data, requestInput) };
 
   // OpenAI Responses API: output[].content[].text
   if (apiType === "openai") {
@@ -1240,7 +1313,7 @@ search_files の query にはコード上のキーワード（関数名、変数
         break;
       }
       const data = await response.json();
-      const parsed = parseResponse(apiTypeEff, data);
+      const parsed = parseResponse(apiTypeEff, data, currentInput);
       result = { output: parsed.output, status: "success" };
     } catch (err) {
       if (isAbortError(err) || req.signal?.aborted) {

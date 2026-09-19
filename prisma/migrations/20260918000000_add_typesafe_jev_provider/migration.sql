@@ -1,3 +1,8 @@
+-- The existing database uses provider-type IDs and a restrictive legacy check.
+ALTER TABLE "Provider" DROP CONSTRAINT IF EXISTS "Provider_id_allowed_values";
+ALTER TABLE "Provider" ADD CONSTRAINT "Provider_id_allowed_values"
+  CHECK ("id" = ANY (ARRAY['anthropic','openai','google','perplexity','xai','deepseek','typesafe']));
+
 -- Add TypeSafe AI's Jev provider without embedding any API key.
 INSERT INTO "Provider" (
   "id", "name", "displayName", "apiBaseUrl", "apiType",

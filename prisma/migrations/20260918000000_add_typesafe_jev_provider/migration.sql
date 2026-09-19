@@ -5,7 +5,7 @@ INSERT INTO "Provider" (
   "isEnabled", "createdAt", "updatedAt"
 )
 VALUES (
-  gen_random_uuid(),
+  'typesafe',
   'jev',
   'Jev (TypeSafe AI)',
   'https://api.typesafe.ai',
